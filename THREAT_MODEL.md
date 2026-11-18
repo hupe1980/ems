@@ -186,7 +186,7 @@ plane could leak or be made to say:
 
 | Threat | Sev | Mitigation | Evidence | Status |
 |---|---|---|---|---|
-| `release-supply-chain` — a dependency, an Action moved under its tag or a base image ships code into a release | high | cargo-deny (advisories, licences, unknown registries and git refused), `cargo auditable`, SBOM, checksums, provenance attestation, `forbid(unsafe_code)` in domain crates; every Action pinned by commit SHA with its tag as a comment, held by `cargo xtask check-actions`, and moved only by a reviewed Dependabot pull request | `deny.toml`, `.github/workflows/release.yml`, `.github/dependabot.yml`, `xtask` `check-actions` | Control |
+| `release-supply-chain` — a dependency, an Action moved under its tag or a base image ships code into a release | high | cargo-deny (advisories, licences, unknown registries and git refused), `cargo auditable`, SBOM, checksums, provenance attestation, `forbid(unsafe_code)` in domain crates; every Action pinned by commit SHA with its tag as a comment, held by `cargo xtask check-actions`, and moved only by a reviewed edit | `deny.toml`, `.github/workflows/release.yml`, `xtask` `check-actions` | Control |
 
 ## Open risks, ranked
 

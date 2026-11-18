@@ -401,8 +401,7 @@ tag beside it as a comment. A tag is a pointer its owner can move, so a workflow
 that names `actions/checkout@v4` runs whatever `v4` means on the day it runs —
 and the provenance attestation above would vouch for the result. A commit cannot
 move. `cargo xtask check-actions` fails the build on any reference that is not a
-commit, and Dependabot proposes each update as a pull request, so a pin moves
-only when somebody reviewed why.
+commit, so a pin moves only when somebody edits it and the change is reviewed.
 
 `cargo deny check` runs in CI over licences, advisories, bans and sources, and
 every domain crate carries `#![forbid(unsafe_code)]` — enforced a second time by
