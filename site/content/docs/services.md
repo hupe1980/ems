@@ -1,7 +1,10 @@
 +++
 title = "The fleet"
 description = "The services around one box: day-ahead prices, weather, two years of § 14a evidence, enrolment, signed releases, and a fleet view that counts breaches."
-weight = 11
+weight = 13
+
+[extra]
+group = "Running it"
 +++
 
 The edge is **one** process. The § 14a failsafe is a sixty-second heartbeat and a
@@ -347,6 +350,10 @@ morning after a rollout.
 **Releases.** `fleetd` publishes a manifest and an Ed25519 signature over it, and
 never holds a signing key. See [Security](@/docs/security.md) for why that
 sentence is the whole argument.
+
+> [!NOTE]
+> This is the fleet's half. `hemsd` does not yet enrol, pull configuration or
+> check for releases; those arrive on a box through its installer for now.
 
 | | |
 |---|---|

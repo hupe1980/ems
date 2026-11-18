@@ -217,6 +217,24 @@ pub fn day(scenario: &Scenario, r: &DayResult) -> String {
             ),
         );
     }
+    // What the load forecast leans on where the household's own history is
+    // thin — only while it leans on anything: a learned box would print a
+    // structural zero every day, which is how a line stops being read.
+    if let Some(basis) = r.load_prior.filter(|_| r.load_prior_share > 0.0) {
+        row(
+            &mut out,
+            "load forecast leans on",
+            format!(
+                "H25, {} ({:.0} % of the day)",
+                match basis {
+                    hems_forecast::PriorBasis::Declared => "your declared consumption",
+                    hems_forecast::PriorBasis::Fitted => "fitted to your own days",
+                    hems_forecast::PriorBasis::Anchored => "anchored on one reading",
+                },
+                r.load_prior_share * 100.0
+            ),
+        );
+    }
     let _ = writeln!(out);
     row(
         &mut out,

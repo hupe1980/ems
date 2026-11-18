@@ -567,7 +567,7 @@ mod crps_tests {
     /// `CRPS(N(0,1), y) = y(2Φ(y) − 1) + 2φ(y) − 1/√π`.
     fn crps_of_standard_normal(y: f64) -> f64 {
         let phi = (-0.5 * y * y).exp() / (2.0 * std::f64::consts::PI).sqrt();
-        let cdf = 0.5 * (1.0 + erf(y / std::f64::consts::SQRT_2));
+        let cdf = f64::midpoint(1.0, erf(y / std::f64::consts::SQRT_2));
         y.mul_add(2.0f64.mul_add(cdf, -1.0), 2.0 * phi) - 1.0 / std::f64::consts::PI.sqrt()
     }
 

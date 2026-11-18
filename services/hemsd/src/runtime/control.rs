@@ -162,6 +162,21 @@ pub struct Status {
     /// the one a screen of watts cannot answer. `runtime::s2` reads it to tell a
     /// Customer Energy Manager that its instruction was overridden.
     pub overriding: BTreeMap<AssetId, String>,
+    /// Why each asset was told what it was told — the reason its setpoint
+    /// carries, for the household page to render as a sentence.
+    pub reasons: BTreeMap<AssetId, hems_core::setpoint::Reason>,
+    /// What the grid meter read this tick: positive draws from the grid.
+    pub grid: Option<Power>,
+    /// The minimum power the household is owed under a reduction, `[A1 4.5]`.
+    pub minimum: Option<Power>,
+    /// Whether the box is in failsafe: no heartbeat from the network
+    /// operator's control box, so the stored failsafe value stands in.
+    pub in_failsafe: bool,
+    /// The last day the box closed, as it reported it to the fleet.
+    pub last_day: Option<hems_core::report::DayKpis>,
+    /// What each asset's own meter read this tick, and its state of charge
+    /// where it has one.
+    pub readings: BTreeMap<AssetId, (Option<Power>, Option<f64>)>,
     /// What the plan in force expects the horizon to cost, euros.
     ///
     /// The plan's own arithmetic, and every term of the objective is a term of
@@ -386,6 +401,7 @@ pub async fn run(
 /// two get out of step with the boundary that resets the rest.
 fn carried_from(started: OffsetDateTime) -> Carried {
     Carried {
+        last_day: None,
         roof_health: None,
         exposure: None,
         exposure_at: None,
@@ -393,7 +409,7 @@ fn carried_from(started: OffsetDateTime) -> Carried {
         phases: BTreeMap::new(),
         delivered: BTreeMap::new(),
         delivered_slot: Slot::containing(started),
-        local_day: metering::calendar::local_day(started),
+        local_day: hems_core::calendar::local_day(started),
         // A box that has just started did not watch the earlier part of today,
         // and saying so is the difference between "nothing went wrong" and
         // "nobody was looking" (D116).
@@ -744,7 +760,7 @@ async fn close_the_day(
     store: Option<&Arc<Mutex<crate::store::Store>>>,
     now: OffsetDateTime,
 ) {
-    let today = metering::calendar::local_day(now);
+    let today = hems_core::calendar::local_day(now);
     if today == carried.local_day {
         return;
     }
@@ -795,6 +811,7 @@ async fn close_the_day(
     );
     match built {
         Ok(Some(day)) => {
+            carried.last_day = Some(day.clone());
             let event = hems_events::Event::new(
                 hems_events::SITE_DAY_REPORTED,
                 format!("hems://sites/{site}"),
@@ -1130,11 +1147,41 @@ async fn teach_the_house(
     );
 }
 
+/// Why each asset was told what it was told this tick.
+fn reasons_of(
+    decision: &hems_realtime::Decision,
+) -> BTreeMap<AssetId, hems_core::setpoint::Reason> {
+    decision
+        .setpoints
+        .iter()
+        .map(|s| (s.asset.clone(), s.reason))
+        .collect()
+}
+
+/// What each asset's own meter read this tick, and its state of charge.
+fn readings_of(
+    observed: &crate::drivers::Observed,
+) -> BTreeMap<AssetId, (Option<Power>, Option<f64>)> {
+    observed
+        .state
+        .assets
+        .iter()
+        .map(|(id, m)| {
+            (
+                id.clone(),
+                (m.power, m.soc.map(hems_core::units::Soc::fraction)),
+            )
+        })
+        .collect()
+}
+
 /// What one tick hands to the next.
 struct Carried {
     /// The roof's verdict, settled on the local-day boundary and carried until
     /// the next one.
     roof_health: Option<hems_forecast::Health>,
+    /// The last day the box closed, for the household's receipt.
+    last_day: Option<hems_core::report::DayKpis>,
     /// How exposed this household is to § 14a control, refreshed slowly.
     ///
     /// A summary of up to two years of record, and a tick is a second, so it is
@@ -1500,12 +1547,14 @@ async fn tick(
 
     let silent = observed.silent.len();
     let overriding = binding_rules(&decision);
+    let reasons = reasons_of(&decision);
     (
         Status {
             at: Some(now),
             // Carried, not recomputed: the roof's verdict is settled once a day
             // on the local-day boundary, and a tick is a second.
             roof_health: carried.roof_health,
+            last_day: carried.last_day.clone(),
             // Carried rather than recomputed: the exposure is a summary of two
             // years of record and a tick is a second. `Carried::exposure` is
             // refreshed on its own slow cadence.
@@ -1516,6 +1565,11 @@ async fn tick(
             assumed_nominal: decision.verdict.assumed_nominal.clone(),
             cem: cem_status,
             overriding,
+            reasons,
+            grid: observed.state.grid.and_then(|m| m.power),
+            minimum: Some(decision.verdict.minimum_power),
+            in_failsafe: observed.limits.in_failsafe,
+            readings: readings_of(&observed),
             disobedient: observed.disobedient.clone(),
             undriven: managed.undriven.clone(),
             steuve_ceiling: observed.limits.steuve_ceiling,

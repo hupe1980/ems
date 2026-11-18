@@ -55,7 +55,7 @@
 //!
 //! **Battery wear is in the objective.** Without it a cost-minimising plan will
 //! cycle a battery for a spread that does not cover the damage — measured at up
-//! to ten times the saving in `specs/arxiv/arxiv-2606.16051.pdf`. With it, the
+//! to ten times the saving in arXiv:2606.16051. With it, the
 //! plan only moves energy when the spread actually pays.
 //!
 //! **The § 14a constraint is on the netzwirksamer Leistungsbezug**, not on

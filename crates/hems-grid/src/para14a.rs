@@ -1,10 +1,9 @@
 //! § 14a EnWG — netzorientierte Steuerung of controllable devices.
 //!
 //! Everything here comes from **Anlage 1 zum Beschluss BK6-22-300 vom
-//! 27.11.2023** (`specs/bnetza/bk6-22-300-anlage1-20231127.pdf`), cited as
-//! `[A1 <Ziffer>]`. The VDE FNN Hinweis to Tenorziffer 2f
-//! (`specs/bnetza/bk6-22-300-vde-fnn-empfehlung-tenorziffer-2f.pdf`) supplies
-//! the reading of the minimum-power formula.
+//! 27.11.2023** (Bundesnetzagentur), cited as `[A1 <Ziffer>]`. The VDE FNN
+//! Hinweis to Tenorziffer 2f (2024) supplies the reading of the minimum-power
+//! formula.
 //!
 //! Three questions, three functions:
 //!
@@ -19,14 +18,14 @@
 //!    command is lawful.
 
 use hems_core::prelude::*;
-use metering::para14a as m14a;
+use metering::grid::para14a as m14a;
 use time::{Date, OffsetDateTime};
 
 pub use m14a::{Para14aConfig, Verursachungsregel};
 
 /// The base minimum every controllable device is owed, `[A1 4.5.1 S. 1]`.
 ///
-/// A watt view of `metering::para14a::MINDESTLEISTUNG_KW`, which is where the
+/// A watt view of `metering::grid::para14a::MINDESTLEISTUNG_KW`, which is where the
 /// value and its citation live.
 pub const MINDESTLEISTUNG: Power = Power::new_const(4_200.0);
 
@@ -35,14 +34,14 @@ pub const MINDESTLEISTUNG: Power = Power::new_const(4_200.0);
 //
 // The 11 kW threshold of `[A1 4.5.1 S. 2]` and the 0,4 factor of
 // `[A1 4.5.1 S. 3]` are inputs to `mindestleistung_ems`, which is
-// `metering::para14a`'s — so this crate restating them as literals would be a
+// `metering::grid::para14a`'s — so this crate restating them as literals would be a
 // second copy of a regulation that nothing here evaluates and nothing here
 // tests. A second copy of a rule does not stay in step: the day the
 // Bundesnetzagentur's recommendation changes, one of the two moves and the
 // other is a number somebody reads and believes.
 //
-// `metering::para14a::SKALIERUNG_SCHWELLE_KW` and
-// `metering::para14a::SKALIERUNGSFAKTOR` are the values, in the exact decimals
+// `metering::grid::para14a::SKALIERUNG_SCHWELLE_KW` and
+// `metering::grid::para14a::SKALIERUNGSFAKTOR` are the values, in the exact decimals
 // the arithmetic is done in. `MINDESTLEISTUNG` above stays because it *is*
 // read here, and it says in its own doc that `metering` is where it comes from.
 
@@ -116,13 +115,21 @@ impl SteuVe {
     /// 4,2 kW as a small one.
     #[must_use]
     pub fn minimum_power_direct(&self) -> Power {
-        m14a::mindestleistung_direktansteuerung(&self.as_metering(), &Para14aConfig::default())
-            .map_or(Power::ZERO, from_kw)
+        m14a::steuerbare_verbrauchseinrichtungen(&[self.as_metering()])
+            .and_then(|steuve| steuve.first().copied())
+            .map_or(Power::ZERO, |steuve| {
+                from_kw(m14a::mindestleistung_direktansteuerung(
+                    &steuve,
+                    &Para14aConfig::VERMUTUNG,
+                ))
+            })
     }
 
-    /// This device as `metering` counts it.
-    fn as_metering(&self) -> m14a::SteuVe {
-        m14a::SteuVe::new(self.fallgruppe, to_kw(self.power))
+    /// This device as `metering` counts it: one Anlage, which `metering`
+    /// groups per `[A1 2.4.2]` again — a no-op for a device [`classify_on`]
+    /// already grouped.
+    fn as_metering(&self) -> m14a::Anlage {
+        m14a::Anlage::new(self.fallgruppe, to_kw(self.power))
     }
 }
 
@@ -135,9 +142,8 @@ impl SteuVe {
 #[must_use]
 pub fn gleichzeitigkeitsfaktor(n: usize) -> f64 {
     use rust_decimal::prelude::ToPrimitive;
-    u32::try_from(n)
-        .ok()
-        .and_then(m14a::gleichzeitigkeitsfaktor)
+    Para14aConfig::VERMUTUNG
+        .gleichzeitigkeitsfaktor(n)
         .and_then(|d| d.to_f64())
         .unwrap_or(1.0)
 }
@@ -161,7 +167,7 @@ pub fn gleichzeitigkeitsfaktor(n: usize) -> f64 {
 ///      = 4,2 kW                                              otherwise
 /// ```
 ///
-/// The arithmetic itself is `metering::para14a`'s, not a second copy of it.
+/// The arithmetic itself is `metering::grid::para14a`'s, not a second copy of it.
 /// This function's job is to take the *site's* view — assets grouped into
 /// controllable devices by [`classify_on`], powers in watts — and ask the
 /// question in the Festlegung's own terms.
@@ -173,8 +179,8 @@ pub fn minimum_power(devices: &[SteuVe], mode: ControlMode) -> Power {
     match mode {
         ControlMode::Direct => devices.iter().map(SteuVe::minimum_power_direct).sum(),
         ControlMode::Ems => {
-            let grouped: Vec<m14a::SteuVe> = devices.iter().map(SteuVe::as_metering).collect();
-            m14a::mindestleistung_ems(&grouped, &Para14aConfig::default())
+            let anlagen: Vec<m14a::Anlage> = devices.iter().map(SteuVe::as_metering).collect();
+            m14a::mindestleistung_ems(&anlagen, &Para14aConfig::VERMUTUNG)
                 .map_or(Power::ZERO, from_kw)
         }
     }
@@ -274,7 +280,7 @@ pub fn classify_on(assets: &[Asset], date: Date) -> Vec<SteuVe> {
 /// the day the household is living in, not the one the clock is set to.
 #[must_use]
 pub fn classify_at(assets: &[Asset], now: OffsetDateTime) -> Vec<SteuVe> {
-    classify_on(assets, metering::calendar::local_day(now))
+    classify_on(assets, hems_core::calendar::local_day(now))
 }
 
 /// The **netzwirksamer Leistungsbezug**, `[A1 2.3]`.
@@ -666,13 +672,16 @@ mod tests {
     #[test]
     fn two_small_charge_points_are_not_summed() {
         // [A1 2.4.2] names only Fallgruppen b. and c.
-        assert!(classify_on(&[wallbox("wb1", 3.7), wallbox("wb2", 3.7)], TODAY).is_empty());
+        assert_eq!(
+            classify_on(&[wallbox("wb1", 3.7), wallbox("wb2", 3.7)], TODAY),
+            []
+        );
     }
 
     #[test]
     fn a_device_at_the_threshold_is_not_controllable() {
         // "mehr als 4,2 Kilowatt" — 4,2 exactly is not more than 4,2.
-        assert!(classify_on(&[wallbox("wb", 4.2)], TODAY).is_empty());
+        assert_eq!(classify_on(&[wallbox("wb", 4.2)], TODAY), []);
         assert_eq!(classify_on(&[wallbox("wb", 4.3)], TODAY).len(), 1);
     }
 
@@ -682,7 +691,7 @@ mod tests {
         if let Asset::Evse(e) = &mut public {
             e.public = true;
         }
-        assert!(classify_on(&[public], TODAY).is_empty());
+        assert_eq!(classify_on(&[public], TODAY), []);
     }
 
     #[test]
@@ -715,7 +724,7 @@ mod tests {
         if let Asset::Evse(e) = &mut old {
             e.meta.commissioned_at = Some(time::macros::date!(2019 - 03 - 01));
         }
-        assert!(classify_on(std::slice::from_ref(&old), TODAY).is_empty());
+        assert_eq!(classify_on(std::slice::from_ref(&old), TODAY), []);
 
         // …until the operator opts in, which is irreversible, `[A1 10.4]`.
         if let Asset::Evse(e) = &mut old {
@@ -754,8 +763,8 @@ mod tests {
             hp.meta.commissioned_at = Some(time::macros::date!(1998 - 01 - 01));
             hp.meta.legacy_status = LegacyStatus::Nachtspeicher;
         }
-        assert!(classify_on(std::slice::from_ref(&nsh), TODAY).is_empty());
-        assert!(classify_on(&[nsh], time::macros::date!(2035 - 01 - 01)).is_empty());
+        assert_eq!(classify_on(std::slice::from_ref(&nsh), TODAY), []);
+        assert_eq!(classify_on(&[nsh], time::macros::date!(2035 - 01 - 01)), []);
     }
 
     #[test]
@@ -771,7 +780,7 @@ mod tests {
         if let Asset::HeatPump(hp) = &mut new {
             hp.meta.commissioned_at = Some(time::macros::date!(2025 - 01 - 01));
         }
-        assert!(classify_on(&[old, new], TODAY).is_empty());
+        assert_eq!(classify_on(&[old, new], TODAY), []);
     }
 
     #[test]
@@ -784,7 +793,10 @@ mod tests {
             e.meta.legacy_status = LegacyStatus::ReducedNetworkFee;
         }
         let assets = [legacy];
-        assert!(classify_at(&assets, time::macros::datetime!(2028-12-31 22:30:00 UTC)).is_empty());
+        assert_eq!(
+            classify_at(&assets, time::macros::datetime!(2028-12-31 22:30:00 UTC)),
+            []
+        );
         assert_eq!(
             classify_at(&assets, time::macros::datetime!(2028-12-31 23:30:00 UTC)).len(),
             1

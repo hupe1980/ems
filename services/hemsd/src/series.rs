@@ -53,7 +53,7 @@ use std::path::Path;
 
 use chronix::chronix_query;
 use chronix::prelude::{
-    Chronix, ChronixConfig, FieldValue, Point, RecordBatch, SeriesKey, Timestamp,
+    Chronix, ChronixConfig, FieldValue, Parallelism, Point, RecordBatch, SeriesKey, Timestamp,
 };
 use hems_core::prelude::{AssetId, Power};
 use time::OffsetDateTime;
@@ -177,10 +177,11 @@ impl Series {
     /// is enforced by the store's own maintenance thread, so there is no sweep
     /// for this daemon to schedule and forget.
     ///
-    /// What the preset does **not** bound is a thread pool. Reading a bucket of
-    /// four segments or more takes `rayon`'s global pool, sized to the core
-    /// count, inside the process that owes the sixty-second § 14a heartbeat —
-    /// and it is the store's global rather than this daemon's to set (R33).
+    /// Queries run **serially**, on the calling thread. A read that fanned out
+    /// over a pool sized to the core count would do so inside the process that
+    /// owes the sixty-second § 14a heartbeat, and a gateway has two to four
+    /// cores. The preset already says so; it is set here as well, so the
+    /// property is this daemon's statement rather than a default it inherits.
     ///
     /// # Errors
     /// [`SeriesError::Store`] where the directory cannot be opened or locked —
@@ -193,6 +194,7 @@ impl Series {
         config.retention = Some(std::time::Duration::from_secs(
             u64::from(keep_days.max(1)) * 24 * 3_600,
         ));
+        config.parallelism = Parallelism::Serial;
         let db = Chronix::open(config).map_err(|e| SeriesError::Store(e.to_string()))?;
         let series = Self {
             db,

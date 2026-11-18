@@ -106,10 +106,11 @@ mod tests {
         let store: Arc<dyn JournalStore> =
             Arc::new(RedbStore::open_in_memory().expect("an in-memory journal"));
         let outcome = runtime(store)
-            .run(
+            .start(
                 skills::provenance::NAME,
                 Tainted::trusted(json!({ "days": "not a list of days" })),
             )
+            .run()
             .await
             .expect("the run completed");
         assert!(outcome.success().is_err(), "it failed, and it said why");

@@ -55,9 +55,37 @@ pub struct Local {
     /// generates, and on the box that means the household's own local API rather
     /// than a fleet service — this is the one-second half of it.
     series: Option<Arc<crate::series::Series>>,
+    /// What only the household page reads: the site, the plan, the goal.
+    home: HomeSources,
+}
+
+/// What the household page needs beyond `/v1/status`.
+#[derive(Clone, Default)]
+pub struct HomeSources {
+    /// The house, so the page can name its devices.
+    pub site: Option<Arc<hems_core::prelude::Site>>,
+    /// The plan in force.
+    pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
+    /// The prices it was made against.
+    pub prices: Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    /// The household's car goal, shared with the planner.
+    pub goal: crate::home::Goals,
+    /// The car as the planner last saw it.
+    pub car: crate::home::CarFacts,
+    /// The SHA-256 fingerprint of the box's SHIP certificate.
+    pub fingerprint: Option<String>,
+    /// The SHA-256 fingerprint of the certificate it serves HTTPS with.
+    pub https_fingerprint: Option<String>,
 }
 
 impl Local {
+    /// Give the household page what it reads beyond `/v1/status`.
+    #[must_use]
+    pub fn with_home(mut self, home: HomeSources) -> Self {
+        self.home = home;
+        self
+    }
+
     /// The surface over this box's own status.
     #[must_use]
     pub fn new(
@@ -77,6 +105,7 @@ impl Local {
             trust,
             access,
             series,
+            home: HomeSources::default(),
         }
     }
 }
@@ -226,6 +255,8 @@ pub fn router(local: Local) -> axum::Router {
             "/v1/overrides/{asset}",
             put(set_override).delete(clear_override),
         )
+        .route("/v1/home", get(home))
+        .route("/v1/goals/car", put(set_goal).delete(clear_goal))
         .with_state(local)
 }
 
@@ -266,7 +297,14 @@ async fn connect_manager(
         .access
         .connect_manager(&name)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| match e {
+            crate::runtime::access::ManagerError::Name(_) => {
+                (StatusCode::BAD_REQUEST, e.to_string())
+            }
+            crate::runtime::access::ManagerError::Store(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            }
+        })?;
     Ok(Json(Connected { name, token }))
 }
 
@@ -372,6 +410,7 @@ pub struct OverrideView {
 /// Ask for one.
 async fn set_override(
     State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
     axum::extract::Path(asset): axum::extract::Path<String>,
     Json(body): Json<OverrideBody>,
 ) -> Result<Json<OverrideView>, axum::http::StatusCode> {
@@ -389,7 +428,13 @@ async fn set_override(
         .await;
     // Logged, because an override is a *decision somebody made* and the reason
     // chain a household is shown has to be able to say so.
-    tracing::info!(%asset, what = ?held.what, until = %rfc3339(held.until), "a household override");
+    tracing::info!(
+        %asset,
+        what = ?held.what,
+        until = %rfc3339(held.until),
+        subject = %subject(who.as_deref()),
+        "a household override"
+    );
     Ok(Json(OverrideView {
         asset: asset.to_string(),
         what: held.what,
@@ -400,13 +445,14 @@ async fn set_override(
 /// Withdraw one.
 async fn clear_override(
     State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
     axum::extract::Path(asset): axum::extract::Path<String>,
 ) -> axum::http::StatusCode {
     let Ok(asset) = hems_core::prelude::AssetId::new(&asset) else {
         return axum::http::StatusCode::BAD_REQUEST;
     };
     if local.overrides.clear(&asset).await {
-        tracing::info!(%asset, "a household override was withdrawn");
+        tracing::info!(%asset, subject = %subject(who.as_deref()), "a household override was withdrawn");
         axum::http::StatusCode::NO_CONTENT
     } else {
         axum::http::StatusCode::NOT_FOUND
@@ -414,9 +460,12 @@ async fn clear_override(
 }
 
 /// Withdraw all of them — the "back to normal" button.
-async fn clear_overrides(State(local): State<Local>) -> axum::http::StatusCode {
+async fn clear_overrides(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+) -> axum::http::StatusCode {
     let n = local.overrides.clear_all().await;
-    tracing::info!(withdrawn = n, "every household override was withdrawn");
+    tracing::info!(withdrawn = n, subject = %subject(who.as_deref()), "every household override was withdrawn");
     axum::http::StatusCode::NO_CONTENT
 }
 
@@ -436,6 +485,78 @@ async fn list_overrides(State(local): State<Local>) -> Json<Vec<OverrideView>> {
             })
             .collect(),
     )
+}
+
+/// Who made a request, for the audit line (SR-007): `cem:<name>` or the site.
+fn subject(who: Option<&hems_service::auth::Authority>) -> String {
+    who.map_or_else(|| "unknown".into(), |a| a.subject().to_string())
+}
+
+/// The household page's one document.
+///
+/// Built by [`crate::home::live`] from the same status, plan and prices every
+/// other route reads, so the page cannot say something `/v1/status` does not.
+async fn home(State(local): State<Local>) -> Result<Json<crate::home::Home>, StatusCode> {
+    let Some(site) = local.home.site.as_ref() else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let status = local.status.lock().await;
+    let plan = local.home.plan.read().await;
+    let prices = local.home.prices.read().await;
+    let goal = *local.home.goal.lock().await;
+    let car = *local.home.car.lock().await;
+    Ok(Json(crate::home::live(
+        &crate::home::Live {
+            site,
+            status: &status,
+            plan: plan.as_ref(),
+            prices: prices.as_ref(),
+            goal,
+            car,
+            ski: local.ski.clone(),
+            fingerprint: local.home.fingerprint.clone(),
+            https_fingerprint: local.home.https_fingerprint.clone(),
+        },
+        OffsetDateTime::now_utc(),
+    )))
+}
+
+/// Set the car goal, and answer at once whether it can be met.
+async fn set_goal(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    Json(goal): Json<crate::home::CarGoal>,
+) -> Result<Json<Option<crate::home::GoalAnswer>>, (StatusCode, String)> {
+    if !(0.0..=1.0).contains(&goal.target_soc) || goal.by_minute >= 1440 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "a goal is a state of charge in [0, 1] and a time of day in minutes below 1440".into(),
+        ));
+    }
+    *local.home.goal.lock().await = Some(goal);
+    tracing::info!(
+        target = goal.target_soc,
+        by_minute = goal.by_minute,
+        subject = %subject(who.as_deref()),
+        "a car goal"
+    );
+    let now = OffsetDateTime::now_utc();
+    let answer = local.home.car.lock().await.map(|facts| {
+        crate::home::judge_goal(
+            &crate::home::session_for(&facts, goal, now),
+            hems_core::prelude::Slot::containing(now),
+        )
+    });
+    Ok(Json(answer))
+}
+
+/// Withdraw the car goal; the configured departure applies again.
+async fn clear_goal(State(local): State<Local>) -> StatusCode {
+    if local.home.goal.lock().await.take().is_some() {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
 }
 
 /// RFC 3339, or an empty string for an instant that cannot be formatted.

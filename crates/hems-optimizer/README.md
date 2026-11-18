@@ -99,6 +99,15 @@ that absorbs the energy balance's and makes the price of a kilowatt-hour
 number, which simplex never notices because it only compares coefficients with
 each other, and which an interior-point method faithfully returns as noise.
 
+## Use it
+
+```console
+$ cargo add hems-optimizer
+```
+
+API reference on [docs.rs](https://docs.rs/hems-optimizer); the design is explained in
+[The planner](https://hupe1980.github.io/hems/docs/optimizer/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

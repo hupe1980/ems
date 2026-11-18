@@ -112,7 +112,7 @@ impl Learned {
     /// a few days of an excited house and can never happen at all in a household
     /// whose heat pump nothing measures.
     #[must_use]
-    pub fn new(land: metering::Bundesland, building: hems_core::prelude::Rc2) -> Self {
+    pub fn new(land: hems_core::calendar::Bundesland, building: hems_core::prelude::Rc2) -> Self {
         Self {
             pv: ResidualModel::new(hems_forecast::residual::DEFAULT_ALPHA),
             health: hems_forecast::PlantHealth::new(),
@@ -134,7 +134,7 @@ impl Learned {
     #[must_use]
     pub fn restored(
         store: &crate::store::Store,
-        land: metering::Bundesland,
+        land: hems_core::calendar::Bundesland,
         building: hems_core::prelude::Rc2,
     ) -> Self {
         let mut learned = Self::new(land, building);
@@ -274,6 +274,29 @@ pub struct Planner {
     /// deadline without a car on the cable is a schedule the arbiter spends the
     /// afternoon failing to follow.
     pub charging: Option<crate::config::EebusEvSettings>,
+    /// The household's declared annual consumption, kWh, which scales the H25
+    /// prior a cold box leans on. See [`crate::forecasting::household_prior`].
+    pub household_kwh_per_year: Option<f64>,
+    /// The household's car goal from the page, which wins over `charging`'s
+    /// configured target and departure for as long as it is set.
+    pub goal: crate::home::Goals,
+    /// The car as this planner last saw it, published for the page to judge a
+    /// new goal against without a solve.
+    pub car: crate::home::CarFacts,
+}
+
+/// The charging settings with the household's goal, where it set one, in place
+/// of the configured target and departure.
+fn with_goal(
+    charging: Option<&crate::config::EebusEvSettings>,
+    goal: Option<crate::home::CarGoal>,
+) -> Option<crate::config::EebusEvSettings> {
+    let mut charging = charging?.clone();
+    if let Some(goal) = goal {
+        charging.target_soc = goal.target_soc.clamp(0.0, 1.0);
+        charging.departure = format!("{:02}:{:02}", goal.by_minute / 60, goal.by_minute % 60);
+    }
+    Some(charging)
 }
 
 /// Why a re-plan produced nothing.
@@ -415,7 +438,7 @@ pub async fn run(
         let now = OffsetDateTime::now_utc();
         refresh(&fleet, &mut cached, carbon_matters, now).await;
 
-        let today = metering::calendar::local_day(now);
+        let today = hems_core::calendar::local_day(now);
         if fitted_on != Some(today) {
             fitted_on = Some(today);
             let found = learned
@@ -506,6 +529,10 @@ async fn refresh(fleet: &Fleet, cached: &mut Cached, carbon_matters: bool, now: 
 }
 
 /// One solve, from what the box knows right now.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one solve is one sequence of reads, each named where it is taken"
+)]
 async fn attempt(
     planner: &Planner,
     registry: &Shared,
@@ -583,12 +610,15 @@ async fn attempt(
     // cell with a *certain zero*. It no longer does — an empty cell borrows the
     // same quarter hour from the day types the household has been seen on — and
     // the gate now asks the question the profile can actually answer.
-    let load = crate::forecasting::load_forecast(
+    let reading = crate::drivers::household_load(&observed);
+    let prior = crate::forecasting::household_prior(
         &held.load,
-        horizon,
-        crate::drivers::household_load(&observed),
-    )
-    .ok_or(Reason::NoHistory)?;
+        planner.household_kwh_per_year,
+        horizon.first,
+        reading,
+    );
+    let load = crate::forecasting::load_forecast(&held.load, prior.as_ref(), horizon, reading)
+        .ok_or(Reason::NoHistory)?;
     // Read while the lock is already held: the alternative is taking it a second
     // time forty lines further down for one `Copy` value.
     let building = held.building.building();
@@ -628,13 +658,23 @@ async fn attempt(
     // demand (`Rc2::free_heat_kw`).
     let window: Vec<f64> =
         series.window_w_per_m2_over(horizon, site.location, planner.facade_azimuth_deg);
+    let goal = *planner.goal.lock().await;
+    let charging = with_goal(planner.charging.as_ref(), goal);
     let ev = ev_session(
         site,
         &observed,
         &planner.household,
-        planner.charging.as_ref(),
+        charging.as_ref(),
         horizon,
     );
+    // The car's facts with a full target, so the page can judge any goal —
+    // including one above a target the car has already met, for which the
+    // session above is rightly empty.
+    *planner.car.lock().await = charging.as_ref().and_then(|c| {
+        let mut full = c.clone();
+        full.target_soc = 1.0;
+        ev_session(site, &observed, &planner.household, Some(&full), horizon)
+    });
     // The same prior the reference days plan against, and deliberately the same
     // one: a box that planned its tank against a different shape from the day
     // that measured the saving would be a box whose figures describe a household
@@ -1255,7 +1295,7 @@ mod tests {
         // its own load. Both models are cheap to keep and expensive to relearn.
         let store = crate::store::Store::in_memory().expect("a store");
         let now = time::OffsetDateTime::now_utc();
-        let land = metering::Bundesland::Be;
+        let land = hems_core::calendar::Bundesland::Be;
 
         let mut before = Learned::new(land, Rc2::house());
         // A fortnight, so every day type has been seen: a profile is indexed by
@@ -1304,7 +1344,7 @@ mod tests {
             .put_learned(PV_MODEL, &"a shape from some other version", now)
             .expect("it stores");
 
-        let restored = Learned::restored(&store, metering::Bundesland::Be, Rc2::house());
+        let restored = Learned::restored(&store, hems_core::calendar::Bundesland::Be, Rc2::house());
         assert!(
             !restored.pv.is_trained(),
             "the unreadable half is simply relearned"
@@ -1319,10 +1359,10 @@ mod tests {
         // not be handed the old answer back by its own store.
         let store = crate::store::Store::in_memory().expect("a store");
         let now = time::OffsetDateTime::now_utc();
-        let learned = Learned::new(metering::Bundesland::By, Rc2::house());
+        let learned = Learned::new(hems_core::calendar::Bundesland::By, Rc2::house());
         learned.remember(&store, now);
 
-        let restored = Learned::restored(&store, metering::Bundesland::Nw, Rc2::house());
-        assert_eq!(restored.load.land, metering::Bundesland::Nw);
+        let restored = Learned::restored(&store, hems_core::calendar::Bundesland::Nw, Rc2::house());
+        assert_eq!(restored.load.land, hems_core::calendar::Bundesland::Nw);
     }
 }

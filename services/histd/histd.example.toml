@@ -21,6 +21,13 @@
 # `service`.
 retention_sweep_s = 86400
 
+# The day the European Commission approved § 19 Abs. 3c EEG under state-aid
+# law. The MiSpeL Pauschaloption applies from the first day of the following
+# month and not at all before it (Tenorziffer 9 b). No approval had been
+# published when this was written, so it stays commented out until there is
+# one; a Pauschal site is refused with that reason meanwhile.
+# mispel_state_aid_approved_on = "2027-02-10"
+
 # ── The shell ────────────────────────────────────────────────────────────────
 [service]
 listen = "0.0.0.0:7580"
@@ -85,8 +92,9 @@ tenant = "*"
 # declared none is refused rather than settled under a guess — every option
 # produces a different Nachweis from the same registers.
 #
-# `[MiSpeL]` takes effect on 01.10.2026, and a period earlier than that is
-# refused rather than computed under rules nobody was in.
+# The Festlegung (BNetzA 618-25-02, 01.10.2026) took effect on 21.10.2026. A
+# period it does not govern for this site is refused rather than computed under
+# rules nobody was in.
 [mispel."reference-household"]
 # "abgrenzung" (per calendar month, with a Basisfall), "pauschal" (per calendar
 # year, with the plant's size) or "ausschliesslichkeit" (a store never charged
@@ -106,6 +114,18 @@ option    = "abgrenzung"
 # is refused a settlement rather than handed one claiming the battery stood
 # still — an omitted register is not a zero.
 basisfall = "a1"
+# When the installation was assigned to the option. An installation that was
+# already assigned to a Veräußerungsform switches only on the **first day of a
+# month** (§ 21b Abs. 1 S. 2 EEG by analogy), so for an existing roof the
+# earliest is 2026-11-01; histd refuses to start on any other day unless
+# `first_assignment = true` says this is a newly commissioned plant, whose first
+# period is then a Rumpfmonat.
+assigned_from    = "2026-11-01"
+first_assignment = false
+# Until 30.09.2027 the Festlegung applies only with the consent of the network
+# and metering operators (Tenorziffer 9 a). Without it, nothing before October
+# 2027 is settled — and the document says which way it was.
+operator_consent = true
 
 # ── The agent surface ────────────────────────────────────────────────────────
 #

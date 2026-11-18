@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block schema %}
+{%- set docs_url = get_url(path='@/docs/_index.md') %}
 {%- set_global extra %},
     {
       "@type": "TechArticle",
@@ -8,43 +9,54 @@
       "headline": {{ page.title | json_encode | safe }},
       "description": {{ page.description | default(value=config.description) | json_encode | safe }},
       "url": "{{ page.permalink }}",
+      "mainEntityOfPage": "{{ page.permalink }}",
       "isPartOf": { "@id": "{{ config.base_url }}/#website" },
       "about": { "@id": "{{ config.base_url }}/#project" },
-      "license": "https://spdx.org/licenses/MIT.html",
+      "author": { "@type": "Person", "name": "{{ config.extra.author }}" },
+      "image": "{{ get_url(path='og.png') }}",
+      "license": ["https://spdx.org/licenses/MIT.html", "https://spdx.org/licenses/Apache-2.0.html"],
+      {%- if page.word_count %}"wordCount": {{ page.word_count }},{% endif %}
       "inLanguage": "en"
     },
     {
       "@type": "BreadcrumbList",
       "@id": "{{ page.permalink }}#breadcrumb",
       "itemListElement": [
-        { "@type": "ListItem", "position": 1, "name": "hems", "item": "{{ config.base_url }}" },
-        { "@type": "ListItem", "position": 2, "name": "Documentation", "item": "{{ get_url(path='@/docs/_index.md') }}" },
-        { "@type": "ListItem", "position": 3, "name": {{ page.title | json_encode | safe }} }
+        { "@type": "ListItem", "position": 1, "name": "hems", "item": "{{ config.base_url }}/" },
+        { "@type": "ListItem", "position": 2, "name": "Documentation", "item": "{{ docs_url }}" },
+        { "@type": "ListItem", "position": 3, "name": {{ page.title | json_encode | safe }}, "item": "{{ page.permalink }}" }
       ]
     }{% endset %}
 {%- include "partials/schema.html" %}
 {% endblock %}
 
 {% block content %}
-<div class="docs-shell">
+<div class="docs-shell has-toc">
   {% set here = page.path %}
-  {% include "partials/docs-nav.html" %}
   <article>
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <a href="{{ get_url(path='@/docs/_index.md') }}">Documentation</a>
+      {% if page.extra.group %}<span aria-hidden="true">›</span><span>{{ page.extra.group }}</span>{% endif %}
+    </nav>
     <h1>{{ page.title }}</h1>
     {% if page.description %}<p class="lead">{{ page.description }}</p>{% endif %}
-    {% if page.toc | length > 2 %}
-    <nav class="toc" aria-label="On this page">
-      <strong>On this page</strong>
-      <ul>
-      {% for h in page.toc %}<li><a href="{{ h.permalink | safe }}">{{ h.title }}</a></li>{% endfor %}
-      </ul>
-    </nav>
-    {% endif %}
+    <p class="meta">{{ page.reading_time }} min read · <a href="{{ config.extra.repository }}/edit/main/site/content/{{ page.relative_path }}" rel="noopener">Edit this page</a></p>
     {{ page.content | safe }}
-    <nav class="pager" aria-label="Documentation">
+    <nav class="pager" aria-label="Previous and next page">
       <span>{% if page.lower %}<a rel="prev" href="{{ page.lower.permalink }}"><span class="dir">Previous</span>← {{ page.lower.title }}</a>{% endif %}</span>
       <span>{% if page.higher %}<a rel="next" href="{{ page.higher.permalink }}"><span class="dir">Next</span>{{ page.higher.title }} →</a>{% endif %}</span>
     </nav>
   </article>
+  {% include "partials/docs-nav.html" %}
+  {% if page.toc | length > 1 %}
+  <aside class="toc" aria-label="On this page">
+    <strong>On this page</strong>
+    <ul>
+    {% for h in page.toc %}<li><a href="{{ h.permalink | safe }}">{{ h.title }}</a>
+      {% if h.children %}<ul>{% for c in h.children %}<li><a href="{{ c.permalink | safe }}">{{ c.title }}</a></li>{% endfor %}</ul>{% endif %}
+    </li>{% endfor %}
+    </ul>
+  </aside>
+  {% endif %}
 </div>
 {% endblock %}

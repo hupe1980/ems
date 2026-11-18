@@ -1,7 +1,10 @@
 +++
 title = "Flexibility"
 description = "S2 (EN 50491-12-2) as the internal model: a device describes what it can do, not what it is for."
-weight = 8
+weight = 10
+
+[extra]
+group = "The box"
 +++
 
 ## Why a second protocol
@@ -330,8 +333,9 @@ message:
   connection stays up: a manager that is not driving may still want the
   measurements, and may select again without reconnecting.
 
-None of the three can be proved from inside. That is R32's whole argument, and
-it is why what this surface needs next is not a feature but a stranger on the
+None of the three can be proved from inside: a session tested only against the
+library it is built on can be wrong in the same way as that library. What this
+surface needs next is not a feature but an independent implementation on the
 far end of the socket.
 
 Every message this crate produces is round-tripped through JSON in its own tests

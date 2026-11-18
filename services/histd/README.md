@@ -45,7 +45,8 @@ drew, and it is theirs to check — while Article 4 is a right of the *user*, an
 fleet token is not a household.
 
 The **MiSpeL settlement** sits with the export rather than with the Nachweis. It
-is the household's own levy privilege (§ 21 EnFG from 01.10.2026) and the flows
+is the household's own levy privilege (§ 21 EnFG, under the MiSpeL Festlegung in
+effect since 21.10.2026) and the flows
 behind it — how full the store was, when it was charged from the grid, what the
 roof earned — and the Festlegung has the *Anlagenbetreiber* produce and submit
 it. So the same credential that cannot read one cannot read the other, and it is
@@ -58,10 +59,17 @@ from the same registers and a guessed one is arithmetically perfect and about
 somebody else's installation. Ausschließlichkeit settles nothing and is still
 **checked** against those registers: it is a claim that no quarter hour shows
 grid draw and storage charging at once, `(1)¼` is what measures that, and the
-export reports the figure and names any quarter hour that breaks it. The **period comes from the calendar**, not from the
-caller: the arithmetic needs exactly one calendar month and cannot check that it
-got one, and a boundary at a fixed `+01:00` would lose an hour every March and
-double one every October. And the **denominator is on the document** —
+export reports the figure and names any quarter hour that breaks it. The
+**period comes from the calendar and the rules**, not from the caller: a year
+and a month are narrowed to what the Festlegung governs for *this* site — not
+before 21.10.2026, not before the site's `assigned_from` (the first of a month
+for an existing plant, which `histd` checks at start-up), not before October
+2027 without the operators' consent, and for the Pauschaloption not before the
+month after EU state-aid approval (`mispel_state_aid_approved_on`). What starts
+mid-period settles as a Rumpfmonat or Rumpfjahr, and the document prints the
+`window` and the `conditions` it rests on; a refused period answers `400` with
+the clause in the body. Boundaries come from the Berlin calendar, so March and
+October have the hours they really have. And the **denominator is on the document** —
 `quarter_hours_expected`, `quarter_hours_present`, `complete` — because a quarter
 hour the box could not price gets no register, so a month legitimately has gaps
 and a settlement over part of one under-reports every quantity in it while
@@ -73,10 +81,6 @@ to the household — and it needs `Z3V¼`/`Z3E¼`, which are nullable here. The 
 means *not separately metered* rather than zero: a household declared A4 whose
 store went unread is refused rather than handed a settlement claiming its battery
 stood still.
-
-Until it existed the whole formula set had **no production caller at all**: the
-box wrote the registers, this service kept them for two years, and nothing ever
-settled them.
 
 ## Where this runs, and why it is not on the box
 

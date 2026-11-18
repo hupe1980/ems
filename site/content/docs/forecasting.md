@@ -1,7 +1,10 @@
 +++
 title = "Forecasting, and being wrong"
 description = "What the box believes about tomorrow, how it learned it, and what it costs to be wrong about it — the number no other energy manager publishes."
-weight = 7
+weight = 9
+
+[extra]
+group = "The box"
 +++
 
 ## A forecast a controller can be judged against
@@ -286,7 +289,8 @@ of them.
 | `load` | the household's uncontrolled draw | its own quarter hours, by day type |
 | `session` | when the car comes home and how empty | its own charging sessions, by weekday |
 | `building` | which house this is — its fabric, the sun it lets in and the heat its occupants make | indoor and outdoor temperature and the irradiance on its windows, against the heat put in, starting from the archetype the installer picked |
-| `naive` | any of them, badly, with almost nothing | one reading, on a box that has no profile yet |
+| `prior` | the household's uncontrolled draw, before the box has measured it | BDEW's **H25** household profile, scaled to this household |
+| `naive` | any of them, badly, with almost nothing | one reading, where there is no profile and no prior |
 | `metrics` | nothing — it scores the rest | pinball, coverage, bias, CRPS |
 
 Two of them start from something the installer typed rather than from a constant,
@@ -350,9 +354,64 @@ Answering zero would be the one thing a forecast must never do — say *the hous
 will use nothing, and I am sure* — and a plan given that defers every flexible
 kilowatt-hour into hours it believes are free.
 
-Only a profile that has learned nothing at all has nothing to say, and the box
-does not ask one: it uses persistence off its own meter on its first morning, and
-refuses to plan if it cannot read its own connection point.
+## The first evening
+
+A box that has just been installed has measured nothing, and the obvious
+fallback — carry the one reading it has forward — is the wrong shape for the
+quantity that matters most. A household's draw has a strong daily shape, and the
+reading a box starts from is usually the night trough. Planned against a flat
+line at the trough, the first evening defers flexible load into hours the box
+believes are quiet and cheap. On the January reference day that box came out
+**€1,75 worse than no energy manager at all**.
+
+So the box starts from a published shape instead: BDEW's **H25**, the 2025
+revision of the household standard load profile every German network operator
+may balance households on. Twelve months, three day types on the Bundesland's
+own holiday calendar — Werktag, Samstag, Sonn- und Feiertag — and 96 quarter
+hours, normalised to one million kWh a year and dynamised over the year by
+BDEW's own quartic. The table is BDEW's, unchanged; the model reading it is
+`metering`'s.
+
+It is **H25 rather than P25**, although the house has a roof. BDEW balances a PV
+household on P25, whose values are the *net* draw with the roof already taken
+off. This forecast is the gross household load, and the planner subtracts its
+own PV forecast; P25 would count the roof twice.
+
+How large a household the shape is scaled to, in order:
+
+| Basis | When | Why |
+|---|---|---|
+| **declared** | `[site] household_kwh_per_year` is set | the household's own *Haushaltsstrom* — not a bill that meters a heat pump or a wallbox on the same register, which would overstate it several times over |
+| **fitted** | the box has metered one whole day of any day type | the household's own energy for that day against H25's for a day of the same type this month: a whole day averages away the kettle that one reading cannot |
+| **anchored** | before that | scaled so H25 agrees with the reading — but never below a typical family house (BDEW: about 4 175 kWh a year for four persons) |
+
+The anchor has a floor because its two errors do not cost the same. Measured on
+the cold January day, a box that plans for 40 % *more* household load than there
+is loses less than one that plans for 40 % *less*: an unneeded kilowatt-hour
+bought is cheap, a flexible load deferred into an hour that turns out to be busy
+is not. The night trough is the direction that under-scales, so the anchor errs
+high — the same conservative number the guard uses for a device that has gone
+quiet.
+
+The prior fades **cell by cell**: each `(day type, quarter hour)` mixes the
+household's own band with H25's, the prior's weight falling from one with no
+observation to nothing at four. A box six weeks old has seen thirty Tuesdays and
+perhaps no public holiday, so a holiday still reads H25's Sunday table while every
+workday plans on the household alone — and a box that has learned its household
+plans exactly as it would with no prior at all.
+
+A box's day report says what its load forecast leaned on, for as long as it
+leans on anything — on the cold January reference day, *H25, anchored on one
+reading (100 % of the day)*; on a box that has learned its household, nothing.
+
+The cold January box now **saves €0,50**. Two limits on that figure, stated rather
+than discovered. The simulated household uses about 4 000 kWh a year, 4 % below the
+anchor's floor — the direction the floor errs in by design — so the day shows an
+undeclared box on a household close to its floor; a household far from that size
+is served by the asymmetry above rather than by this number. And no real house has run its first evening on it yet.
+
+Only a box with no prior and no history at all falls back to persistence off its
+own meter, and a box that cannot read its own connection point refuses to plan.
 
 ## What this measurement is not
 

@@ -1,7 +1,10 @@
 +++
 title = "Tariffs and prices"
 description = "A German electricity bill is a stack, and every layer moves for its own reasons: five day-ahead sources, § 51 EEG, and an advisor for the § 14a Module."
-weight = 5
+weight = 7
+
+[extra]
+group = "The box"
 +++
 
 Since **1 October 2025** the German day-ahead auction clears in quarter hours, and

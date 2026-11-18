@@ -27,7 +27,7 @@ that reaches out has to decide who it trusts and whether the link is
 confidential, and seven call sites deciding that separately is six chances to
 decide it differently — so `TlsRoots` is one setting an operator writes down, and
 plain `http` to anything but a loopback address is refused at start-up rather
-than at whichever call site remembered to look (D85, D171).
+than at whichever call site remembered to look.
 
 The database was outside that list until three daemons had one. What is here is
 not a schema — that belongs to whichever daemon's tables it describes — it is
@@ -39,7 +39,7 @@ readiness ping so a dead database marks a pod `NotReady` instead of hanging its
 probe. The shape is `mako_service::config::DatabaseConfig`'s deliberately; the
 driver is `tokio-postgres` rather than `sqlx` because what `sqlx` adds over it
 is a compile-time `query!` these daemons do not use and a `migrate!` this module
-already replaces (D158).
+already replaces.
 
 ## Live and ready are different questions
 
@@ -64,6 +64,15 @@ millisecond because the clock and the socket live here instead.
 Even the configuration overlay is a pure function of a lookup — `load_from`
 takes the environment as a closure — so a test never has to mutate the process
 environment to check that `HEMS_TARIFFD_LISTEN` beats the file.
+
+## Use it
+
+```console
+$ cargo add hems-service
+```
+
+API reference on [docs.rs](https://docs.rs/hems-service); the design is explained in
+[Security](https://hupe1980.github.io/hems/docs/security/) on the hems site.
 
 ## License
 

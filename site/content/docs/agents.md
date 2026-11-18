@@ -1,7 +1,10 @@
 +++
 title = "Agents"
 description = "Every fleet service answers over the Model Context Protocol, read-only and authorising each caller as itself — beside an advisory plane that cannot act."
-weight = 12
+weight = 14
+
+[extra]
+group = "Running it"
 +++
 
 An energy manager produces a great many exact answers: is this setpoint inside

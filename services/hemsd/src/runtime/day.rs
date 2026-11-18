@@ -247,7 +247,7 @@ impl FeedIn {
 /// Build the KPIs for the Berlin calendar day `date`, from what the box wrote
 /// down.
 ///
-/// The day boundary comes from `metering::calendar`, which is the same one
+/// The day boundary comes from `metering::time::calendar`, which is the same one
 /// `[A1 10.1]` and the Zählzeitdefinitionen are written in — and the only one
 /// that tiles a DST transition without a gap or an overlap. A day computed from
 /// a fixed `+01:00` would lose an hour every March and double one every October,
@@ -269,8 +269,8 @@ pub fn kpis(
     feed_in: FeedIn,
     scored: &Scored,
 ) -> Result<Option<DayKpis>, StoreError> {
-    let from = metering::calendar::day_start_utc(date);
-    let to = metering::calendar::day_end_utc(date);
+    let from = hems_core::calendar::day_start_utc(date);
+    let to = hems_core::calendar::day_end_utc(date);
 
     let registers = store.quarter_hours_between(from, to)?;
     if registers.is_empty() {
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn the_energies_come_from_the_registers_and_the_money_does_not() {
         let store = Store::in_memory().unwrap();
-        let midnight = metering::calendar::day_start_utc(date!(2026 - 01 - 15));
+        let midnight = hems_core::calendar::day_start_utc(date!(2026 - 01 - 15));
         for i in 0..4 {
             store
                 .put_quarter_hour(&register(midnight, i, 100, 25, 50), midnight)
@@ -435,7 +435,7 @@ mod tests {
     fn a_register_from_the_next_day_belongs_to_the_next_day() {
         // The window is half-open, so the boundary quarter hour is counted once.
         let store = Store::in_memory().unwrap();
-        let midnight = metering::calendar::day_start_utc(date!(2026 - 01 - 15));
+        let midnight = hems_core::calendar::day_start_utc(date!(2026 - 01 - 15));
         // 23:45 on the 15th, and 00:00 on the 16th.
         store
             .put_quarter_hour(&register(midnight, 95, 100, 0, 0), midnight)

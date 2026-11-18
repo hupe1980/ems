@@ -12,7 +12,7 @@
 //! * **seasonal naive** — tomorrow at 07:15 looks like the most recent day's
 //!   07:15. For a household load that is a strong baseline and it is the model
 //!   the literature keeps failing to beat by much on single-household series
-//!   (`specs/arxiv/arxiv-2512.00856.pdf`).
+//!   (arXiv:2512.00856).
 //! * **persistence** — the next hours look like the last one. Right for a
 //!   quantity with no daily shape, and right for photovoltaics over a *short*
 //!   horizon on an overcast day, where it beats a clear-sky model outright.

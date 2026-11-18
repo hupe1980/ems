@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>hems</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<a class="skip" href="#screen">Zum Inhalt</a>
+<header class="top">
+  <h1 id="site">hems</h1>
+  <div class="status"><span id="live" class="live off" aria-hidden="true"></span><span id="when"></span><span id="demo" class="demo-chip" hidden></span></div>
+</header>
+<main id="screen" class="screen" tabindex="-1" aria-live="polite"></main>
+<div class="dock">
+  <div id="timebar" class="timebar" hidden>
+    <button id="play" type="button" aria-label="Play"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path id="playicon" d="M8 5v14l11-7z" fill="currentColor"/></svg></button>
+    <input id="scrub" type="range" min="0" max="1439" step="5" value="0" aria-label="Uhrzeit">
+    <output id="clock">00:00</output>
+  </div>
+  <nav class="tabs" aria-label="Ansichten">
+    <a href="#now" data-v="now"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" fill="currentColor"/></svg><span data-t="tab.now"></span></a>
+    <a href="#plan" data-v="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m5 10V4m5 16v-7m5 7V8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg><span data-t="tab.plan"></span></a>
+    <a href="#day" data-v="day"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Zm3 5h6M9 12h6" stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="none"/></svg><span data-t="tab.day"></span></a>
+    <a href="#setup" data-v="setup"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9l2.1 2.1m10 10 2.1 2.1M4.9 19.1 7 17m10-10 2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span data-t="tab.setup"></span></a>
+  </nav>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

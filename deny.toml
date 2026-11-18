@@ -100,6 +100,20 @@ reason = "the certificate verifier follows the same provider as rustls itself"
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # `chrono` is unmaintained (all versions; no safe upgrade). It is not a
+    # vulnerability, and it is not ours: hems uses `time` throughout, and chrono
+    # reaches the tree only through Apache Arrow under `chronix` (arrow-arith,
+    # arrow-array, arrow-cast, parquet), which neither hems nor chronix can swap.
+    # Revisit when Arrow moves off it; a *vulnerability* advisory against chrono
+    # would not be covered by this entry.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, transitive via Apache Arrow under chronix; hems uses `time`" },
+    # `chrono-tz` is unmaintained, and unlike chrono it is a *direct* dependency
+    # of `chronix-core` — so it is chronix's to replace, and the request is in
+    # CHRONIX_FEEDBACK.md. hemsd never names a time zone through chronix: Berlin
+    # local time is `metering`'s calendar (`hems_core::calendar`).
+    { id = "RUSTSEC-2026-0555", reason = "unmaintained, direct dependency of chronix-core; raised upstream" },
+]
 
 [sources]
 unknown-registry = "deny"

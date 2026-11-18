@@ -1,7 +1,7 @@
 # fleetd
 
-Adopting a box, telling it what to run, and offering it updates — for
-[hems](https://github.com/hupe1980/hems).
+Adopting a box, telling it what to run, and offering it updates — the fleet
+side of [hems](https://github.com/hupe1980/hems).
 
 Three jobs, and the third has a security argument behind it.
 
@@ -39,6 +39,10 @@ sequenceDiagram
 the signing key**. A compromised `fleetd` can therefore serve a manifest no box
 will accept, which is what makes the fleet server ordinary infrastructure rather
 than the root of trust.
+
+> [!NOTE]
+> This is the fleet's half. `hemsd` does not yet enrol, pull its configuration
+> or check for releases; until it does, both reach a box through its installer.
 
 That is the Cyber Resilience Act's integrity requirement (Regulation (EU)
 2024/2847, Annex I Part I § 2(c)) implemented rather than asserted — the

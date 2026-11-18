@@ -60,6 +60,15 @@ assert_eq!(limit.authority(), Authority::Guard);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Use it
+
+```console
+$ cargo add hems-core
+```
+
+API reference on [docs.rs](https://docs.rs/hems-core); the design is explained in
+[The domain model](https://hupe1980.github.io/hems/docs/domain-model/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

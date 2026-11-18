@@ -575,7 +575,7 @@ fn connection(config: &HouseholdConfig) -> GridConnection {
     let c = &config.connection;
     GridConnection {
         malo: c.malo,
-        melo: c.melo.clone(),
+        melo: c.melo,
         dso_code: c.dso_code.clone(),
         netzbereich: c.netzbereich.clone(),
         contract_power: c.contract_power,

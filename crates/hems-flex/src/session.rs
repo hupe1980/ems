@@ -1798,7 +1798,7 @@ mod tests {
             },
             T0,
         );
-        assert!(sent(&mut session).is_empty());
+        assert_eq!(sent(&mut session), []);
     }
 
     /// An SG Ready state is **told**, not inferred.

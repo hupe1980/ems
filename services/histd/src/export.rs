@@ -35,7 +35,10 @@
 //! Assembling the document column by column would make it a second rendering,
 //! and the two would agree until one of them was changed.
 
-use hems_grid::mispel::{Basisfall, PauschalPlant, QuarterHour, RuleSet};
+use hems_grid::mispel::{
+    Assignment, Basisfall, Conditions, Governed, MispelOption, PauschalPeriod, PauschalPlant,
+    QuarterHour, Refusal, RuleSet,
+};
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use time::{Month, OffsetDateTime};
@@ -170,25 +173,18 @@ pub enum MispelExportError {
     /// The window asked for is not a period the chosen option settles over.
     #[error("{0}")]
     WrongWindow(String),
-    /// The period asked for is earlier than the rules that would settle it.
+    /// Nothing of the period asked for is governed by the Festlegung for this
+    /// site — before the rules took effect, before its assignment, before the
+    /// operators' consent or the Pauschaloption's state-aid month.
     ///
-    /// Refused rather than settled anyway, for the same reason
-    /// [`MispelExportError::Undeclared`] is: the arithmetic would be perfect and
-    /// about a regime that did not exist. `hems-grid` versions the Festlegung
-    /// (`RuleSet`) precisely so this question has an answer, and until now
-    /// nothing asked it — a household could have been handed a Nachweis for
-    /// March 2026 computed under rules effective from October.
-    #[error(
-        "{period} ends before {version} takes effect on {effective_from}; \
-         there is no MiSpeL settlement for a period the Festlegung did not reach"
-    )]
-    BeforeTheRules {
+    /// Refused rather than settled anyway: the arithmetic would be perfect and
+    /// about a regime the household was not in.
+    #[error("{period}: {refusal}")]
+    NotGoverned {
         /// The period asked for.
         period: String,
-        /// The rule set that would have settled it.
-        version: &'static str,
-        /// The day it takes effect.
-        effective_from: time::Date,
+        /// Which condition leaves none of it governed.
+        refusal: Refusal,
     },
     /// The month or year asked for is not one.
     #[error("{year}-{month:?} is not a calendar month")]
@@ -322,7 +318,7 @@ async fn exclusivity(
 ///
 /// `month` is required for the Abgrenzungsoption, which settles per calendar
 /// month, and refused for the Pauschaloption, which settles per calendar year.
-/// The window is built from `metering::calendar`, not from the caller: the
+/// The window is built from `metering::time::calendar`, not from the caller: the
 /// arithmetic requires exactly one calendar period and says it cannot check
 /// that for you, so the one thing to do is take the ability to get it wrong
 /// away from whoever is asking. A month boundary at a fixed `+01:00` would
@@ -350,6 +346,7 @@ pub async fn mispel(
     store: &Store,
     site: &str,
     declared: Option<MispelSettings>,
+    state_aid_approved_on: Option<time::Date>,
     year: i32,
     month: Option<u8>,
     as_of: Option<OffsetDateTime>,
@@ -362,84 +359,67 @@ pub async fn mispel(
     // Ausschließlichkeit has nothing to *separate* — a store never charged from
     // the grid holds no grey energy — but it is not therefore a period with
     // nothing to say. See [`exclusivity`].
-    if matches!(declared, MispelSettings::Ausschliesslichkeit) {
+    let Some(assignment) = declared.assignment() else {
         return exclusivity(store, site, rules, year, month, as_of).await;
-    }
-
-    let (from, to, expected, period) = match (&declared, month) {
-        (MispelSettings::Abgrenzung { .. }, Some(m)) => {
-            let (from, to) = calendar_month(year, m)?;
-            (
-                from,
-                to,
-                quarter_hours_between(from, to),
-                format!("{year}-{m:02}"),
-            )
-        }
-        (MispelSettings::Abgrenzung { .. }, None) => {
-            return Err(MispelExportError::WrongWindow(
-                "the Abgrenzungsoption settles per calendar month, so `month` is required".into(),
-            ));
-        }
-        (MispelSettings::Pauschal { .. }, None) => {
-            let (from, to) = calendar_year(year)?;
-            (from, to, quarter_hours_between(from, to), year.to_string())
-        }
-        (MispelSettings::Pauschal { .. }, Some(_)) => {
-            return Err(MispelExportError::WrongWindow(
-                "the Pauschaloption settles per calendar year, so `month` must be omitted".into(),
-            ));
-        }
-        (MispelSettings::Ausschliesslichkeit, _) => unreachable!("answered above"),
     };
 
-    // A settlement is dated, and so are the rules. `[MiSpeL]` takes effect on
-    // 01.10.2026 with a transition to 30.09.2027, so a period that ends before
-    // that has no Abgrenzung and no Pauschale to compute — and a document that
-    // computed one anyway would be arithmetically perfect and about a regime
-    // nobody was in. The whole point of versioning the Festlegung is to be able
-    // to say so.
-    //
-    // The test is on the **end** of the period rather than its start, so it
-    // refuses only a period the Festlegung never reached at all. A period that
-    // *straddles* the commencement — the month it arrives in, and the first
-    // Pauschal year — settles, and whether that is right is a question about the
-    // transitional provisions rather than about this code: `[MiSpeL A1]`'s
-    // quantities are quarter-hourly sums, so a straddling period is a partial
-    // one, and `Completeness` is already the field that says so on the document.
-    // Narrowing it further needs the Übergangsregelung read rather than
-    // guessed at (ROADMAP).
-    if !rules.applies_on(to.date()) {
-        return Err(MispelExportError::BeforeTheRules {
-            period,
-            version: rules.version(),
-            effective_from: rules.effective_from(),
-        });
-    }
+    let (option, period_first, period_last, period) = period_for(&declared, year, month)?;
+
+    // The window the rules govern, `[MiSpeL Tenor 8]` and `[MiSpeL Tenor 9]`:
+    // not before the effect date, the assignment, the operators' consent and —
+    // for the Pauschaloption — the month after state-aid approval. What starts
+    // inside the period settles as a Rumpfmonat or Rumpfjahr, which takes the
+    // place of the calendar period (Anlage 1 § 11, Anlage 2 § 9).
+    let conditions = Conditions {
+        assignment: Assignment {
+            from: assignment.assigned_from,
+            first: assignment.first_assignment,
+        },
+        operator_consent: assignment.operator_consent,
+        state_aid_approved_on,
+    };
+    let window: Governed =
+        hems_grid::mispel::governed(rules, option, conditions, period_first, period_last).map_err(
+            |refusal| MispelExportError::NotGoverned {
+                period: period.clone(),
+                refusal,
+            },
+        )?;
+    let from = hems_core::calendar::day_start_utc(window.first);
+    let to = hems_core::calendar::day_end_utc(window.last);
 
     let quarters = store
         .quarter_hours_as_of(site, Some(from), Some(to), as_of)
         .await?;
     let complete = Completeness {
-        expected,
+        expected: quarter_hours_between(from, to),
         present: quarters.len(),
     };
 
     let figures = match declared {
-        MispelSettings::Abgrenzung { basisfall } => {
+        MispelSettings::Abgrenzung { basisfall, .. } => {
             abgrenzung_figures(basisfall, rules, &quarters)?
         }
         MispelSettings::Pauschal {
             fall,
             solar_kwp,
             storage_kwh,
+            ..
         } => {
             let plant = PauschalPlant {
                 fall,
                 solar_kwp: decimal(solar_kwp),
                 storage_kwh: decimal(storage_kwh),
             };
-            pauschal_figures(plant, rules, &quarters)?
+            let span = if window.rumpf {
+                PauschalPeriod::Rumpfjahr {
+                    first: window.first,
+                    last: window.last,
+                }
+            } else {
+                PauschalPeriod::Year(year)
+            };
+            pauschal_figures(plant, rules, span, &quarters)?
         }
         MispelSettings::Ausschliesslichkeit => unreachable!("answered above"),
     };
@@ -449,18 +429,39 @@ pub async fn mispel(
         "rule_set": rules.version(),
         "effective_from": rules.effective_from().to_string(),
         "period": period,
+        // The part of the period the rules govern, inclusive. `rumpf` names
+        // the partial period the Anlagen settle in place of the calendar one.
+        "window": {
+            "first": window.first.to_string(),
+            "last": window.last.to_string(),
+            "rumpf": window.rumpf.then_some(match option {
+                MispelOption::Abgrenzung => "rumpfmonat",
+                MispelOption::Pauschal => "rumpfjahr",
+            }),
+        },
+        // What the settlement rests on that no register shows. A declaration
+        // printed on the document is one somebody can check afterwards.
+        "conditions": {
+            "assigned_from": assignment.assigned_from.to_string(),
+            "first_assignment": assignment.first_assignment,
+            "operator_consent": assignment.operator_consent,
+            "consent_required_until": rules.consent_required_until().map(|d| d.to_string()),
+            "state_aid_approved_on": state_aid_approved_on.map(|d| d.to_string()),
+            "pauschal_applicable_from": (option == MispelOption::Pauschal)
+                .then(|| rules.pauschal_applicable_from(state_aid_approved_on))
+                .flatten()
+                .map(|d| d.to_string()),
+        },
         "from": from.unix_timestamp(),
         "to": to.unix_timestamp(),
         // Which *version* of the record this document is about. A settlement is
         // reproducible only if it says which registers it read, and a register
-        // can be restated after the document has been sent — so a Nachweis with
-        // no transaction time on it is one nobody can check twice. `null` is
-        // "the registers as they stand", which is what a first settlement is.
+        // can be restated after the document has been sent. `null` is "the
+        // registers as they stand", which is what a first settlement is.
         "as_of": as_of.map(OffsetDateTime::unix_timestamp),
         "settled": true,
-        // The denominator, on the document. A settlement over part of a period
-        // is not a settlement, and the reader has to be able to see that
-        // without recomputing it.
+        // The denominator, on the document: a settlement over part of the
+        // window is not a settlement, and the reader has to see that.
         "quarter_hours_expected": complete.expected,
         "quarter_hours_present": complete.present,
         "complete": complete.is_complete(),
@@ -468,7 +469,39 @@ pub async fn mispel(
     }))
 }
 
-/// The Abgrenzungsoption's figures, `[MiSpeL A1 (1)]`–`(33)`.
+/// The calendar period a declared option settles over, and the option it is.
+fn period_for(
+    declared: &MispelSettings,
+    year: i32,
+    month: Option<u8>,
+) -> Result<(MispelOption, time::Date, time::Date, String), MispelExportError> {
+    match (declared, month) {
+        (MispelSettings::Abgrenzung { .. }, Some(m)) => {
+            let (first, last) = month_days(year, m)?;
+            Ok((
+                MispelOption::Abgrenzung,
+                first,
+                last,
+                format!("{year}-{m:02}"),
+            ))
+        }
+        (MispelSettings::Abgrenzung { .. }, None) => Err(MispelExportError::WrongWindow(
+            "the Abgrenzungsoption settles per calendar month, so `month` is required".into(),
+        )),
+        (MispelSettings::Pauschal { .. }, None) => {
+            let (first, last) = year_days(year)?;
+            Ok((MispelOption::Pauschal, first, last, year.to_string()))
+        }
+        (MispelSettings::Pauschal { .. }, Some(_)) => Err(MispelExportError::WrongWindow(
+            "the Pauschaloption settles per calendar year, so `month` must be omitted".into(),
+        )),
+        (MispelSettings::Ausschliesslichkeit, _) => Err(MispelExportError::WrongWindow(
+            "Ausschließlichkeit settles nothing".into(),
+        )),
+    }
+}
+
+/// The Abgrenzungsoption's figures, `[MiSpeL A1 (1)]`–`(32)`.
 ///
 /// The domain type is **serialised**, not transcribed field by field. Its own
 /// names are the Festlegung's — `Z1NB¼`, `Z2V¼`, the numbered intermediates —
@@ -492,14 +525,15 @@ fn abgrenzung_figures(
     }))
 }
 
-/// The Pauschaloption's figures, `[MiSpeL A2 (P1)]`–`(P15)`, serialised for the
+/// The Pauschaloption's figures, `[MiSpeL A2 (P1)]`–`(P16)`, serialised for the
 /// same reason.
 fn pauschal_figures(
     plant: PauschalPlant,
     rules: RuleSet,
+    period: PauschalPeriod,
     quarters: &[QuarterHour],
 ) -> Result<Value, MispelExportError> {
-    let p = hems_grid::mispel::pauschal_year(plant, rules, quarters)?;
+    let p = hems_grid::mispel::pauschal_period(plant, rules, period, quarters)?;
     Ok(json!({
         "option": "pauschal",
         "plant": serde_json::to_value(plant).unwrap_or(Value::Null),
@@ -533,9 +567,29 @@ fn calendar_month(
     }
     .map_err(|_| MispelExportError::NotACalendarMonth { year, month })?;
     Ok((
-        metering::calendar::day_start_utc(first),
-        metering::calendar::day_start_utc(next),
+        hems_core::calendar::day_start_utc(first),
+        hems_core::calendar::day_start_utc(next),
     ))
+}
+
+/// The first and last day of a calendar month.
+fn month_days(year: i32, month: u8) -> Result<(time::Date, time::Date), MispelExportError> {
+    let m =
+        Month::try_from(month).map_err(|_| MispelExportError::NotACalendarMonth { year, month })?;
+    let first = time::Date::from_calendar_date(year, m, 1)
+        .map_err(|_| MispelExportError::NotACalendarMonth { year, month })?;
+    let last = time::Date::from_calendar_date(year, m, m.length(year))
+        .map_err(|_| MispelExportError::NotACalendarMonth { year, month })?;
+    Ok((first, last))
+}
+
+/// The first and last day of a calendar year.
+fn year_days(year: i32) -> Result<(time::Date, time::Date), MispelExportError> {
+    let first = time::Date::from_calendar_date(year, Month::January, 1)
+        .map_err(|_| MispelExportError::NotACalendarMonth { year, month: 1 })?;
+    let last = time::Date::from_calendar_date(year, Month::December, 31)
+        .map_err(|_| MispelExportError::NotACalendarMonth { year, month: 12 })?;
+    Ok((first, last))
 }
 
 /// The same for a whole calendar year.
@@ -545,8 +599,8 @@ fn calendar_year(year: i32) -> Result<(OffsetDateTime, OffsetDateTime), MispelEx
     let next = time::Date::from_calendar_date(year + 1, Month::January, 1)
         .map_err(|_| MispelExportError::NotACalendarMonth { year, month: 1 })?;
     Ok((
-        metering::calendar::day_start_utc(first),
-        metering::calendar::day_start_utc(next),
+        hems_core::calendar::day_start_utc(first),
+        hems_core::calendar::day_start_utc(next),
     ))
 }
 
@@ -555,7 +609,7 @@ fn calendar_year(year: i32) -> Result<(OffsetDateTime, OffsetDateTime), MispelEx
 /// Computed from the instants rather than from `days × 96`, so the ninety-two
 /// quarter hours of the short March day and the hundred of the long October one
 /// come out right — which is the whole reason the boundaries come from
-/// `metering::calendar`.
+/// `metering::time::calendar`.
 fn quarter_hours_between(from: OffsetDateTime, to: OffsetDateTime) -> usize {
     let seconds = (to - from).whole_seconds().max(0);
     usize::try_from(seconds / (15 * 60)).unwrap_or(0)

@@ -1,7 +1,10 @@
 +++
 title = "The domain model"
 description = "One sign convention, a quarter-hour grid that survives both DST transitions, an electrical tree, and commands that cannot exist without a reason."
-weight = 3
+weight = 5
+
+[extra]
+group = "The box"
 +++
 
 `hems-core` is the vocabulary every other crate speaks. It holds **facts and no

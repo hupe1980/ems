@@ -16,8 +16,8 @@ jobs:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt
       - run: cargo fmt --all --check
@@ -26,19 +26,19 @@ jobs:
     name: Clippy (-D warnings)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   purity:
     name: Domain crates stay pure
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: extractions/setup-just@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
       # The guard, the arbiter and the planner take time as a parameter. The
       # moment one of them reads a clock, a whole winter day stops being a unit
       # test — so this is a build failure, not a review comment.
@@ -68,9 +68,9 @@ jobs:
     env:
       HEMS_TEST_POSTGRES: postgres://postgres:postgres@127.0.0.1:5432
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo test --workspace --all-features
 
   features:
@@ -83,9 +83,9 @@ jobs:
           - --no-default-features
           - --all-features
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # `serde` is optional across the domain crates and it is easy to leave a
       # `#[cfg_attr]` behind that only compiles one way round.
       - run: cargo check --workspace ${{ matrix.args }}
@@ -98,9 +98,9 @@ jobs:
       matrix:
         backend: [microlp, highs]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # HiGHS needs cmake and a C++ toolchain; microlp needs neither, which is
       # why it is the default and why both have to keep working.
       - run: cargo test -p hems-optimizer --no-default-features --features ${{ matrix.backend }},serde
@@ -109,9 +109,9 @@ jobs:
     name: Workspace guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # Every regulatory citation resolves to an indexed document, every
       # CloudEvents type is in the catalogue, and every crate's manifest names
       # files that exist. All of those failures are otherwise silent.
@@ -132,10 +132,10 @@ jobs:
     name: Publishable
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
       # Through `just` so the flags have one definition: `--no-verify` is the
       # whole difference between a four-second check and a forty-second one, and
       # two copies of that decision would drift.
@@ -145,9 +145,9 @@ jobs:
     name: Simulated days
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # An example nobody runs rots. These are the product demonstration — and
       # the only check that has ever caught a rule module nobody calls.
       - run: cargo run -p hemsd -- simulate --day winter
@@ -168,27 +168,27 @@ jobs:
     env:
       RUSTDOCFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo doc --workspace --no-deps --all-features
 
   msrv:
-    name: Minimum supported Rust version (1.94)
+    name: Minimum supported Rust version (1.99)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
-          toolchain: "1.94"
-      - uses: Swatinem/rust-cache@v2
+          toolchain: "1.99"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo check --workspace --all-features
 
   deny:
     name: Licences and advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2
         with:
           command: check

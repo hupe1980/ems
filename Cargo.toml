@@ -3,13 +3,13 @@ resolver = "3"
 members = ["crates/hems-core", "crates/hems-device", "crates/hems-drv", "crates/hems-flex", "crates/hems-grid", "crates/hems-realtime", "crates/hems-tariff", "crates/hems-forecast", "crates/hems-optimizer", "crates/hems-events", "crates/hems-service", "crates/hems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/histd", "services/obsd", "services/tariffd", "xtask"]
 
 [workspace.package]
-version      = "0.2.0"
+version      = "0.3.0"
 authors      = ["hupe1980"]
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/hupe1980/hems"
 homepage     = "https://hupe1980.github.io/hems"
-rust-version = "1.94"
+rust-version = "1.99"
 
 [workspace.dependencies]
 # ── External ────────────────────────────────────────────────────────────────
@@ -48,9 +48,9 @@ tracing      = "0.1"
 # is what makes a review a computation rather than a prompt. Enabling it costs
 # the fleet binary `serde_yaml_ng`, `jsonschema` and their trees, 21 packages,
 # for documents that do not exist (D177).
-agentplane   = { version = "0.32", default-features = false, features = ["redb"] }
+agentplane   = { version = "0.61", default-features = false, features = ["redb"] }
 anyhow       = "1"
-toml         = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+toml         = { version = "1", default-features = false, features = ["parse", "serde"] }
 
 # Reading somebody else's price list. Both are pure parsers — a `&str` in, a
 # structure out — so `hems-tariff` stays a domain crate that does no I/O: the
@@ -66,12 +66,12 @@ quick-xml    = { version = "0.42", default-features = false }
 # quality flags, §14a Modul 3 Zählzeit registers, virtual meters (§42b), §42c
 # eligibility. hems computes *control*; `metering` owns *quantities*, and the
 # two must never disagree about what a quarter-hour is.
-metering     = { version = "0.23", features = ["serde"] }
+metering     = { version = "0.25", features = ["serde"] }
 
 # EEBUS: SHIP + SPINE + the certifiable use cases. Taken with `default-features
 # = false` so the domain side gets the sans-I/O cores and nothing else — no
 # tokio, no TLS, no mDNS. `hemsd` is where a socket is allowed to exist.
-eebus        = { version = "0.9", default-features = false, features = ["std"] }
+eebus        = { version = "0.11", default-features = false, features = ["std"] }
 
 # S2 / EN 50491-12-2: the JSON data model, the rule-numbered semantic validator,
 # and the sans-I/O Resource Manager and Customer Energy Manager session engines.
@@ -86,7 +86,7 @@ eebus        = { version = "0.9", default-features = false, features = ["std"] }
 # `time` rather than `chrono`: the crate carries its own `Timestamp` and
 # `Duration` and converts to whichever calendar a consumer already has, so `time`
 # stays the one calendar in the product (D201).
-s2-kit       = { version = "0.3", default-features = false, features = ["std", "time", "uuid"] }
+s2-kit       = { version = "0.4", default-features = false, features = ["std", "time", "uuid"] }
 # Already in the tree under `mdns-sd`; a direct edge so the daemon can name the
 # interfaces it announces itself on rather than guessing.
 if-addrs     = { version = "0.15" }
@@ -106,18 +106,18 @@ sunspec      = { version = "0.9", default-features = false, features = [
 good_lp      = { version = "1.15", default-features = false }
 
 # ── Internal (path + version so the domain crates can be published) ─────────
-hems-core      = { path = "crates/hems-core",      version = "0.2" }
-hems-device    = { path = "crates/hems-device",    version = "0.2" }
-hems-drv       = { path = "crates/hems-drv",       version = "0.2" }
-hems-flex      = { path = "crates/hems-flex",      version = "0.2" }
-hems-grid      = { path = "crates/hems-grid",      version = "0.2" }
-hems-tariff    = { path = "crates/hems-tariff",    version = "0.2" }
-hems-forecast  = { path = "crates/hems-forecast",  version = "0.2" }
-hems-optimizer = { path = "crates/hems-optimizer", version = "0.2" }
-hems-realtime  = { path = "crates/hems-realtime",  version = "0.2" }
-hems-events    = { path = "crates/hems-events",    version = "0.2" }
-hems-service   = { path = "crates/hems-service",   version = "0.2" }
-hems-sim       = { path = "crates/hems-sim",       version = "0.2" }
+hems-core      = { path = "crates/hems-core",      version = "0.3" }
+hems-device    = { path = "crates/hems-device",    version = "0.3" }
+hems-drv       = { path = "crates/hems-drv",       version = "0.3" }
+hems-flex      = { path = "crates/hems-flex",      version = "0.3" }
+hems-grid      = { path = "crates/hems-grid",      version = "0.3" }
+hems-tariff    = { path = "crates/hems-tariff",    version = "0.3" }
+hems-forecast  = { path = "crates/hems-forecast",  version = "0.3" }
+hems-optimizer = { path = "crates/hems-optimizer", version = "0.3" }
+hems-realtime  = { path = "crates/hems-realtime",  version = "0.3" }
+hems-events    = { path = "crates/hems-events",    version = "0.3" }
+hems-service   = { path = "crates/hems-service",   version = "0.3" }
+hems-sim       = { path = "crates/hems-sim",       version = "0.3" }
 
 # ── The fleet's own dependencies ────────────────────────────────────────────
 #
@@ -193,7 +193,7 @@ redb         = { version = "4" }
 # to the core count spins up inside the process that owes a sixty-second § 14a
 # heartbeat. Unavoidable for any consumer today, and the reason is not this gate
 # (R33).
-chronix      = { version = "0.7", default-features = false }
+chronix      = { version = "0.8", default-features = false }
 # The `arrow` major `chronix` returns query results in, named so the two cannot
 # drift. Needed to read the time column as the `Int64` it is: through an `f64`
 # every instant rounds to the nearest 256 ns, because nanoseconds since the
@@ -233,6 +233,13 @@ rustls                = { version = "0.23", default-features = false, features =
 # `rustls::RootCertStore` a managed PostgreSQL instance is verified against — the
 # fleet's database link, and not the HTTP client, whose anchors are `TlsRoots`.
 webpki-roots          = { version = "1" }
+# The box's own HTTPS (specs/006): the acceptor and the connection driver axum
+# itself runs on, and a self-signed certificate made with the provider the rest
+# of the box already names — `rcgen`'s default would bring `ring`, which
+# deny.toml bans because two rustls providers panic at the first connection.
+tokio-rustls          = { version = "0.26", default-features = false, features = ["tls12", "aws_lc_rs"] }
+hyper-util            = { version = "0.1", default-features = false, features = ["server-auto", "service", "tokio"] }
+rcgen                 = { version = "0.14", default-features = false, features = ["pem", "aws_lc_rs"] }
 # A real PostgreSQL for the tests, in a container the test starts. It is the
 # price of the paragraph above: SQLite was what made `just ci` a clone-and-run,
 # and a fleet service tested against a database it does not deploy on is a
@@ -258,10 +265,10 @@ hex           = { version = "0.4", default-features = false, features = ["std"] 
 # place to be wrong, and `Mac::verify_slice` is the constant-time comparison a
 # signature check has to have. `base64` because Standard Webhooks says base64.
 hmac          = { version = "0.13", default-features = false }
-base64        = { version = "0.22", default-features = false, features = ["std"] }
+base64        = { version = "0.23", default-features = false, features = ["std"] }
 # The operating system's own entropy, and nothing else. A credential derived from
 # a site name, a secret or a clock is a credential somebody can compute.
-getrandom     = { version = "0.3", default-features = false, features = ["std"] }
+getrandom     = { version = "0.4", default-features = false, features = ["std"] }
 
 # Dependencies are optimised even in a debug build.
 #

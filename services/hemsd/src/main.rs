@@ -81,6 +81,20 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Replay a reference day through the household page, on this machine.
+    ///
+    /// The day is simulated once through the real guard, arbiter and planner,
+    /// then served minute by minute at `http://127.0.0.1:8080` — the page a box
+    /// on a wall serves, with a slider through the day. No configuration, no
+    /// devices, no credential.
+    Demo {
+        /// Which day to replay.
+        #[arg(long, value_enum, default_value_t = Day::Winter)]
+        day: Day,
+        /// Where to listen. Loopback only: the demo asks for no credential.
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        listen: std::net::SocketAddr,
+    },
     /// Run one simulated day through the whole control stack and report on it.
     Simulate {
         /// Which day to run.
@@ -382,7 +396,11 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
     // energy manager — the one that manager drives it over. Both on the socket
     // the shell already binds: one port to configure, one to firewall, and a
     // metrics label that is the route rather than every asset's name.
-    let router = hemsd::runtime::surfaces(
+    let https = running.tls.clone();
+    if let Some((_, fingerprint)) = &https {
+        println!("  HTTPS certificate (SHA-256): {fingerprint}");
+    }
+    let router = hemsd::runtime::surfaces_over(
         hemsd::runtime::api::Local::new(
             running.status,
             site,
@@ -391,7 +409,16 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
             running.trust,
             running.access.clone(),
             running.series,
-        ),
+        )
+        .with_home(hemsd::runtime::api::HomeSources {
+            site: Some(std::sync::Arc::new(running.household.site.clone())),
+            plan: running.plan.clone(),
+            prices: running.prices.clone(),
+            goal: running.goal.clone(),
+            car: running.car.clone(),
+            fingerprint: running.fingerprint.clone(),
+            https_fingerprint: https.as_ref().map(|(_, f)| f.clone()),
+        }),
         settings.s2.enabled.then(|| {
             hemsd::runtime::s2::Surface::new(
                 std::sync::Arc::new(running.household.site.clone()),
@@ -401,16 +428,20 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
             )
         }),
         running.access.clone(),
+        https.is_some(),
     );
 
-    hems_service::Server::new(
+    let server = hems_service::Server::new(
         hems_service::identity!(),
         settings.service.clone(),
         health,
         router,
-    )
-    .run_until(signal)
-    .await?;
+    );
+    let server = match https {
+        Some((config, _)) => server.with_tls(config),
+        None => server,
+    };
+    server.run_until(signal).await?;
     Ok(())
 }
 
@@ -431,6 +462,16 @@ async fn main() -> anyhow::Result<()> {
 
     match command {
         Command::Run { config, check } => return manage(config.as_deref(), check).await,
+        Command::Demo { day, listen } => {
+            let scenario = scenario_for(day, HouseholdConfig::default());
+            println!(
+                "  simulating {} through the guard, the arbiter and the planner…",
+                scenario.date
+            );
+            let demo = hemsd::demo::Demo::record(&scenario)?;
+            println!("  open http://{listen}  — the household page, replaying the day");
+            return hemsd::demo::serve(demo, listen).await;
+        }
         Command::Simulate {
             day,
             json,

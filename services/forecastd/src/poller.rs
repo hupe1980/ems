@@ -266,6 +266,10 @@ mod tests {
         }
     }
 
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "a scripted test double answers at once; the trait is async for the real fetch"
+    )]
     impl Upstream for Scripted {
         async fn fetch(&self, location: &crate::Location) -> Result<WeatherSeries, UpstreamError> {
             let mut answers = self.answers.lock().unwrap();

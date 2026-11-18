@@ -25,6 +25,10 @@ async fn main() -> anyhow::Result<()> {
         &settings.service.log_filter,
         settings.service.log_json,
     );
+    // Before anything connects: a MiSpeL assignment the Festlegung does not
+    // permit is a Nachweis that cannot exist, and the operator learns it here
+    // rather than from the first household that asks for one.
+    settings.validate_mispel().map_err(anyhow::Error::msg)?;
 
     // Eagerly, so a wrong password or an unreachable database stops the daemon
     // here rather than answering every request with a `500`. The migrations run
@@ -83,8 +87,10 @@ async fn main() -> anyhow::Result<()> {
     // The two surfaces answer from the same store and from the same credentials,
     // and each MCP call is authorised as its own caller — so a token cannot
     // reach a site over `/mcp` that the REST route would refuse it.
-    let mut app =
-        router(History::new(store.clone(), credentials.clone()).settling(settings.mispel.clone()));
+    let mut app = router(History::new(store.clone(), credentials.clone()).settling(
+        settings.mispel.clone(),
+        settings.mispel_state_aid_approved_on,
+    ));
     if settings.mcp.enabled {
         let auth = hems_service::McpAuth::per_caller(&settings.mcp, &credentials)?;
         app = app.merge(histd::mcp_server::router(

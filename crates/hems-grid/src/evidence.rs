@@ -551,7 +551,7 @@ mod recorder_tests {
     fn a_reduction_opens_a_record_and_releasing_it_closes_one() {
         let mut r = run(Some(7.56), 6.0, 90);
         assert!(r.open().is_some());
-        assert!(r.closed().is_empty());
+        assert_eq!(r.closed(), []);
 
         let closed = r
             .observe(
@@ -682,14 +682,14 @@ mod recorder_tests {
         r.prune(T0 + Duration::days(700));
         assert_eq!(r.closed().len(), 1, "still inside the two years");
         r.prune(T0 + Duration::days(740));
-        assert!(r.closed().is_empty());
+        assert_eq!(r.closed(), []);
     }
 
     #[test]
     fn no_reduction_produces_no_record_at_all() {
         let r = run(None, 0.0, 120);
         assert!(r.open().is_none());
-        assert!(r.closed().is_empty());
+        assert_eq!(r.closed(), []);
     }
 
     #[test]

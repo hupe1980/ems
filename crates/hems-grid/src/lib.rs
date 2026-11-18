@@ -78,7 +78,9 @@ pub mod stress;
 
 pub use evidence::{Action, ComplianceSample, ControlEvent, EvidenceRecorder, Observation};
 pub use lpc::LpcState;
-pub use mispel::{Abgrenzung, Basisfall, Pauschal, PauschalFall, abgrenzung_month, pauschal_year};
+pub use mispel::{
+    Abgrenzung, Basisfall, Pauschal, PauschalFall, abgrenzung_month, pauschal_period,
+};
 pub use modul3::{
     Modul3Calendar, Modul3Conformance, Modul3Context, Modul3Eligibility, Modul3Finding, Preisstufe,
     Quarter, Zaehlzeitdefinition,

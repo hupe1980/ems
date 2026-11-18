@@ -25,7 +25,7 @@ flowchart TB
   M["measurements, every second"] --> G
   L["§ 14a limit from the Steuerbox<br/>§ 9 EEG cap · fuses · reserve"] --> G
   G["<b>Guard</b><br/>an interval per asset"]
-  F["forecasts · prices · site state"] --> P["<b>Planner</b><br/>96 slots, every quarter hour"]
+  F["forecasts · prices · site state"] --> P["<b>Planner</b><br/>two days of quarter hours,<br/>re-solved every quarter hour"]
   P -- "target · envelope · a price per asset" --> A["<b>Arbiter</b>, once a second"]
   G -- "the interval nothing may widen" --> A
   A --> S["setpoints, each naming its Reason"]
@@ -34,18 +34,30 @@ flowchart TB
   A --> E["evidence record<br/>[A1 7.2], kept two years"]
 ```
 
-## What it can do today
+## Running a house
 
-Nothing here talks to household hardware yet: `hems-sim` stands in for every
-device, and the drivers are sans-I/O and driven by the registry rather than by a
-socket. What is real is the control stack — the same guard, arbiter and planner a
-box would run.
+```console
+$ hemsd run --check --config /etc/hems/hemsd.toml   # validate, open nothing
+$ hemsd run --config /etc/hems/hemsd.toml
+```
+
+`run` reads the site, the tariff and the drivers from TOML — the annotated
+starting point is [`hemsd.example.toml`](hemsd.example.toml) — and opens one task
+per driver: SunSpec and vendor maps over Modbus TCP, EEBUS over SHIP for the
+Steuerbox, the heat pump, the hot-water tank and the car. It plans against
+`tariffd` and `forecastd`, serves the household's API on loopback behind a bearer
+token it issues itself, and accepts an external energy manager over S2 at
+`/s2/{asset}`. It prints the box's SKI and API token at start-up; those are what a
+commissioning visit carries away.
+
+## Simulating a day
 
 ```console
 $ cargo run -p hemsd -- simulate --day winter
 ```
 
-One simulated day, end to end, in seconds. `--json` for a machine, and:
+The same guard, arbiter and planner against `hems-sim`'s hardware and a seeded
+weather the planner never sees, in seconds. `--json` for a machine, and:
 
 | Flag | What it does |
 |---|---|

@@ -21,7 +21,8 @@
       "codeRepository": "{{ config.extra.repository }}",
       "programmingLanguage": "Rust",
       "runtimePlatform": "Rust",
-      "license": "https://spdx.org/licenses/MIT.html",
+      "license": ["https://spdx.org/licenses/MIT.html", "https://spdx.org/licenses/Apache-2.0.html"],
+      "author": { "@type": "Person", "name": "{{ config.extra.author }}", "url": "https://github.com/{{ config.extra.author }}" },
       "applicationCategory": "Home energy management",
       "keywords": {{ config.extra.keywords | json_encode | safe }}
     },

@@ -206,7 +206,7 @@ pub async fn run_specialists(
 
     let mut out = Vec::with_capacity(SPECIALISTS.len());
     for specialist in SPECIALISTS {
-        let outcome = match runtime.run(specialist.name, input.clone()).await {
+        let outcome = match runtime.start(specialist.name, input.clone()).run().await {
             Ok(outcome) => outcome,
             Err(error) => {
                 tracing::error!(

@@ -580,7 +580,7 @@ mod tests {
             nominal: Power::from_kw(0.5),
             kind: hems_core::asset::LoadKind::Fixed,
         });
-        assert!(commands_for(&load, Decision::new(Power::from_kw(1.0))).is_empty());
+        assert_eq!(commands_for(&load, Decision::new(Power::from_kw(1.0))), []);
     }
 
     #[test]

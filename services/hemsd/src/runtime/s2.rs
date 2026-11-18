@@ -331,9 +331,17 @@ pub fn router(surface: Surface) -> axum::Router {
 }
 
 /// Accept the WebSocket, or refuse an asset this household does not have.
+///
+/// The session runs inside a span carrying the **subject** of the credential
+/// that opened it — `cem:<name>` for a connected manager, `site:<id>` for the
+/// household's own — so every line the session logs, every instruction among
+/// them, says who sent it. The bearer layer resolved the credential already and
+/// hands it on; a session with none (a router mounted without the layer, which
+/// `main` never builds) is logged as `unattributed` rather than as nobody.
 async fn upgrade(
     State(surface): State<Surface>,
     Path(asset): Path<String>,
+    caller: Option<axum::Extension<hems_service::auth::Authority>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let Ok(id) = AssetId::new(&asset) else {
@@ -350,7 +358,13 @@ async fn upgrade(
         )
             .into_response();
     }
-    upgrade.on_upgrade(move |socket| serve(surface, id, socket))
+    let subject = caller.map_or_else(
+        || "unattributed".to_owned(),
+        |axum::Extension(authority)| authority.subject().to_owned(),
+    );
+    let span = tracing::info_span!("s2", asset = %id, %subject);
+    upgrade
+        .on_upgrade(move |socket| tracing::Instrument::instrument(serve(surface, id, socket), span))
 }
 
 /// One connection, for as long as it lasts.
@@ -530,7 +544,7 @@ async fn apply(
                 ..
             } => match wanted {
                 Instructed::Power(power) => {
-                    tracing::debug!(%asset, %power, "the manager asked for a power");
+                    tracing::info!(%asset, %power, "the manager asked for a power");
                     surface
                         .cem
                         .instruct(asset.clone(), CemRequest::power(power, until), instruction)
@@ -540,7 +554,7 @@ async fn apply(
                     let instruction_id = instruction;
                     match envelope_of(&surface.site, asset, &envelope_instruction) {
                         Some(envelope) => {
-                            tracing::debug!(%asset, ?envelope, "the manager sent an envelope");
+                            tracing::info!(%asset, ?envelope, "the manager sent an envelope");
                             surface
                                 .cem
                                 .instruct(

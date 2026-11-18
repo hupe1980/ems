@@ -279,7 +279,7 @@ mod tests {
             )
             .with_outage(T0 + Duration::minutes(10), T0 + Duration::minutes(40));
 
-        assert!(!run(&mut b, 0, 9).is_empty());
+        assert_ne!(run(&mut b, 0, 9), []);
         assert!(
             run(&mut b, 10, 40).is_empty(),
             "an outage is silence, not a slower heartbeat"

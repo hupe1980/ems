@@ -484,7 +484,7 @@ mod tests {
             &site(),
             &DescribeContext::new(T0, T0 + time::Duration::hours(12), &modes),
         );
-        assert!(empty.sessions.is_empty());
+        assert!(empty.sessions.is_empty(), "{:?}", empty.sessions);
         assert_eq!(empty.envelopes.len(), 3);
 
         let plugged = describe_site(
@@ -500,7 +500,7 @@ mod tests {
         assert_eq!(plugged.sessions.len(), 1);
         assert_eq!(plugged.envelopes.len(), 2);
         assert_eq!(plugged.described(), 6);
-        assert!(plugged.undescribed.is_empty());
+        assert_eq!(plugged.undescribed, []);
 
         // A charge point below 6 A is idle, and the description says so: a
         // manager handed a range starting at zero will ask for 2 kW on three

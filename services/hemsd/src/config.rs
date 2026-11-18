@@ -233,7 +233,7 @@ pub struct ControlSettings {
 
 /// How the planner treats the fact that its forecasts are wrong.
 ///
-/// The measured answer is in `concepts/PLANNER.md`: over twenty seeded weathers
+/// The measured answer (`hemsd risk`): over twenty seeded weathers
 /// on each of two days, three futures beat the median on the **mean** where a
 /// service is at risk (€2,96 against €2,81) and take the undelivered charge from
 /// €0,07 to €0,01 — and cost **€1,04 a day** where nothing is at risk, while
@@ -278,7 +278,7 @@ impl RiskSettings {
     ///
     /// `adaptive` is deliberately absent: it triggers on
     /// `EvSession::tightness`, and a real box has no charging session in its
-    /// plan yet — the car is a *driver* away (see `concepts/ROADMAP.md`). A
+    /// plan yet — the car is a *driver* away. A
     /// policy that could never fire would be a fifth name for the median.
     #[must_use]
     pub fn model(self) -> hems_optimizer::Risk {
@@ -474,7 +474,7 @@ impl TariffSettings {
                 Modul::Modul3 => match self
                     .modul3
                     .as_ref()
-                    .and_then(|m| m.calendar().map(|c| (m, c)))
+                    .and_then(|m| m.calendar().ok().map(|c| (m, c)))
                 {
                     Some((m, calendar)) => NetworkCharge::Modul3 {
                         calendar,
@@ -525,8 +525,6 @@ impl TariffSettings {
 /// `hems_grid::modul3::Modul3Calendar::assess` before a byte moves, and a
 /// household billed on a non-conformant calendar is a year of somebody's
 /// electricity priced against a tariff nobody may sell.
-///
-/// See `concepts/DECISIONS.md` D126.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Modul {
@@ -668,7 +666,19 @@ pub struct SiteSettings {
     /// It matters because a load profile is indexed by day type and a public
     /// holiday counts as a Sunday: Fronleichnam is a working day in Berlin and
     /// is not in Bayern, so a box in the wrong Land learns the wrong Thursdays.
-    pub bundesland: metering::Bundesland,
+    pub bundesland: hems_core::calendar::Bundesland,
+    /// The household's own annual consumption, kWh — **without** heat pump,
+    /// car or battery: the *Haushaltsstrom* an ordinary household of this size
+    /// uses.
+    ///
+    /// It scales BDEW's H25 profile, which is what a box leans on until it has
+    /// measured its household. Optional: without it the box scales H25 to its
+    /// own first whole day, and before that to its first reading. Not the figure
+    /// on a bill that meters a heat pump or a wallbox on the same register — H25
+    /// describes household appliances, and that figure would overstate the base
+    /// load several times over.
+    #[serde(default)]
+    pub household_kwh_per_year: Option<f64>,
     /// Where the house is, for the solar geometry.
     pub latitude: f64,
     /// Likewise.
@@ -801,7 +811,8 @@ impl Default for SiteSettings {
             battery_kwh: battery.kwh.kwh(),
             battery_kw: battery.power.kw(),
             reserve_soc: battery.reserve_soc.fraction(),
-            bundesland: metering::Bundesland::Be,
+            bundesland: hems_core::calendar::Bundesland::Be,
+            household_kwh_per_year: None,
             battery_wear_eur_per_kwh: battery.wear_eur_per_kwh,
             fuse_a: reference.fuse.get(),
             latitude: reference.location.latitude,

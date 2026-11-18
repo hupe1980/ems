@@ -74,6 +74,12 @@ pub struct Settings {
     /// arithmetically perfect and about a different installation.
     #[serde(default)]
     pub mispel: std::collections::BTreeMap<String, MispelSettings>,
+    /// The day the European Commission approved § 19 Abs. 3c EEG under state-aid
+    /// law, `[MiSpeL Tenor 9]` b) — `"YYYY-MM-DD"`, or absent while there is no
+    /// approval. The Pauschaloption applies from the first day of the month
+    /// after it, and not at all before it.
+    #[serde(default, with = "hems_core::wire::iso_date::option")]
+    pub mispel_state_aid_approved_on: Option<time::Date>,
     /// The Model Context Protocol surface, off by default.
     ///
     /// It holds a household's data, so a token is **required** when it is
@@ -91,6 +97,7 @@ impl Default for Settings {
             tenants: std::collections::BTreeMap::new(),
             operators: Vec::new(),
             mispel: std::collections::BTreeMap::new(),
+            mispel_state_aid_approved_on: None,
             database: hems_service::DbSettings::default(),
             retention_sweep_s: 24 * 3600,
             mcp: hems_service::McpSettings::default(),
@@ -127,14 +134,27 @@ pub enum MispelSettings {
     /// for the formula, and D142 for the planner's half — it refuses to
     /// *schedule* a simultaneous charge, and this is what says none happened.
     Ausschliesslichkeit,
-    /// **Abgrenzung** (Anlage 1) — the quarter-hourly formulas (1)–(33),
-    /// settled per calendar month.
+    /// **Abgrenzung** (Anlage 1) — the quarter-hourly formulas (1)–(32),
+    /// settled per calendar month or Rumpfmonat.
     Abgrenzung {
         /// Which of the four Basisfälle the installation is, `[MiSpeL A1 3]`.
         basisfall: hems_grid::mispel::Basisfall,
+        /// The first day the installation is assigned on the option's basis,
+        /// `"YYYY-MM-DD"` — the first of a month unless `first_assignment`
+        /// (§ 21b Abs. 1 S. 2 EEG by analogy); `histd` refuses to start otherwise.
+        #[serde(with = "hems_core::wire::iso_date")]
+        assigned_from: time::Date,
+        /// Whether this is the **first** assignment of a newly commissioned
+        /// plant, which alone may start mid-month (a Rumpfmonat or Rumpfjahr).
+        #[serde(default)]
+        first_assignment: bool,
+        /// Whether the network and metering operators consented — required
+        /// until 30.09.2027, `[MiSpeL Tenor 9]` a).
+        #[serde(default)]
+        operator_consent: bool,
     },
-    /// **Pauschal** (Anlage 2) — the annual flat lines (P1)–(P15), for solar of
-    /// at most 30 kWp, settled per calendar year.
+    /// **Pauschal** (Anlage 2) — the annual flat lines (P1)–(P16), for solar of
+    /// at most 30 kWp, settled per calendar year or Rumpfjahr.
     Pauschal {
         /// Which of the three Pauschalfälle, `[MiSpeL A2 3]`.
         fall: hems_grid::mispel::PauschalFall,
@@ -147,7 +167,84 @@ pub enum MispelSettings {
         /// small store leaves less room for the arbitrage the band exists to
         /// keep out.
         storage_kwh: f64,
+        /// The first day the installation is assigned on the option's basis,
+        /// `"YYYY-MM-DD"` — the first of a month unless `first_assignment`
+        /// (§ 21b Abs. 1 S. 2 EEG by analogy); `histd` refuses to start otherwise.
+        #[serde(with = "hems_core::wire::iso_date")]
+        assigned_from: time::Date,
+        /// Whether this is the **first** assignment of a newly commissioned
+        /// plant, which alone may start mid-month (a Rumpfmonat or Rumpfjahr).
+        #[serde(default)]
+        first_assignment: bool,
+        /// Whether the network and metering operators consented — required
+        /// until 30.09.2027, `[MiSpeL Tenor 9]` a).
+        #[serde(default)]
+        operator_consent: bool,
     },
+}
+
+/// The declared facts the governed window depends on, `[MiSpeL Tenor 5]` and
+/// `[MiSpeL Tenor 9]` a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssignmentSettings {
+    /// The first day the installation is assigned on the option's basis.
+    pub assigned_from: time::Date,
+    /// Whether this is the first assignment of a newly commissioned plant.
+    pub first_assignment: bool,
+    /// Whether the network and metering operators consented.
+    pub operator_consent: bool,
+}
+
+impl MispelSettings {
+    /// The assignment facts of an option that settles anything.
+    #[must_use]
+    pub const fn assignment(&self) -> Option<AssignmentSettings> {
+        match self {
+            MispelSettings::Ausschliesslichkeit => None,
+            MispelSettings::Abgrenzung {
+                assigned_from,
+                first_assignment,
+                operator_consent,
+                ..
+            }
+            | MispelSettings::Pauschal {
+                assigned_from,
+                first_assignment,
+                operator_consent,
+                ..
+            } => Some(AssignmentSettings {
+                assigned_from: *assigned_from,
+                first_assignment: *first_assignment,
+                operator_consent: *operator_consent,
+            }),
+        }
+    }
+}
+
+impl Settings {
+    /// Refuse a MiSpeL declaration the Festlegung does not permit.
+    ///
+    /// Checked at start-up rather than at the first export, because a
+    /// mid-month switch of an existing plant is a Rumpfmonat that cannot
+    /// exist, and an operator should learn that before anybody asks for the
+    /// Nachweis that would rest on it.
+    ///
+    /// # Errors
+    /// The site and the [`hems_grid::mispel::Refusal`] its assignment draws.
+    pub fn validate_mispel(&self) -> Result<(), String> {
+        let rules = hems_grid::mispel::RuleSet::default();
+        for (site, declared) in &self.mispel {
+            if let Some(a) = declared.assignment() {
+                hems_grid::mispel::Assignment {
+                    from: a.assigned_from,
+                    first: a.first_assignment,
+                }
+                .validate(rules)
+                .map_err(|e| format!("[mispel.{site}]: {e}"))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -184,6 +281,44 @@ mod tests {
         );
     }
 
+    /// Evidence for SR-028.
+    #[test]
+    fn a_mid_month_switch_of_an_existing_plant_stops_the_daemon() {
+        let toml = r#"
+            [mispel.haus-1]
+            option = "abgrenzung"
+            basisfall = "a1"
+            assigned_from = "2026-11-12"
+        "#;
+        let settings: Settings = toml::from_str(toml).expect("it parses");
+        let error = settings
+            .validate_mispel()
+            .expect_err("§ 21b Abs. 1 S. 2 EEG");
+        assert!(error.contains("haus-1") && error.contains("21b"), "{error}");
+
+        let first = toml.replace(
+            "assigned_from = \"2026-11-12\"",
+            "assigned_from = \"2026-11-12\"\nfirst_assignment = true",
+        );
+        let settings: Settings = toml::from_str(&first).expect("it parses");
+        assert_eq!(
+            settings.validate_mispel(),
+            Ok(()),
+            "a new plant may start mid-month"
+        );
+    }
+
+    #[test]
+    fn a_date_that_is_not_one_is_refused_when_the_file_is_read() {
+        let toml = r#"
+            [mispel.haus-1]
+            option = "abgrenzung"
+            basisfall = "a1"
+            assigned_from = "2026-13-01"
+        "#;
+        assert!(toml::from_str::<Settings>(toml).is_err());
+    }
+
     #[test]
     fn the_example_declares_a_mispel_option_that_the_export_can_settle() {
         // A site that has declared none is refused rather than settled under a
@@ -191,5 +326,10 @@ mod tests {
         // that produces no document at all.
         let settings: Settings = toml::from_str(EXAMPLE).expect("the shipped example parses");
         assert!(settings.mispel.values().next().is_some());
+        assert_eq!(
+            settings.validate_mispel(),
+            Ok(()),
+            "and the Festlegung permits it"
+        );
     }
 }

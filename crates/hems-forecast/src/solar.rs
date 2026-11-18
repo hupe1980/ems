@@ -636,7 +636,7 @@ mod tests {
     fn a_summer_day_produces_more_than_a_winter_day() {
         let array = ArrayModel::new(Power::from_kw(9.8), Power::from_kw(8.0), 35.0, 180.0);
         let day_energy = |date: time::Date, temp: f64| -> f64 {
-            let start = metering::calendar::day_start_utc(date);
+            let start = hems_core::calendar::day_start_utc(date);
             (0..96)
                 .map(|i| {
                     array
@@ -726,7 +726,7 @@ mod decomposition_tests {
         // cap at the top of the atmosphere. A plane lying flat sees exactly it,
         // plus nothing from a ground it cannot see.
         let flat = ArrayModel::new(Power::from_kw(1.0), Power::from_kw(1.0), 0.0, 180.0);
-        let start = metering::calendar::day_start_utc(time::macros::date!(2026 - 06 - 21));
+        let start = hems_core::calendar::day_start_utc(time::macros::date!(2026 - 06 - 21));
         for i in 0..96 {
             let s = Slot::containing(start).offset(i);
             let sun = sun_position(BERLIN, s);
@@ -790,7 +790,7 @@ mod decomposition_tests {
         // denominator heads for zero and the ratio swings across its range. The
         // elevation floor is what makes it a non-event.
         let array = ArrayModel::new(Power::from_kw(10.0), Power::from_kw(10.0), 35.0, 180.0);
-        let start = metering::calendar::day_start_utc(time::macros::date!(2026 - 06 - 21));
+        let start = hems_core::calendar::day_start_utc(time::macros::date!(2026 - 06 - 21));
         for i in 0..96 {
             let s = Slot::containing(start).offset(i);
             let sun = sun_position(BERLIN, s);

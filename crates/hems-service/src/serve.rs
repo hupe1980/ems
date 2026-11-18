@@ -46,6 +46,9 @@ pub struct Server {
     settings: Settings,
     health: Health,
     router: Router,
+    /// Serve HTTPS with this configuration rather than plain HTTP.
+    #[cfg(feature = "tls")]
+    tls: Option<std::sync::Arc<rustls::ServerConfig>>,
 }
 
 impl Server {
@@ -72,7 +75,17 @@ impl Server {
                 // and `/metrics` itself — a health endpoint that has stopped
                 // being answered promptly is exactly the thing worth seeing.
                 .layer(axum::middleware::from_fn(crate::metrics::record)),
+            #[cfg(feature = "tls")]
+            tls: None,
         }
+    }
+
+    /// Serve HTTPS with `config` rather than plain HTTP.
+    #[cfg(feature = "tls")]
+    #[must_use]
+    pub fn with_tls(mut self, config: std::sync::Arc<rustls::ServerConfig>) -> Self {
+        self.tls = Some(config);
+        self
     }
 
     /// The health this server reports, so background tasks can update it.
@@ -106,6 +119,8 @@ impl Server {
             settings,
             health: _,
             router: app,
+            #[cfg(feature = "tls")]
+            tls,
         } = self;
 
         let listener = tokio::net::TcpListener::bind(settings.listen)
@@ -118,6 +133,11 @@ impl Server {
         tracing::info!(%bound, "listening");
 
         let grace = std::time::Duration::from_secs(settings.shutdown_grace_s);
+        #[cfg(feature = "tls")]
+        if let Some(config) = tls {
+            tracing::info!(%bound, "serving HTTPS");
+            return serve_tls(listener, app, config, signal, grace).await;
+        }
         let served = axum::serve(listener, app)
             .with_graceful_shutdown(async move {
                 signal.wait().await;
@@ -183,6 +203,54 @@ async fn version(State(state): State<SharedState>) -> axum::Json<serde_json::Val
         "name": state.identity.name,
         "version": state.identity.version,
     }))
+}
+
+/// Serve `app` over TLS on `listener` until `signal`, then drain for `grace`.
+///
+/// The same router and the same connection driver `axum::serve` uses, with a
+/// TLS handshake in front: HTTP/1.1 and HTTP/2, and upgrades, so a WebSocket —
+/// an S2 session — works over `wss://`. A failed handshake is one client's
+/// problem and is dropped; it never stops the listener.
+#[cfg(feature = "tls")]
+async fn serve_tls(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    config: std::sync::Arc<rustls::ServerConfig>,
+    signal: Shutdown,
+    grace: std::time::Duration,
+) -> Result<(), ServerError> {
+    let acceptor = tokio_rustls::TlsAcceptor::from(config);
+    let tracker = tokio_util::task::TaskTracker::new();
+    let stopped = signal.wait();
+    tokio::pin!(stopped);
+    loop {
+        tokio::select! {
+            () = &mut stopped => break,
+            accepted = listener.accept() => {
+                let Ok((tcp, _)) = accepted else { continue };
+                let (acceptor, app) = (acceptor.clone(), app.clone());
+                tracker.spawn(async move {
+                    let Ok(tls) = acceptor.accept(tcp).await else { return };
+                    let io = hyper_util::rt::TokioIo::new(tls);
+                    let service = hyper_util::service::TowerToHyperService::new(app);
+                    let _ = hyper_util::server::conn::auto::Builder::new(
+                        hyper_util::rt::TokioExecutor::new(),
+                    )
+                    .serve_connection_with_upgrades(io, service)
+                    .await;
+                });
+            }
+        }
+    }
+    tracing::info!(grace_s = grace.as_secs(), "draining");
+    tracker.close();
+    if tokio::time::timeout(grace, tracker.wait()).await.is_err() {
+        tracing::warn!(
+            grace_s = grace.as_secs(),
+            "grace period expired with work still in flight"
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

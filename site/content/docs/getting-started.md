@@ -2,27 +2,45 @@
 title = "Getting started"
 description = "Clone it, run the checks, and watch a household get through a January day with a § 14a reduction."
 weight = 1
+
+[extra]
+group = "Start"
 +++
 
-## Requirements
-
-Rust **1.94** (pinned in `rust-toolchain.toml`) and [`just`](https://just.systems)
-to build and run. The default solver is pure Rust, so there is no C++ toolchain
-and no system library to install, and no test reaches the internet.
-
-`just test` also needs a **container runtime** — Docker, Podman or Colima. The
-fleet daemons deploy on PostgreSQL, so their queries are tested against
-PostgreSQL: a service checked on a different engine is a service whose SQL is
-checked by nothing. The suite starts one container per test binary and gives each
-test a database of its own; `just db` starts one to develop against, and
-`HEMS_TEST_POSTGRES` points the suite at a server that is already running
-instead. There is deliberately no way to *skip* — a test that passed quietly when
-it could not reach a database would report green for a query nobody ran.
+## Quickstart
 
 ```console
 $ git clone https://github.com/hupe1980/hems && cd hems
-$ just            # lists every recipe
+$ cargo run -p hemsd -- demo                     # open http://127.0.0.1:8080
 ```
+
+That opens [the household page](@/docs/household.md) on a simulated January day,
+with a slider through it. The same day as a report:
+
+```console
+$ cargo run -p hemsd -- simulate --day winter
+```
+
+That runs a whole January day — a § 14a reduction in the evening, a car that has
+to be full by seven — through the real guard, arbiter and planner against
+simulated hardware, and prints the day's energy, money and compliance. It needs
+only Rust: no database, no network, no devices. [Watch a day](#watch-a-day)
+explains every line.
+
+## Requirements
+
+| For | You need |
+|---|---|
+| Building and simulating | Rust **1.99** (pinned in `rust-toolchain.toml`). The default solver is pure Rust, so there is no C++ toolchain or system library |
+| The recipes below | [`just`](https://just.systems) — `just` alone lists them |
+| `just test` and `just ci` | A container runtime (Docker, Podman or Colima) |
+
+The fleet daemons run on PostgreSQL, so their queries are tested against
+PostgreSQL. The suite starts one container per test binary and gives each test a
+database of its own; `just db` starts one to develop against, and
+`HEMS_TEST_POSTGRES` points the suite at a server already running. There is
+deliberately no way to skip these tests: one that passed without reaching a
+database would be green for a query nobody ran.
 
 ## Run the checks
 
@@ -42,10 +60,10 @@ The same list, in the same order, that CI runs:
 | `deny` | licences and advisories |
 | `doc` | rustdoc with warnings as errors |
 
-`guards` is the unusual one. It resolves **405 regulatory citations** across five
-document families against an index of primary sources and fails the build if one
-names a document the index does not carry; and it checks that each of **122**
-quantities, instants and dates says how it travels on the wire.
+`guards` is the unusual one. It resolves every regulatory citation in the code
+against an index of primary sources and fails the build if one names a document
+the index does not carry, and it checks that every quantity, instant and date
+says how it travels on the wire.
 
 ## Watch a day
 

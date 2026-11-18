@@ -33,7 +33,7 @@
 
 use std::sync::Arc;
 
-use eebus::cert::{self, CertParams};
+use eebus::cert::{self, CertParams, Identity};
 use eebus::runtime::{Node, TrustStore, TrustedPeer};
 use eebus::ship::Ski;
 use eebus::tls::ShipTls;
@@ -121,8 +121,8 @@ pub enum ShipError {
 /// The box's own SHIP identity, created once and then read back.
 ///
 /// Returns the node, the SKI an installer has to hand the metering point
-/// operator, and the private key as it is stored — which the trust surface needs
-/// in order to write the identity row back after a pairing.
+/// operator, and the key and certificate as they are stored — which the trust
+/// surface needs in order to write the identity row back after a pairing.
 ///
 /// # Errors
 /// [`ShipError::Identity`] where the key cannot be generated, stored or read,
@@ -131,7 +131,7 @@ pub async fn identity(
     settings: &ShipSettings,
     store: Option<&Arc<Mutex<Store>>>,
     now: time::OffsetDateTime,
-) -> Result<(Node, Ski, String), ShipError> {
+) -> Result<(Node, Ski, KeptPem), ShipError> {
     let stored = match store {
         Some(store) => store
             .lock()
@@ -141,19 +141,28 @@ pub async fn identity(
         None => None,
     };
 
-    // A key that already exists is re-used and its certificate re-issued: the
-    // SKI follows the key, so every trust relationship this box has established
-    // survives a longer validity or a corrected name.
+    // A kept identity is restored byte for byte: the SKI follows the key, and
+    // the certificate's fingerprint — what SHIP's Pairing Service trusts and
+    // the pairing QR code prints — follows the certificate. It is re-issued
+    // from the kept key only where there is no certificate to restore (a store
+    // written before one was kept) or the configured SHIP ID has changed, which
+    // is a deliberate renaming; the SKI survives both.
     let params = CertParams::new(settings.ship_id.clone());
     let identity = match &stored {
+        Some(StoredIdentity {
+            ship_id,
+            key_pem,
+            certificate_pem: Some(certificate),
+            ..
+        }) if *ship_id == settings.ship_id => Identity::from_pem(certificate, key_pem)
+            .map_err(|e| ShipError::Identity(format!("the stored identity: {e}")))?,
         Some(kept) => {
             let key = cert::key_from_pem(&kept.key_pem)
                 .map_err(|e| ShipError::Identity(format!("the stored key: {e}")))?;
-            cert::self_signed_with(params, key)
+            cert::self_signed_with(params, key).map_err(|e| ShipError::Identity(e.to_string()))?
         }
-        None => cert::self_signed(params),
-    }
-    .map_err(|e| ShipError::Identity(e.to_string()))?;
+        None => cert::self_signed(params).map_err(|e| ShipError::Identity(e.to_string()))?,
+    };
     let ski = identity.ski;
 
     // What the store already trusts, plus what the configuration names. The
@@ -175,6 +184,7 @@ pub async fn identity(
         let keep = StoredIdentity {
             ship_id: settings.ship_id.clone(),
             key_pem: identity.key_pem(),
+            certificate_pem: Some(identity.certificate_pem()),
             trusted: trust.to_json().unwrap_or_else(|_| "[]".into()),
         };
         store
@@ -191,11 +201,14 @@ pub async fn identity(
         );
     }
 
-    let key_pem = identity.key_pem();
+    let kept = KeptPem {
+        key: identity.key_pem(),
+        certificate: identity.certificate_pem(),
+    };
     Ok((
         Node::new(settings.ship_id.clone(), ShipTls::new(identity), trust),
         ski,
-        key_pem,
+        kept,
     ))
 }
 
@@ -238,7 +251,31 @@ pub struct Trust {
     /// up — and rightly: a key an API could ask for is a key an API can leak.
     /// It is here because the stored identity is one row, so writing the trust
     /// store back means writing the key with it.
-    key_pem: String,
+    kept: KeptPem,
+}
+
+/// The box's key and certificate as the store keeps them, carried so a write of
+/// the identity row after a pairing writes them back unchanged.
+#[derive(Clone)]
+pub struct KeptPem {
+    key: String,
+    certificate: String,
+}
+
+impl KeptPem {
+    /// The certificate, PEM. Public, unlike the key: it is what the box
+    /// presents to every peer anyway.
+    #[must_use]
+    pub fn certificate_pem(&self) -> &str {
+        &self.certificate
+    }
+}
+
+impl core::fmt::Debug for KeptPem {
+    /// Never the key: see [`StoredIdentity`]'s `Debug`.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("KeptPem { .. }")
+    }
 }
 
 impl Trust {
@@ -248,13 +285,13 @@ impl Trust {
         node: Arc<Node>,
         store: Option<Arc<Mutex<Store>>>,
         ship_id: String,
-        key_pem: String,
+        kept: KeptPem,
     ) -> Self {
         Self {
             node,
             store,
             ship_id,
-            key_pem,
+            kept,
         }
     }
 
@@ -364,7 +401,8 @@ impl Trust {
             .map_err(|e| ShipError::Identity(e.to_string()))?;
         let keep = StoredIdentity {
             ship_id: self.ship_id.clone(),
-            key_pem: self.key_pem.clone(),
+            key_pem: self.kept.key.clone(),
+            certificate_pem: Some(self.kept.certificate.clone()),
             trusted,
         };
         store

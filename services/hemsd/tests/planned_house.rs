@@ -204,7 +204,7 @@ impl hems_drv::Driver for Reporting {
 }
 
 /// A box that has been running long enough to know its own household.
-fn learned_household(land: metering::Bundesland) -> Learned {
+fn learned_household(land: hems_core::calendar::Bundesland) -> Learned {
     let mut learned = Learned::new(land, Rc2::house());
     // Three weeks of a flat six hundred watts. Enough support for the profile to
     // answer, and deliberately dull: what is being tested is that a *forecast*
@@ -220,7 +220,7 @@ fn learned_household(land: metering::Bundesland) -> Learned {
 async fn a_box_with_a_fleet_plans_against_real_prices_and_a_real_sky() {
     let (fleet_url, _keep) = fleet_on_loopback().await;
     let (registry, household) = registry_with_a_battery_at(0.5);
-    let land = metering::Bundesland::Be;
+    let land = hems_core::calendar::Bundesland::Be;
 
     let settings = hemsd::Settings {
         fleet: hemsd::config::FleetSettings {
@@ -258,6 +258,9 @@ async fn a_box_with_a_fleet_plans_against_real_prices_and_a_real_sky() {
             tariff: settings.tariff.clone(),
             control: settings.control.clone(),
             charging: None,
+            household_kwh_per_year: None,
+            goal: hemsd::home::Goals::default(),
+            car: hemsd::home::CarFacts::default(),
             wear_eur_per_kwh: 0.08,
         },
         Arc::clone(&registry),
@@ -385,7 +388,9 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
 
     let plan = Arc::new(RwLock::new(None));
     let modelled = Arc::new(RwLock::new(BTreeMap::new()));
-    let learned = Arc::new(Mutex::new(learned_household(metering::Bundesland::Be)));
+    let learned = Arc::new(Mutex::new(learned_household(
+        hems_core::calendar::Bundesland::Be,
+    )));
     let (signal, trigger) = Shutdown::channel();
 
     tokio::spawn(hemsd::runtime::planner::run(
@@ -401,6 +406,9 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
             tariff: settings.tariff.clone(),
             control: settings.control.clone(),
             charging: None,
+            household_kwh_per_year: None,
+            goal: hemsd::home::Goals::default(),
+            car: hemsd::home::CarFacts::default(),
             wear_eur_per_kwh: 0.08,
         },
         registry,
@@ -487,6 +495,9 @@ async fn a_box_installed_this_morning_plans_from_persistence() {
             tariff: settings.tariff.clone(),
             control: settings.control.clone(),
             charging: None,
+            household_kwh_per_year: None,
+            goal: hemsd::home::Goals::default(),
+            car: hemsd::home::CarFacts::default(),
             wear_eur_per_kwh: 0.08,
         },
         registry,
@@ -502,7 +513,7 @@ async fn a_box_installed_this_morning_plans_from_persistence() {
         },
         // A box that has learned nothing at all — switched on this morning.
         Arc::new(Mutex::new(Learned::new(
-            metering::Bundesland::Be,
+            hems_core::calendar::Bundesland::Be,
             Rc2::house(),
         ))),
         None,
@@ -610,6 +621,9 @@ async fn plan_with(
             tariff: settings.tariff.clone(),
             control: settings.control.clone(),
             charging: None,
+            household_kwh_per_year: None,
+            goal: hemsd::home::Goals::default(),
+            car: hemsd::home::CarFacts::default(),
             wear_eur_per_kwh: 0.08,
         },
         registry,
@@ -623,7 +637,9 @@ async fn plan_with(
             outdoor: Arc::new(RwLock::new(BTreeMap::new())),
             window: Arc::new(RwLock::new(BTreeMap::new())),
         },
-        Arc::new(Mutex::new(learned_household(metering::Bundesland::Be))),
+        Arc::new(Mutex::new(learned_household(
+            hems_core::calendar::Bundesland::Be,
+        ))),
         None,
         hems_service::Health::new(),
         signal,

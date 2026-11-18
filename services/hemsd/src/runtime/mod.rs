@@ -41,6 +41,7 @@ pub mod overrides;
 pub mod planner;
 pub mod s2;
 pub mod ship;
+pub mod tls;
 pub mod transport;
 
 use std::collections::BTreeMap;
@@ -143,6 +144,20 @@ pub struct Running {
     /// `None` where this household has no EEBUS identity — a box with no § 14a
     /// driver has nothing to pair with.
     pub trust: Option<ship::Trust>,
+    /// The SHA-256 fingerprint of the box's own SHIP certificate, where it has
+    /// one — what a pairing QR code carries and what survives a restart (D215).
+    pub fingerprint: Option<String>,
+    /// The household's car goal, shared between the page and the planner.
+    pub goal: crate::home::Goals,
+    /// The car as the planner last saw it.
+    pub car: crate::home::CarFacts,
+    /// The plan in force and the prices it was made against, for the page.
+    pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
+    /// The prices the plan in force was made against.
+    pub prices: Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    /// The HTTPS configuration and its certificate's fingerprint, where the box
+    /// serves HTTPS (`[api] tls`, on by default off loopback).
+    pub tls: Option<(Arc<rustls::ServerConfig>, String)>,
 }
 
 /// Build the site, the drivers and the registry, and check that they agree.
@@ -176,7 +191,7 @@ pub fn assemble(
     // `[A1 3.1.b]`'s cutoff is 31.12.2023 and `[A1 10.1]`'s is 31.12.2028, and
     // both are German dates — a start-up line that disagreed with the decision
     // it is describing would be worse than no line at all.
-    name_the_statutory_limits(&household, metering::calendar::local_day(now));
+    name_the_statutory_limits(&household, hems_core::calendar::local_day(now));
 
     Ok(Running {
         drivers,
@@ -189,6 +204,12 @@ pub fn assemble(
         api_token: None,
         series: None,
         trust: None,
+        fingerprint: None,
+        goal: crate::home::Goals::default(),
+        car: crate::home::CarFacts::default(),
+        plan: Arc::default(),
+        prices: Arc::default(),
+        tls: None,
         household,
         registry: Arc::new(Mutex::new(registry)),
         status: Arc::new(Mutex::new(Status::default())),
@@ -219,7 +240,7 @@ fn open_series(settings: &Settings) -> anyhow::Result<Option<Arc<crate::series::
 }
 
 /// Check a Modul 3 household's calendar against the Anwendungshilfe
-/// (`specs/bnetza/bdew-awh-modul-3-v1.1-20250207.pdf`) and against its own
+/// (BDEW, „Für die Umsetzung von Modul 3" V1.1, 07.02.2025) and against its own
 /// delivery point.
 ///
 /// There is no machine-readable national format for one — a PDF or an Excel
@@ -253,12 +274,9 @@ fn check_modul3(settings: &Settings, now: time::OffsetDateTime) -> Result<(), St
                 .into(),
         ));
     };
-    let Some(calendar) = configured.calendar() else {
-        return Err(StartError::Modul3(format!(
-            "`billed_quarters` must be drawn from Q1, Q2, Q3 and Q4, and this says {:?}",
-            configured.billed_quarters
-        )));
-    };
+    let calendar = configured
+        .calendar()
+        .map_err(|e| StartError::Modul3(format!("`[tariff.modul3]`: {e}")))?;
     if configured.source.is_none() {
         return Err(StartError::Modul3(
             "`source` is required: when a household queries a bill, the first question is \
@@ -280,7 +298,7 @@ fn check_modul3(settings: &Settings, now: time::OffsetDateTime) -> Result<(), St
             .is_some_and(|pv| pv.para9.imsys_since.is_some()),
         has_rlm: false,
     };
-    if !eligibility.is_eligible_on(metering::calendar::local_day(now)) {
+    if !eligibility.is_eligible_on(hems_core::calendar::local_day(now)) {
         return Err(StartError::Modul3(
             "this delivery point may not be billed on Modul 3: it needs Modul 1, an              intelligent metering system, and no registrierende Leistungsmessung — and the              module has only been orderable since 01.04.2025"
                 .into(),
@@ -290,7 +308,7 @@ fn check_modul3(settings: &Settings, now: time::OffsetDateTime) -> Result<(), St
     let (verdict, findings) = calendar.assess(&eligibility.as_context());
     match verdict {
         Modul3Conformance::Violates => Err(StartError::Modul3(format!(
-            "{findings:?} — see specs/bnetza/bdew-awh-modul-3-v1.1-20250207.pdf"
+            "{findings:?} — see the BDEW Anwendungshilfe Modul 3 V1.1 (07.02.2025)"
         ))),
         Modul3Conformance::Unknown => {
             tracing::warn!(
@@ -705,6 +723,10 @@ fn transport_address(settings: &DriverSettings) -> Option<String> {
 /// [`StartError`] where the configuration and the site do not agree; after that
 /// nothing here fails, because a household gateway box is not a request that can
 /// fail — a device that is unreachable is reconnected to for ever.
+#[allow(
+    clippy::too_many_lines,
+    reason = "start-up is one ordered sequence; splitting it hides the order"
+)]
 pub async fn run(
     settings: &Settings,
     health: &Health,
@@ -765,6 +787,7 @@ pub async fn run(
         }
         start_dialled(settings, &running, &node, &sessions.dialled, shutdown)?;
         running.ski = Some(ski.to_display_string());
+        running.fingerprint = Some(node.fingerprint().to_hex());
         running.trust = Some(ship::Trust::new(
             Arc::clone(&node),
             store.clone(),
@@ -800,12 +823,30 @@ pub async fn run(
     }
     running.access = access;
     running.api_token = issued.announcement();
+    if settings
+        .api
+        .tls_on(settings.service.listen)
+        .map_err(anyhow::Error::msg)?
+    {
+        let held = match &store {
+            Some(store) => Some(store.lock().await),
+            None => None,
+        };
+        running.tls = Some(tls::server_config(held.as_deref())?);
+    } else if !settings.service.listen.ip().is_loopback() {
+        tracing::warn!(
+            listen = %settings.service.listen,
+            "serving the household's token in clear on its network, because `[api] insecure_lan` says so"
+        );
+    }
 
     let cem = announce_the_s2_surface(settings);
     running.cem = cem.clone();
 
     let (plan, prices, published, learned) =
         start_planner(settings, &running, store.clone(), health, shutdown).await?;
+    running.plan = Arc::clone(&plan);
+    running.prices = Arc::clone(&prices);
 
     start_forwarding(settings, store.clone(), shutdown)?;
 
@@ -911,14 +952,30 @@ pub fn surfaces(
     s2: Option<s2::Surface>,
     access: access::LocalAccess,
 ) -> axum::Router {
+    surfaces_over(local, s2, access, false)
+}
+
+/// [`surfaces`], marking the session cookie `Secure` where the box serves HTTPS.
+pub fn surfaces_over(
+    local: api::Local,
+    s2: Option<s2::Surface>,
+    access: access::LocalAccess,
+    https: bool,
+) -> axum::Router {
     let mut router = api::router(local);
     if let Some(surface) = s2 {
         router = router.merge(s2::router(surface));
     }
-    router.layer(axum::middleware::from_fn_with_state(
-        access,
-        access::require_token,
-    ))
+    // The household page's own files and its sign-in are merged **after** the
+    // layer, so they are outside it: the files carry no household data, and
+    // sign-in is how a browser obtains the credential the layer asks for.
+    router
+        .layer(axum::middleware::from_fn_with_state(
+            access.clone(),
+            access::require_token,
+        ))
+        .merge(crate::ui::router())
+        .merge(access::session_router(access, https))
 }
 
 /// The map an S2 session writes and the arbiter reads.
@@ -1232,6 +1289,9 @@ async fn start_planner(
                 DriverSettings::EebusEv(s) => Some(s.clone()),
                 _ => None,
             }),
+            household_kwh_per_year: settings.site.household_kwh_per_year,
+            goal: running.goal.clone(),
+            car: running.car.clone(),
         },
         Arc::clone(&running.registry),
         fleet,
@@ -1358,8 +1418,8 @@ mod tests {
     #[test]
     fn a_quarter_that_is_not_one_of_the_four_is_a_typo_and_not_an_empty_list() {
         // Reporting a mistyped quarter as "the operator did not say" names the
-        // wrong problem: `BilledQuartersUnknown` is a real finding about a real
-        // gap, and a typo is neither.
+        // wrong problem: an empty list is metering's refusal to build a calendar
+        // that bills nothing, and a typo is neither.
         let settings = on_modul_3(Some(Modul3Settings {
             billed_quarters: vec!["Q1".into(), "Q5".into()],
             ..calendar()

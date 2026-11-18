@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn no_claims_means_no_grants() {
-        assert!(allocate(Power::from_kw(10.0), &[]).is_empty());
+        assert_eq!(allocate(Power::from_kw(10.0), &[]), []);
     }
 
     #[test]

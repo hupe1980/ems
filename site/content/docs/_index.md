@@ -5,10 +5,12 @@ sort_by = "weight"
 template = "section.html"
 +++
 
-Thirteen pages, in the order they build on each other. **Run it** first, then how
-the box is **arranged**, then what each layer actually **does**, then what
-surrounds it.
+Start by running a simulated day, then read
+[the German grid in ten minutes](@/docs/background.md) if § 14a, a Steuerbox or
+MiSpeL are new to you. **The box** explains how one household is controlled,
+layer by layer; **Running it** covers simulation, the fleet services, agents and
+security.
 
 Everything here describes code that exists in the repository. Where a page
 states a figure — a saving, a solve time, a coverage percentage — it is the
-output of a command named on the same page, and the command is in CI.
+output of a command named on the same page, and that command runs in CI.

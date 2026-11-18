@@ -15,7 +15,7 @@ catalogue.
 recommends, and past tense because an event is something that has already
 happened: `de.hems.grid.lpc.limit.received`, not `de.hems.grid.set_limit`.
 
-## One of them is on a wire, and the rest are not yet
+## One of them is on a wire
 
 `SITE_DAY_REPORTED` is what a box sends `obsd` at the end of a day — the only
 link between the edge and the fleet that exists today. It travels as a
@@ -36,6 +36,15 @@ driver loop and the local bus `hemsd` still has to grow.
   outage: verification tries each configured secret.
 - ⏱️ **A tolerance on the timestamp**, because a signature that never expires is
   a capture that never expires.
+
+## Use it
+
+```console
+$ cargo add hems-events
+```
+
+API reference on [docs.rs](https://docs.rs/hems-events); the design is explained in
+[The fleet](https://hupe1980.github.io/hems/docs/services/) on the hems site.
 
 ## License
 

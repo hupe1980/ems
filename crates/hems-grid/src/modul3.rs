@@ -6,7 +6,7 @@
 //! and unlike the wholesale price it is known a year in advance.
 //!
 //! The rules are BDEW's Anwendungshilfe „Für die Umsetzung von Modul 3" V1.1
-//! (07.02.2025, `specs/bnetza/bdew-awh-modul-3-v1.1-20250207.pdf`), which
+//! (07.02.2025), which
 //! implements BK8-22/010-A:
 //!
 //! * available only in combination with **Modul 1**, only at a Marktlokation
@@ -29,7 +29,7 @@
 //! So [`Modul3Calendar`] is a [`Zaehlzeitdefinition`] plus the two facts the
 //! definition does not carry — which quarters the operator bills the levels in,
 //! and where the calendar was transcribed from — and validation is
-//! [`metering::zaehlzeit::assess_modul_3`].
+//! [`metering::billing::zaehlzeit::assess_modul_3`].
 //!
 //! There is no machine-readable national format for any of this: it is a PDF
 //! and an Excel sheet per network operator. Recording the source is therefore
@@ -37,10 +37,11 @@
 //! said so" is the first question anyone asks.
 
 use hems_core::prelude::Slot;
-use metering::zaehlzeit::{HT, NT};
+use metering::billing::zaehlzeit::{HT, NT};
 
-pub use metering::zaehlzeit::{
-    Modul3Conformance, Modul3Context, Modul3Finding, Quarter, ZaehlzeitFenster, Zaehlzeitdefinition,
+pub use metering::billing::zaehlzeit::{
+    Modul3Conformance, Modul3Context, Modul3Finding, Quarter, ZaehlzeitError, ZaehlzeitFenster,
+    Zaehlzeitdefinition,
 };
 
 /// The day this module became orderable from network operators.
@@ -88,8 +89,8 @@ pub struct Modul3Calendar {
     /// fallback, the validity period, and the Bundesland whose holidays count.
     pub definition: Zaehlzeitdefinition,
     /// The calendar quarters the three levels are billed in — the operator's
-    /// Wahlrecht, published on the price sheet and not a property of the
-    /// windows.
+    /// Wahlrecht, published on the price sheet. The definition's windows are
+    /// confined to the same quarters; this is the list as it was transcribed.
     pub billed_quarters: Vec<Quarter>,
     /// Where this calendar was transcribed from — a price-sheet URL, a document
     /// hash.
@@ -99,24 +100,36 @@ pub struct Modul3Calendar {
 
 impl Modul3Calendar {
     /// A calendar with a Hochtarif and a Niedertarif band, both `(from, to)` in
-    /// minutes of the local day and either allowed to wrap past midnight.
-    #[must_use]
+    /// minutes of the local day and either allowed to wrap past midnight,
+    /// billed in `billed_quarters` and standard everywhere else.
+    ///
+    /// # Errors
+    ///
+    /// [`ZaehlzeitError`] for a bound beyond 24:00 or an empty quarter list —
+    /// a calendar that bills nothing is not one `metering` can build.
     pub fn new(
         id: impl Into<String>,
         year: i32,
         hochtarif: (u16, u16),
         niedertarif: (u16, u16),
         billed_quarters: Vec<Quarter>,
-    ) -> Self {
+    ) -> Result<Self, ZaehlzeitError> {
         let from = time::Date::from_calendar_date(year, time::Month::January, 1)
             .unwrap_or(time::Date::MIN);
         let to = time::Date::from_calendar_date(year, time::Month::December, 31)
             .unwrap_or(time::Date::MAX);
-        Self {
-            definition: Zaehlzeitdefinition::modul_3(id, from, hochtarif, niedertarif).until(to),
+        Ok(Self {
+            definition: Zaehlzeitdefinition::modul_3(
+                id,
+                from,
+                hochtarif,
+                niedertarif,
+                &billed_quarters,
+            )?
+            .until(to),
             billed_quarters,
             source: None,
-        }
+        })
     }
 
     /// Record where the calendar was transcribed from (builder style).
@@ -139,15 +152,8 @@ impl Modul3Calendar {
     /// so a curated portfolio can route on the reason rather than on a boolean.
     #[must_use]
     pub fn assess(&self, at: &Modul3Context) -> (Modul3Conformance, Vec<Modul3Finding>) {
-        let ctx = match &self.billed_quarters {
-            q if q.is_empty() => at.clone(),
-            q => {
-                let mut ctx = at.clone();
-                ctx.billed_quarters = Some(q.clone());
-                ctx
-            }
-        };
-        metering::zaehlzeit::assess_modul_3(&self.definition, &ctx)
+        let assessment = metering::billing::zaehlzeit::assess_modul_3(&self.definition, at);
+        (assessment.verdict, assessment.findings)
     }
 
     /// Whether this calendar's levels are billed in the quarter `slot` falls in.
@@ -211,10 +217,10 @@ impl Modul3Eligibility {
     /// The same three facts, as the context `metering`'s assessment wants them.
     #[must_use]
     pub fn as_context(&self) -> Modul3Context {
-        Modul3Context::default()
-            .with_modul_1(self.has_modul_1)
-            .with_intelligentes_messsystem(self.has_imsys)
-            .with_registrierende_leistungsmessung(self.has_rlm)
+        Modul3Context::new()
+            .modul_1(self.has_modul_1)
+            .intelligentes_messsystem(self.has_imsys)
+            .registrierende_leistungsmessung(self.has_rlm)
     }
 }
 
@@ -271,36 +277,49 @@ pub struct Transcription {
     pub source: Option<String>,
 }
 
+/// Why a transcribed calendar could not be built.
+#[cfg(feature = "serde")]
+#[derive(Debug, thiserror::Error)]
+pub enum TranscriptionError {
+    /// A billed quarter that is not `Q1`–`Q4`.
+    #[error("billed quarter {0:?} is not one of Q1, Q2, Q3 and Q4")]
+    UnknownQuarter(String),
+    /// `metering` refused the definition.
+    #[error("the Zählzeitdefinition cannot be built: {0}")]
+    Definition(ZaehlzeitError),
+}
+
 #[cfg(feature = "serde")]
 impl Transcription {
-    /// The calendar these settings describe, or `None` where a quarter is not
-    /// one of the four.
+    /// The calendar these settings describe.
     ///
-    /// A bad quarter is a *parse* failure rather than an empty list, because an
-    /// empty `billed_quarters` is itself a conformance finding
-    /// (`BilledQuartersUnknown`) and reporting a typo as "the operator did not
-    /// say" would name the wrong problem.
-    #[must_use]
-    pub fn calendar(&self) -> Option<Modul3Calendar> {
+    /// # Errors
+    ///
+    /// [`TranscriptionError::UnknownQuarter`] for a quarter that is not one of
+    /// the four — a typo, named as one — and [`TranscriptionError::Definition`]
+    /// where `metering` cannot build the definition, an empty quarter list
+    /// among them.
+    pub fn calendar(&self) -> Result<Modul3Calendar, TranscriptionError> {
         let quarters = self
             .billed_quarters
             .iter()
             .map(|q| match q.trim().to_ascii_uppercase().as_str() {
-                "Q1" => Some(Quarter::Q1),
-                "Q2" => Some(Quarter::Q2),
-                "Q3" => Some(Quarter::Q3),
-                "Q4" => Some(Quarter::Q4),
-                _ => None,
+                "Q1" => Ok(Quarter::Q1),
+                "Q2" => Ok(Quarter::Q2),
+                "Q3" => Ok(Quarter::Q3),
+                "Q4" => Ok(Quarter::Q4),
+                _ => Err(TranscriptionError::UnknownQuarter(q.clone())),
             })
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         let calendar = Modul3Calendar::new(
             self.id.clone(),
             self.year,
             (self.hochtarif_minutes[0], self.hochtarif_minutes[1]),
             (self.niedertarif_minutes[0], self.niedertarif_minutes[1]),
             quarters,
-        );
-        Some(match &self.source {
+        )
+        .map_err(TranscriptionError::Definition)?;
+        Ok(match &self.source {
             Some(source) => calendar.from_source(source.clone()),
             None => calendar,
         })
@@ -321,6 +340,7 @@ mod tests {
             (22 * 60, 6 * 60),
             vec![Quarter::Q1, Quarter::Q4],
         )
+        .expect("a calendar metering can build")
         .from_source("https://example.invalid/preisblatt-2026.pdf")
     }
 
@@ -358,7 +378,8 @@ mod tests {
             (18 * 60, 19 * 60),
             (22 * 60, 6 * 60),
             vec![Quarter::Q1, Quarter::Q4],
-        );
+        )
+        .expect("a calendar metering can build");
         let (verdict, findings) = short.assess(&eligible().as_context());
         assert_eq!(verdict, Modul3Conformance::Violates);
         assert!(
@@ -375,7 +396,8 @@ mod tests {
             (17 * 60, 20 * 60),
             (22 * 60, 6 * 60),
             vec![Quarter::Q1],
-        );
+        )
+        .expect("a calendar metering can build");
         let (_, findings) = one.assess(&eligible().as_context());
         assert!(
             findings.contains(&Modul3Finding::FewerThanTwoBilledQuarters),

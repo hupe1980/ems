@@ -15,7 +15,7 @@ specification. A rule without a citation is a bug.
 | The § 9 EEG 60 % cap, what lifts it, and the EEBUS feed-in factor | § 9 Abs. 1–2 EEG (Solarspitzengesetz), `[MGCP-011]` |
 | Modul 3 HT/NT/ST windows and their validity rules | BDEW AWH Modul 3 V1.1 |
 | The two-year evidence record, with every commanded ceiling | `[A1 7]` |
-| Which kilowatt-hour through a battery was green, quarter by quarter | MiSpeL Anlage 1 (1)–(33), Anlage 2 (P1)–(P15) |
+| Which period MiSpeL governs for a household — effect date, month-start switch, Rumpfmonat/Rumpfjahr, consent, state aid — over `metering`'s Anlage 1 and 2 arithmetic | MiSpeL (BNetzA 618-25-02, 01.10.2026), Tenorziffern 8–9 |
 | Allocating an energy-sharing community's generation | § 42c EnWG Abs. 1, 3, 4 |
 
 The EEBUS limitation machine, which is how a § 14a limit reaches the house:
@@ -54,7 +54,9 @@ this crate calls it.** `P_min,14a`, the netzwirksamer Leistungsbezug and its
 and the allocation identity § 42b and § 42c settle on are `metering`'s.
 `hems-grid` contributes what is specific to *control*: grouping a site's assets
 into the devices the Festlegung counts, the transitional regimes, the LPC state
-machine, the evidence record, MiSpeL, and the § 42c cascade.
+machine, the evidence record, the window MiSpeL governs, and § 42c. The MiSpeL
+and § 42c *arithmetic* is `metering`'s — one implementation of each, held to
+the Festlegung's own worked examples.
 
 🧊 No I/O, no clock, no async — the state machine is sans-I/O, so a week of
 Steuerbox behaviour is a unit test in microseconds.
@@ -75,6 +77,15 @@ let devices = [
 assert!((minimum_power(&devices, ControlMode::Ems).kw() - 7.56).abs() < 1e-9);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Use it
+
+```console
+$ cargo add hems-grid
+```
+
+API reference on [docs.rs](https://docs.rs/hems-grid); the design is explained in
+[The grid rules](https://hupe1980.github.io/hems/docs/grid-rules/) on the hems site.
 
 ## License
 

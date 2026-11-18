@@ -227,6 +227,11 @@ pub struct Scenario {
     /// it cannot have one — but a *lawful* one, a delivered one, and an honest
     /// account of how little it knows (D187).
     pub warm_up_days: usize,
+    /// The household's declared annual consumption without heat pump, car or
+    /// battery, kWh — what scales the H25 prior when it is known. `None` on
+    /// every reference day: a household asked at commissioning may not know,
+    /// and the reference days measure the box that was not told.
+    pub household_kwh_per_year: Option<f64>,
     /// Whether the planner prices each asset separately.
     ///
     /// `false` gives every device the slot's marginal value instead, so the
@@ -406,6 +411,7 @@ impl Scenario {
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
+            household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
             ev: Some(EvPlan::overnight(
                 Energy::from_kwh(18.0),
@@ -438,6 +444,7 @@ impl Scenario {
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
+            household_kwh_per_year: None,
             dishwasher: None,
             ..Self::summer_surplus(config)
         }
@@ -477,6 +484,7 @@ impl Scenario {
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
+            household_kwh_per_year: None,
             dishwasher: None,
             date: time::macros::date!(2026 - 09 - 20),
             outdoor_c: 14.0,
@@ -525,6 +533,7 @@ impl Scenario {
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
+            household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
             ev: Some(EvPlan {
                 energy_now: Energy::from_kwh(26.0),
@@ -614,6 +623,7 @@ impl Scenario {
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
+            household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
             ev: Some(EvPlan::overnight(
                 Energy::from_kwh(20.0),
@@ -644,6 +654,7 @@ impl Scenario {
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
+            household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
             ev: None,
             // **May, not June.** The cap is a fraction of installed
@@ -703,7 +714,7 @@ impl Scenario {
     /// The instant the day starts, in UTC.
     #[must_use]
     pub fn start(&self) -> OffsetDateTime {
-        metering::calendar::day_start_utc(self.date)
+        hems_core::calendar::day_start_utc(self.date)
     }
 
     /// The same day, moved forward in whole weeks until § 42c allocation is a
@@ -1194,6 +1205,12 @@ pub struct DayResult {
     pub roof_correction: f64,
     /// How many days of metering the forecasts rest on.
     pub history_days: usize,
+    /// What the load forecast leans on where the household's own history is
+    /// thin: BDEW's H25, and how it was scaled. `None` only with no prior.
+    pub load_prior: Option<hems_forecast::PriorBasis>,
+    /// The share of the day's plan the prior still had a say in, 0–1. Zero on
+    /// a box that has learned its household; one on its first evening.
+    pub load_prior_share: f64,
     /// What the monitor makes of the roof after the warm-up.
     ///
     /// A verdict rather than a ratio, because that is what a household is shown
@@ -1470,8 +1487,58 @@ impl ReferenceIds {
 /// When a scenario declares a charging session but the simulated charge point
 /// has no vehicle. The two are built together in this function, so that is a
 /// programming error rather than a runtime condition.
-#[allow(clippy::too_many_lines)]
+/// One minute of a simulated day, as the running box would have shown it.
+///
+/// The parts of [`crate::runtime::control::Status`] the household page reads,
+/// filled from the same control stack the day runs — so `hemsd demo` renders a
+/// replay through [`crate::home::live`], the function the box itself uses.
+#[derive(Debug, Clone)]
+pub struct Frame {
+    /// What the box would have reported.
+    pub status: crate::runtime::control::Status,
+    /// The plan in force, as an index into [`Recording::plans`].
+    pub plan: Option<usize>,
+    /// The car as the planner would have seen it, with a full target.
+    pub car: Option<hems_optimizer::model::EvSession>,
+}
+
+/// A whole simulated day, minute by minute.
+#[derive(Debug, Clone)]
+pub struct Recording {
+    /// The house.
+    pub site: Site,
+    /// One frame per control tick.
+    pub frames: Vec<Frame>,
+    /// Every plan the day made, in order.
+    pub plans: Vec<Plan>,
+    /// The day's prices.
+    pub prices: PriceStack,
+}
+
+/// Run one day through the whole stack, as [`run`] does, and keep every minute.
+///
+/// # Errors
+/// As [`run`].
+pub fn run_recorded(scenario: &Scenario) -> anyhow::Result<(DayResult, Recording)> {
+    let mut recording = None;
+    let result = run_with(scenario, Some(&mut recording))?;
+    let recording = recording.ok_or_else(|| anyhow::anyhow!("the day recorded nothing"))?;
+    Ok((result, recording))
+}
+
+/// Run one simulated day through the whole control stack.
+///
+/// # Errors
+/// Where the household cannot be built or the day cannot be simulated.
 pub fn run(scenario: &Scenario) -> anyhow::Result<DayResult> {
+    run_with(scenario, None)
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_with(
+    scenario: &Scenario,
+    mut recording: Option<&mut Option<Recording>>,
+) -> anyhow::Result<DayResult> {
     // The boundary where a § 42c allocation becomes a **claim about money**, and
     // therefore where the date is checked — not inside `allocate_by`, whose
     // arithmetic is defined by the community's own contract and which the capped
@@ -1653,12 +1720,16 @@ pub fn run(scenario: &Scenario) -> anyhow::Result<DayResult> {
     // one function, so the simulated first evening is the one a household
     // actually gets (D187). The reading is the household's own underlying load
     // at midnight, which is what a box with a connection-point meter sees.
-    let load_forecast = crate::forecasting::load_forecast(
+    let reading = household_load(Slot::containing(start));
+    let prior = crate::forecasting::household_prior(
         &learned.load,
-        full,
-        Some(household_load(Slot::containing(start))),
-    )
-    .ok_or_else(|| anyhow::anyhow!("a box with no history and no meter cannot plan"))?;
+        scenario.household_kwh_per_year,
+        Slot::containing(start),
+        Some(reading),
+    );
+    let load_forecast =
+        crate::forecasting::load_forecast(&learned.load, prior.as_ref(), full, Some(reading))
+            .ok_or_else(|| anyhow::anyhow!("a box with no history and no meter cannot plan"))?;
 
     // What the forecasts turn out to have been worth, scored against what
     // happened. A day whose scores are zero is a day with perfect foresight, and
@@ -2572,6 +2643,78 @@ pub fn run(scenario: &Scenario) -> anyhow::Result<DayResult> {
             now,
         );
 
+        if let Some(slot) = recording.as_deref_mut() {
+            let rec = slot.get_or_insert_with(|| Recording {
+                site: site.clone(),
+                frames: Vec::with_capacity(1440),
+                plans: Vec::new(),
+                prices: prices.clone(),
+            });
+            let plan_index = plan.as_ref().map(|p| {
+                if rec.plans.last().is_none_or(|last| last.id != p.id) {
+                    rec.plans.push(p.clone());
+                }
+                rec.plans.len() - 1
+            });
+            let mut readings = BTreeMap::new();
+            readings.insert(
+                ids.battery.clone(),
+                (Some(battery_actual), Some(battery.soc().fraction())),
+            );
+            readings.insert(
+                ids.evse.clone(),
+                (
+                    Some(evse_actual),
+                    evse.vehicle
+                        .as_ref()
+                        .map(|v| v.stored.kwh() / v.capacity.kwh().max(1e-9)),
+                ),
+            );
+            readings.insert(ids.heat_pump.clone(), (Some(hp_actual), None));
+            readings.insert(ids.dhw.clone(), (Some(dhw_actual), None));
+            readings.insert(ids.pv.clone(), (Some(pv_now), None));
+            let car = evse.vehicle.as_ref().filter(|_| plugged_in).map(|v| {
+                hems_optimizer::model::EvSession {
+                    energy_now: v.stored,
+                    energy_target: v.capacity,
+                    capacity: v.capacity,
+                    max_charge: Power::from_kw(11.0),
+                    min_charge: Power::from_kw(4.2),
+                    efficiency: v.efficiency,
+                    arrival: None,
+                    departure: Slot::containing(now),
+                }
+            });
+            rec.frames.push(Frame {
+                status: crate::runtime::control::Status {
+                    at: Some(now),
+                    commanded: decision.commanded.clone(),
+                    reasons: decision
+                        .setpoints
+                        .iter()
+                        .map(|s| (s.asset.clone(), s.reason))
+                        .collect(),
+                    grid: Some(grid),
+                    readings,
+                    steuve_ceiling: limits.steuve_ceiling,
+                    minimum: Some(decision.verdict.minimum_power),
+                    in_failsafe: limits.in_failsafe,
+                    netzwirksam: Some(decision.verdict.netzwirksam),
+                    plan_expected_eur: plan
+                        .as_ref()
+                        .and_then(|p| p.expected_cost.as_ref())
+                        .map(CostBreakdown::total),
+                    plan_baseline_eur: plan
+                        .as_ref()
+                        .and_then(|p| p.baseline_cost.as_ref())
+                        .map(CostBreakdown::total),
+                    ..Default::default()
+                },
+                plan: plan_index,
+                car,
+            });
+        }
+
         now += step;
     }
 
@@ -2742,6 +2885,8 @@ pub fn run(scenario: &Scenario) -> anyhow::Result<DayResult> {
         .roof
         .ratio_at(Slot::containing(start + Duration::hours(12)));
     result.history_days = learned.days;
+    result.load_prior = prior.as_ref().map(hems_forecast::Prior::basis);
+    result.load_prior_share = learned.load.prior_share(Horizon::new(start, 96));
     result.roof_health = learned.health.verdict();
 
     // ── Is the household on the right network-charge module? ────────────────

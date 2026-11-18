@@ -28,7 +28,8 @@ use http::request::Parts;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::Extension;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Implementation, InitializeResult, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Implementation, InitializeResult, ServerCapabilities,
+    ServerConfig,
 };
 use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router};
 
@@ -150,9 +151,13 @@ impl Handler {
     }
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "rmcp's #[tool_handler] and #[prompt_handler] generate these async trait methods"
+)]
 #[tool_handler]
 impl ServerHandler for Handler {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("agentd", env!("CARGO_PKG_VERSION")))
             .with_instructions(

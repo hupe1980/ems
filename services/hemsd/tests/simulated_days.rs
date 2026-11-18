@@ -91,7 +91,7 @@ fn a_steuerbox_that_stops_talking_mid_event_puts_the_house_into_the_failsafe() {
 
 #[test]
 fn pricing_battery_wear_moves_less_energy_through_the_battery() {
-    // The finding of `specs/arxiv/arxiv-2606.16051.pdf` reproduced end to end:
+    // The finding of arXiv:2606.16051 reproduced end to end:
     // a cost-only optimiser cycles a battery for spreads that do not pay for the
     // damage. The saving looks better and the battery is worse off.
     let with_wear = |wear: f64| {
@@ -190,12 +190,8 @@ fn the_days_meter_registers_feed_the_mispel_flow_bookkeeping() {
 
     // A3: one meter over the battery and the charge point together, which is
     // what this household has.
-    let a = abgrenzung_month(
-        Basisfall::A3,
-        RuleSet::Arbeitsstand20260805,
-        &r.quarter_hours,
-    )
-    .expect("the day's registers are a valid input");
+    let a = abgrenzung_month(Basisfall::A3, RuleSet::Festlegung20261001, &r.quarter_hours)
+        .expect("the day's registers are a valid input");
 
     // The register sums are the day's own KPIs, to the last watt-hour.
     let close = |a: Decimal, b: f64| (a - Decimal::try_from(b).unwrap()).abs() < Decimal::new(1, 3);
@@ -244,12 +240,7 @@ fn a_summer_day_of_negative_prices_earns_no_support_for_those_quarter_hours() {
         "the June day is meant to feed in during its negative-price hours"
     );
 
-    let a = abgrenzung_month(
-        Basisfall::A3,
-        RuleSet::Arbeitsstand20260805,
-        &r.quarter_hours,
-    )
-    .unwrap();
+    let a = abgrenzung_month(Basisfall::A3, RuleSet::Festlegung20261001, &r.quarter_hours).unwrap();
     let lost: Decimal = unsupported.iter().map(|q| q.grid_feed_in).sum();
     assert!(
         a.supported_feed_in <= a.grid_feed_in - lost + Decimal::new(1, 3),
@@ -1823,7 +1814,7 @@ fn a_box_closes_its_day_from_what_it_wrote_down() {
     let _ = std::fs::remove_file(&path);
 
     let day = time::macros::date!(2026 - 01 - 15);
-    let midnight = metering::calendar::day_start_utc(day);
+    let midnight = hems_core::calendar::day_start_utc(day);
     {
         let store = hemsd::store::Store::open(&path).unwrap();
         for i in 0..96 {
@@ -2059,9 +2050,12 @@ fn the_landing_page_prints_the_day_it_says_it_does() {
     let day = run(&scenario).unwrap();
     let report = hemsd::render::day(&scenario, &day);
 
-    for (what, page, terminator) in [
-        ("the landing page", PAGE, "</code></pre>"),
-        ("README.md", README, "\n```"),
+    // The README carries the whole report; the landing page an excerpt, which
+    // still has to be long enough to carry the argument — a bill, what it would
+    // have been, and the § 14a reduction it was made under.
+    for (what, page, terminator, at_least) in [
+        ("the landing page", PAGE, "</code></pre>", 7),
+        ("README.md", README, "\n```", 20),
     ] {
         let Some(start) = page.find(OPENING) else {
             panic!("{what} no longer shows a winter day, or shows another one");
@@ -2071,17 +2065,19 @@ fn the_landing_page_prints_the_day_it_says_it_does() {
                 + page[start..]
                     .find(terminator)
                     .unwrap_or_else(|| panic!("{what} has an unclosed transcript block"))];
-        check_block(what, block, &report);
+        check_block(what, block, &report, at_least);
     }
 }
 
 /// Hold one transcript block to the report the binary would print.
-fn check_block(what: &str, block: &str, report: &str) {
+fn check_block(what: &str, block: &str, report: &str, at_least: usize) {
     {
         let mut checked = 0usize;
         for line in block.lines().skip(1) {
             let line = line.trim_end();
-            if line.trim().is_empty() {
+            // A blank line, or a lone `…` marking where an excerpt leaves lines
+            // out: every line that *is* shown is still held to the day.
+            if line.trim().is_empty() || line.trim() == "…" {
                 continue;
             }
             let (label, value) = split_report_line(line);
@@ -2099,7 +2095,7 @@ fn check_block(what: &str, block: &str, report: &str) {
             checked += 1;
         }
         assert!(
-            checked >= 20,
+            checked >= at_least,
             "only {checked} lines were compared in {what} — the block has changed shape"
         );
     }
@@ -2205,10 +2201,11 @@ fn the_baseline_household_heats_its_water_the_way_this_household_asked() {
 /// it is what every household gets on the day the installer leaves, and it lasts
 /// until the profile fills (D187).
 ///
-/// What a cold box owes a household is **not a good plan** — it cannot have one
-/// — but a lawful one, a delivered one, and an honest account of how little it
-/// knows. Those are the assertions; the euro figure is the *finding*, and it is
-/// recorded in R31 rather than asserted, because it is currently negative.
+/// What a cold box owes a household is a lawful plan, a delivered one, an
+/// honest account of how little it knows — and, since it leans on BDEW's H25
+/// household profile rather than on one meter reading, **not being worse than
+/// no energy manager at all**. That last one was a recorded loss for as long as
+/// the box planned its first evening by persistence from the night trough.
 #[test]
 fn a_box_on_its_first_evening_is_lawful_and_honest_about_what_it_knows() {
     let warm = Scenario::winter_with_grid_event(HouseholdConfig::default());
@@ -2272,25 +2269,49 @@ fn a_box_on_its_first_evening_is_lawful_and_honest_about_what_it_knows() {
         warm_day.pv_forecast.crps
     );
 
-    // 5. What six weeks of metering is worth, which is the number this day
-    //    exists to produce. It is large, and it is currently a *loss* — see R31.
+    // 5. No worse than no box. The published shape is what makes this hold:
+    //    persistence from the night trough planned against a house using a
+    //    fraction of what it would, and lost €1,75 on this day.
     assert!(
-        warm_day.saving_eur() > day.saving_eur() + 1.0,
-        "six weeks of learning should be worth more than a euro a day on this \
-         household: {:.2} € warm against {:.2} € cold",
+        day.saving_eur() >= 0.0,
+        "a cold box must not be worse than no energy manager: it saved {:.2} €",
+        day.saving_eur()
+    );
+    assert_eq!(
+        day.load_prior,
+        Some(hems_forecast::PriorBasis::Anchored),
+        "a box that has measured nothing and been told nothing anchors on its reading"
+    );
+    assert!(
+        (day.load_prior_share - 1.0).abs() < 1e-9,
+        "on its first day every slot leans on the prior: {:.2}",
+        day.load_prior_share
+    );
+
+    // 6. And learning is still worth something: six weeks of a household's own
+    //    metering beat the best published average of everybody else's.
+    assert!(
+        warm_day.saving_eur() > day.saving_eur(),
+        "six weeks of learning should be worth more than H25: {:.2} € warm against \
+         {:.2} € cold",
         warm_day.saving_eur(),
         day.saving_eur()
     );
+    assert!(
+        warm_day.load_prior_share.abs() < 1e-9,
+        "a learned household plans on its own history alone: {:.2}",
+        warm_day.load_prior_share
+    );
 }
 
-/// The R31 figure the notes quote, printed rather than asserted.
+/// The cold-box figure the notes quote, printed rather than asserted.
 ///
 /// `cargo test -p hemsd --test simulated_days -- --ignored --nocapture`. It is
 /// not an assertion because the useful properties of a cold box are in
 /// `a_box_on_its_first_evening_is_lawful_and_honest_about_what_it_knows`; this
 /// exists so the number in the notes has somewhere to come from.
 #[test]
-#[ignore = "prints the R31 figure the notes quote; not an assertion"]
+#[ignore = "prints the cold-box figure the notes quote; not an assertion"]
 fn the_cold_box_figure_the_notes_quote() {
     let mut cold = Scenario::winter_with_grid_event(HouseholdConfig::default());
     cold.warm_up_days = 0;
@@ -2300,6 +2321,31 @@ fn the_cold_box_figure_the_notes_quote() {
         d.saving_eur(),
         d.cost.total(),
         d.baseline.total()
+    );
+}
+
+/// Why an anchored prior is floored rather than believed: on a cold box, planning
+/// for **more** household load than there is costs less than planning for less.
+///
+/// The prior's anchor is one reading, usually the night trough, which is the
+/// direction that under-scales. If the two errors cost the same, a floor would be
+/// a guess; this is the measurement that makes it the conservative number
+/// instead. Forty per cent either side of the household the simulator runs.
+#[test]
+fn a_cold_box_that_overestimates_its_household_loses_less_than_one_that_underestimates() {
+    let day = |kwh: f64| {
+        let mut cold = Scenario::winter_with_grid_event(HouseholdConfig::default());
+        cold.warm_up_days = 0;
+        cold.household_kwh_per_year = Some(kwh);
+        run(&cold).unwrap()
+    };
+    let under = day(2_400.0);
+    let over = day(5_600.0);
+    assert!(
+        over.saving_eur() > under.saving_eur(),
+        "over-scaled {:.2} € against under-scaled {:.2} €",
+        over.saving_eur(),
+        under.saving_eur()
     );
 }
 
@@ -2398,6 +2444,14 @@ fn the_unmanaged_household_runs_the_battery_it_owns() {
         ),
     ] {
         let r = run(&scenario).unwrap();
+        // A warmed household plans on its own history alone: H25 has no say in
+        // any slot, which is what keeps every warmed reference day unchanged by
+        // the prior a cold box leans on.
+        assert!(
+            r.load_prior_share.abs() < 1e-12,
+            "{name}: a box six weeks warm still leans on H25 in {:.1} % of its day",
+            r.load_prior_share * 100.0
+        );
         assert!(
             r.baseline.wear_eur > 0.01,
             "{name}: the unmanaged household spent {:.3} € of battery life — a store that \

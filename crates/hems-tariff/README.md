@@ -35,6 +35,15 @@ feed-in with the support regime and whether the price went negative.
   one — adding the levies on top of a price that already contains them costs a
   household about double.
 
+## Use it
+
+```console
+$ cargo add hems-tariff
+```
+
+API reference on [docs.rs](https://docs.rs/hems-tariff); the design is explained in
+[Tariffs and prices](https://hupe1980.github.io/hems/docs/tariffs/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

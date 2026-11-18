@@ -490,7 +490,7 @@ impl PerPhase<Power> {
     /// conductors, expressed as apparent power.
     ///
     /// VDE-AR-N 4100 Abschnitt 5.5.2 caps it at 4,6 kVA for a customer
-    /// installation — the figure `metering::power_quality::UNSYMMETRIE_LIMIT_KVA`
+    /// installation — the figure `metering::grid::power_quality::UNSYMMETRIE_LIMIT_KVA`
     /// carries with its derivation, and the same limit as the 20 A per
     /// Außenleiter the VDE FNN Hinweis states it as.
     ///

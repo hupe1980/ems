@@ -37,8 +37,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Tag matches the workspace version
         id: version
         run: |
@@ -55,12 +54,12 @@ jobs:
           fi
           echo "releasing $manifest"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
-      - uses: taiki-e/install-action@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: cargo-deny
 
@@ -91,10 +90,9 @@ jobs:
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build tools
         run: |
           sudo apt-get update
@@ -104,7 +102,7 @@ jobs:
       # SBOM can be recovered from an artefact found in the field rather than
       # trusted from a file shipped beside it. That is what a CRA vulnerability
       # process needs when somebody asks "which boxes have this crate on them?"
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: cargo-auditable
 
@@ -126,7 +124,7 @@ jobs:
           cp LICENSE-MIT LICENSE-APACHE README.md "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: hemsd-${{ matrix.target }}
           path: dist/*.tar.gz
@@ -142,9 +140,9 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo install --locked cargo-cyclonedx
       # `cargo-cyclonedx` takes **no `-p`**. It walks the workspace and writes one
       # SBOM per member beside that member's manifest, and `--manifest-path` picks
@@ -175,7 +173,7 @@ jobs:
           print(f"{name}: {len(bom['components'])} components, {ours} of them ours")
           PY
           ls -l sbom
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom
           path: sbom/*.json
@@ -195,7 +193,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
           merge-multiple: true
@@ -207,11 +205,11 @@ jobs:
           sha256sum ./*.tar.gz ./*.json > SHA256SUMS
           cat SHA256SUMS
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: artifacts/*.tar.gz
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: hems ${{ needs.verify.outputs.version }}
           generate_release_notes: true
@@ -251,10 +249,10 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: rust-lang/crates-io-auth-action@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
         id: auth
 
       # One `cargo publish` per crate, in dependency order, **tolerating a crate

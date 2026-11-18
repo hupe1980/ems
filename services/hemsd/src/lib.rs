@@ -22,8 +22,10 @@
 
 pub mod backtest;
 pub mod config;
+pub mod demo;
 pub mod drivers;
 pub mod forecasting;
+pub mod home;
 pub mod render;
 pub mod report;
 pub mod runtime;
@@ -31,6 +33,7 @@ pub mod scenario;
 pub mod series;
 pub mod site;
 pub mod store;
+pub mod ui;
 
 pub use backtest::{Spread, spread_over_days};
 pub use config::{ControlSettings, DriverSettings, Settings, SiteSettings};

@@ -42,7 +42,7 @@ use std::sync::Arc;
 use hems_core::prelude::{AssetId, Power};
 use hemsd::drivers::Registry;
 use hemsd::runtime::s2::{Cem, S2Settings, Surface};
-use s2_kit::io::{Dialled, Driver, WebSocket};
+use s2_kit::io::{Dialled, Driver, WebSocket, WebSocketOptions};
 use s2_kit::message::Message;
 use s2_kit::session::{CemConfig, CemEvent, CemSession};
 use s2_kit::types::Timestamp;
@@ -158,7 +158,13 @@ impl Manager {
         asset: &AssetId,
         token: Option<&str>,
     ) -> Result<Manager, String> {
-        let socket = WebSocket::connect(&format!("ws://{address}/s2/{asset}"), token)
+        // Over loopback, and only there: s2-kit refuses a bearer on plaintext
+        // `ws://` (S2 Connect: S2 must not be sent over unencrypted channels),
+        // and the box serves no TLS yet — which is exactly why a manager on
+        // another host cannot reach it.
+        let mut options = WebSocketOptions::default().allow_insecure_bearer();
+        options.bearer = token;
+        let socket = WebSocket::open(&format!("ws://{address}/s2/{asset}"), &options)
             .await
             .map_err(|e| e.to_string())?;
         let mut session = CemSession::new(CemConfig::default());
@@ -841,6 +847,77 @@ async fn a_manager_may_drive_the_house_and_not_read_its_life() {
     );
 }
 
+/// A manager drives the house; it does not decide who else may.
+///
+/// Approving a control box, forgetting one, connecting or withdrawing managers
+/// and setting the car's goal are the household's decisions. A manager that
+/// could approve a Steuerbox could put its own device in the network operator's
+/// place, and one that could forget the household's could stop the box
+/// following § 14a at all — found by the threat model of the household page.
+#[tokio::test]
+async fn a_manager_cannot_decide_who_else_may_act_on_the_box() {
+    let (address, _cem, _site, access) = a_box_with_its_access().await;
+    let manager = access
+        .connect_manager("aggregator-nord")
+        .await
+        .expect("a manager can be connected");
+    let client = reqwest::Client::new();
+    let ski = "7b10e3d2a4c95f8812d0b6e3c1a47f90d25ec94f";
+    for (what, request) in [
+        (
+            "approve a control box",
+            client
+                .post(format!("http://{address}/v1/pairing"))
+                .json(&serde_json::json!({ "ski": ski })),
+        ),
+        (
+            "forget a control box",
+            client.delete(format!("http://{address}/v1/pairing/{ski}")),
+        ),
+        (
+            "list the control boxes",
+            client.get(format!("http://{address}/v1/pairing")),
+        ),
+        (
+            "connect a manager",
+            client.put(format!("http://{address}/v1/managers/somebody-else")),
+        ),
+        (
+            "withdraw a manager",
+            client.delete(format!("http://{address}/v1/managers/aggregator-nord")),
+        ),
+        (
+            "set the car's goal",
+            client
+                .put(format!("http://{address}/v1/goals/car"))
+                .json(&serde_json::json!({ "target_soc": 1.0, "by_minute": 420 })),
+        ),
+    ] {
+        let status = request
+            .bearer_auth(&manager)
+            .send()
+            .await
+            .expect("the box to answer")
+            .status();
+        assert_eq!(
+            status,
+            reqwest::StatusCode::FORBIDDEN,
+            "a manager could {what}"
+        );
+    }
+    // The household's own credential still can.
+    assert!(
+        client
+            .get(format!("http://{address}/v1/managers"))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .expect("the box to answer")
+            .status()
+            .is_success()
+    );
+}
+
 /// An instruction scheduled for later does not move the household now.
 ///
 /// `execution_time` means "when to start; in the past means as soon as
@@ -981,4 +1058,117 @@ async fn charge_mode(manager: &mut Manager) -> (s2_kit::types::Id, s2_kit::types
         .find(|m| m.elements.iter().any(|e| e.fill_rate.end_of_range > 0.0))
         .expect("a battery has a mode that fills it");
     (actuator.id, charge.id)
+}
+
+/// Every log line this test binary writes, from the first test that asks.
+///
+/// One global subscriber, because the box serves on Tokio's worker threads and a
+/// thread-local default would see none of it. Tests in this binary run in
+/// parallel, so a test looks for its *own* manager's name rather than for a line
+/// count.
+fn captured() -> Arc<std::sync::Mutex<Vec<u8>>> {
+    static LOG: std::sync::OnceLock<Arc<std::sync::Mutex<Vec<u8>>>> = std::sync::OnceLock::new();
+    Arc::clone(LOG.get_or_init(|| {
+        let buffer = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(move || Sink(Arc::clone(&sink)))
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).expect("one subscriber");
+        buffer
+    }))
+}
+
+struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Sink {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("the log").extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An instruction is logged under the name of the manager that sent it.
+///
+/// A household that can see *that* something drove its battery and not *who*
+/// cannot tell its aggregator from a stranger with a leaked token. The credential
+/// carries the name; this holds that the instruction's own log line does too.
+// Evidence for SR-007: an S2 instruction is logged under the manager's subject.
+#[tokio::test]
+async fn a_managers_instruction_is_logged_under_its_own_name() {
+    let log = captured();
+    let (address, _cem, site, access) = a_box_with_its_access().await;
+    let battery = battery(&site);
+    let token = access
+        .connect_manager("aggregator-sued")
+        .await
+        .expect("a manager can be connected");
+    let mut manager = Manager::connect(&address, &battery, Some(&token))
+        .await
+        .expect("the box accepts its own manager");
+    manager
+        .until("describe itself", |e| {
+            matches!(e, CemEvent::ResourceDescribed(_)).then_some(())
+        })
+        .await;
+    manager
+        .session
+        .select_control_type(ControlType::FillRateBasedControl, Timestamp::now())
+        .expect("the selection to go out");
+    manager
+        .until("activate the control type", |e| {
+            matches!(e, CemEvent::Ready { .. }).then_some(())
+        })
+        .await;
+    let description = manager
+        .until("send its system description", |e| match e {
+            CemEvent::Description {
+                message: Message::FrbcSystemDescription(d),
+                ..
+            } => Some(d.clone()),
+            _ => None,
+        })
+        .await;
+    let actuator = description.actuators.first().expect("one actuator");
+    let charge = actuator
+        .operation_modes
+        .iter()
+        .find(|m| m.elements.iter().any(|e| e.fill_rate.end_of_range > 0.0))
+        .expect("a mode that fills it");
+    manager
+        .session
+        .instruct(
+            s2_kit::types::frbc::Instruction::builder()
+                .id(s2_kit::types::Id::generate())
+                .actuator_id(actuator.id)
+                .operation_mode(charge.id)
+                .operation_mode_factor(0.5)
+                .execution_time(Timestamp::now())
+                .abnormal_condition(false)
+                .build(),
+            Timestamp::now(),
+        )
+        .expect("the instruction to go out");
+    manager.settle().await;
+
+    let line = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let text = String::from_utf8_lossy(&log.lock().expect("the log")).into_owned();
+            if let Some(line) = text.lines().find(|l| {
+                l.contains("subject=cem:aggregator-sued")
+                    && l.contains("the manager asked for a power")
+            }) {
+                return line.to_owned();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the instruction to be logged under the manager's name");
+    assert!(line.contains(&format!("asset={battery}")), "{line}");
 }

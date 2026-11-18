@@ -1,18 +1,22 @@
 +++
 title = "The planner"
 description = "A receding-horizon mixed-integer linear program that prices battery wear instead of hiding it."
-weight = 6
+weight = 8
+
+[extra]
+group = "The box"
 +++
 
-A plan is made every quarter of an hour, covers the next twenty-four, and only
-its **first slot** is ever executed. Everything after that slot exists to price
+A plan is made every quarter of an hour, covers the next two days (192
+quarter-hour slots, `horizon_slots`), and only its **first slot** is ever
+executed. Everything after that slot exists to price
 the consequences of it.
 
 <pre class="mermaid">
 flowchart LR
   I["prices · forecasts<br/>site state · grid limits"] --> S["solve the horizon<br/>MILP"]
   S --> E["execute slot 0<br/>as a target + an envelope"]
-  S --> T["slots 1…95<br/>discarded"]
+  S --> T["slots 1…191<br/>discarded"]
   E --> A["the arbiter,<br/>once a second"]
   A --> M["measurements"]
   M --> I
@@ -26,7 +30,7 @@ may coarsen the tail without coarsening the decision.
 
 ## The formulation
 
-One set of variables per quarter-hour slot of a 24-hour horizon, all in watts and
+One set of variables per quarter-hour slot of the horizon, all in watts and
 all non-negative: grid import and export, battery charging and discharging, the
 energy in the battery, charging power at the charge point, the energy in the car,
 the hot-water heater and the heat in its tank, and production thrown away. Plus,
@@ -533,8 +537,7 @@ self-consumption while it waits.
 The budget costs something that is worth naming: it is measured against the
 **wall clock**, so the answer depends on how busy the machine was. Two runs of
 the same day on the same inputs can differ, which is exactly what "replay the day
-and compare" needs not to happen. That is how it was found — the determinism test
-passed on its own and failed under a parallel test run. So a box in the field
+and compare" needs not to happen. So a box in the field
 keeps the budget, and anything that has to be *reproducible* sets it to zero and
 waits. The relative gap is unaffected: it is a property of the search, not of the
 clock.

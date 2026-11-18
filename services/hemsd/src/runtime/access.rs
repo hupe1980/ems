@@ -86,6 +86,39 @@ pub struct ApiSettings {
     /// work here as they do everywhere else in this workspace — a token written
     /// literally into a configuration file is a token in a backup.
     pub token: Option<Secret>,
+    /// Serve the box's surfaces over HTTPS with a certificate it issues and
+    /// keeps itself.
+    ///
+    /// Absent means: on, exactly when `[service] listen` is not a loopback
+    /// address. A token sent in clear across a household network is a token
+    /// any device on it can read, and an S2 manager will not send one at all
+    /// (S2 Connect: S2 must not travel unencrypted).
+    pub tls: Option<bool>,
+    /// Serve plain HTTP on a non-loopback address anyway.
+    ///
+    /// A written decision rather than a default, and logged at every start:
+    /// for a box behind a proxy that terminates TLS itself, and for nothing
+    /// else.
+    pub insecure_lan: bool,
+}
+
+impl ApiSettings {
+    /// Whether the box serves HTTPS when it listens on `listen`.
+    ///
+    /// # Errors
+    /// Where it would listen on a non-loopback address in clear and
+    /// `insecure_lan` does not say so.
+    pub fn tls_on(&self, listen: std::net::SocketAddr) -> Result<bool, String> {
+        let tls = self.tls.unwrap_or(!listen.ip().is_loopback());
+        if !tls && !listen.ip().is_loopback() && !self.insecure_lan {
+            return Err(format!(
+                "`[service] listen = {listen}` serves the household's token in clear on its \
+                 network; leave `[api] tls` on, or write `insecure_lan = true` if a proxy \
+                 in front terminates TLS"
+            ));
+        }
+        Ok(tls)
+    }
 }
 
 /// The credentials this box answers to, and the household it answers about.
@@ -199,8 +232,12 @@ impl LocalAccess {
     /// again and the old token stops working on the next request.
     ///
     /// # Errors
-    /// [`StoreError`](crate::store::StoreError) where the write fails.
-    pub async fn connect_manager(&self, name: &str) -> Result<String, crate::store::StoreError> {
+    /// [`ManagerError::Name`] for a name outside [`is_manager_name`], and
+    /// [`ManagerError::Store`] where the write fails.
+    pub async fn connect_manager(&self, name: &str) -> Result<String, ManagerError> {
+        if !is_manager_name(name) {
+            return Err(ManagerError::Name(name.escape_debug().to_string()));
+        }
         let token = generate();
         if let Some(store) = &self.store {
             store.lock().await.put_manager(name, &token)?;
@@ -269,6 +306,12 @@ impl LocalAccess {
         self.credentials.read().await.authority_of(token)
     }
 
+    /// The authority a bare token resolves to — the household page's session
+    /// cookie carries the token itself.
+    pub async fn authority_of_token(&self, token: &str) -> Option<Authority> {
+        self.credentials.read().await.authority_of(token)
+    }
+
     /// The household this box is.
     #[must_use]
     pub fn site(&self) -> &str {
@@ -302,7 +345,33 @@ pub async fn require_token(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     let site = access.site().to_owned();
-    let Some(authority) = access.authority(presented).await else {
+    let authority = match presented {
+        Some(_) => access.authority(presented).await,
+        // The household page signs in once and then presents the token as an
+        // HttpOnly cookie, which no script on the page can read. A cookie is
+        // sent by the browser on its own, so a write that relies on one must
+        // also carry a JSON body type — which a cross-site form cannot send —
+        // on top of the cookie's own SameSite=Strict.
+        None => match session_token(request.headers()) {
+            Some(token) => {
+                let writes = !matches!(
+                    *request.method(),
+                    axum::http::Method::GET | axum::http::Method::HEAD
+                );
+                let json = request
+                    .headers()
+                    .get(axum::http::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.starts_with("application/json"));
+                if writes && !json {
+                    return Err(axum::http::StatusCode::UNAUTHORIZED);
+                }
+                access.authority_of_token(token).await
+            }
+            None => None,
+        },
+    };
+    let Some(authority) = authority else {
         return Err(axum::http::StatusCode::UNAUTHORIZED);
     };
     if !authority.may_read(&site) {
@@ -313,10 +382,127 @@ pub async fn require_token(
     // series says when they showered, cooked and went away. It is the one
     // capability a manager's credential does not carry, and this is where the
     // difference is enforced rather than merely granted.
-    if request.uri().path().starts_with("/v1/series") && !authority.may_read_everything(&site) {
+    //
+    // The same line holds for the household's own **decisions** about its box:
+    // which control box it obeys, which managers hold a credential, and what the
+    // car should reach by when. A manager that could approve a Steuerbox could
+    // put a device of its own in the network operator's place; one that could
+    // forget the household's could stop the box following § 14a; one that could
+    // connect managers could mint credentials. A manager drives over S2.
+    let path = request.uri().path();
+    if HOUSEHOLD_ONLY.iter().any(|p| path.starts_with(p)) && !authority.may_read_everything(&site) {
         return Err(axum::http::StatusCode::FORBIDDEN);
     }
+    // Handed on, so whatever the request then does can say **who** did it: a
+    // manager's instruction is attributed to `cem:<name>`, the household's own
+    // to `site:<id>`, and an audit line that said "the box" would answer
+    // nothing a household asks.
+    let mut request = request;
+    request.extensions_mut().insert(authority);
     Ok(next.run(request).await)
+}
+
+/// Whether `name` may name an energy manager: 1–64 characters of ASCII letters,
+/// digits, `-`, `_` and `.`, starting with a letter or a digit.
+///
+/// Narrow on purpose. The name becomes the subject `cem:<name>` every
+/// instruction the manager sends is logged under, so a name carrying a newline,
+/// a space or an `=` could write a line into the household's audit trail that
+/// looks like somebody else's.
+#[must_use]
+pub fn is_manager_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    (1..=64).contains(&bytes.len())
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
+/// Why a manager could not be connected.
+#[derive(Debug, thiserror::Error)]
+pub enum ManagerError {
+    /// The name is not one [`is_manager_name`] accepts.
+    #[error(
+        "`{0}` cannot name a manager: use 1–64 letters, digits, `-`, `_` or `.`, starting with a letter or a digit"
+    )]
+    Name(String),
+    /// The store refused the write.
+    #[error(transparent)]
+    Store(#[from] crate::store::StoreError),
+}
+
+/// Routes only the household's own credential reaches — its data, and its
+/// decisions about who may act on the box.
+const HOUSEHOLD_ONLY: [&str; 4] = ["/v1/series", "/v1/pairing", "/v1/managers", "/v1/goals"];
+
+/// The cookie the household page signs in with.
+pub const SESSION_COOKIE: &str = "hems_session";
+
+/// The token in this request's session cookie, where there is one.
+fn session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find_map(|(name, value)| (name == SESSION_COOKIE && !value.is_empty()).then_some(value))
+}
+
+/// What the page sends to sign in.
+#[derive(Debug, serde::Deserialize)]
+pub struct SignIn {
+    /// The household's token, from the handover sheet or the start-up log.
+    pub token: String,
+}
+
+/// Sign the household page in and out.
+///
+/// Outside [`require_token`] by necessity — it is how a browser *gets* the
+/// credential that layer asks for — and it grants nothing the token did not
+/// already: it checks the token and hands it back as a cookie the page's own
+/// scripts cannot read. Only the **household's** own credential signs in; a
+/// manager's drives devices and has no business reading the household's life.
+/// `secure` adds the `Secure` attribute, which a box serving TLS sets.
+pub fn session_router(access: LocalAccess, secure: bool) -> axum::Router {
+    use axum::routing::post;
+    axum::Router::new()
+        .route(
+            "/v1/session",
+            post(
+                move |axum::extract::State(access): axum::extract::State<LocalAccess>,
+                      axum::Json(body): axum::Json<SignIn>| async move {
+                    let site = access.site().to_owned();
+                    let allowed = access
+                        .authority_of_token(body.token.trim())
+                        .await
+                        .is_some_and(|a| a.may_read_everything(&site));
+                    if !allowed {
+                        return Err(axum::http::StatusCode::UNAUTHORIZED);
+                    }
+                    let cookie = format!(
+                        "{SESSION_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000{}",
+                        body.token.trim(),
+                        if secure { "; Secure" } else { "" }
+                    );
+                    Ok((
+                        axum::http::StatusCode::NO_CONTENT,
+                        [(axum::http::header::SET_COOKIE, cookie)],
+                    ))
+                },
+            )
+            .delete(move || async move {
+                (
+                    axum::http::StatusCode::NO_CONTENT,
+                    [(
+                        axum::http::header::SET_COOKIE,
+                        format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),
+                    )],
+                )
+            }),
+        )
+        .with_state(access)
 }
 
 /// Where the token came from, so start-up can say the right thing about it.
@@ -379,6 +565,30 @@ fn generate() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Evidence for SR-035: a name that could forge an audit line is refused.
+    #[tokio::test]
+    async fn a_name_that_could_forge_an_audit_line_is_refused() {
+        let access = LocalAccess::for_testing("reference-household", "s3cret");
+        for forged in [
+            "evil\nINFO s2{subject=cem:aggregator-nord}",
+            "evil subject=cem:aggregator-nord",
+            "",
+            "-leading-dash",
+            &"x".repeat(65),
+        ] {
+            assert!(
+                matches!(
+                    access.connect_manager(forged).await,
+                    Err(ManagerError::Name(_))
+                ),
+                "{forged:?} must not name a manager"
+            );
+        }
+        for fine in ["aggregator-nord", "Tibber_2", "cem.example"] {
+            assert!(is_manager_name(fine), "{fine}");
+        }
+    }
 
     #[tokio::test]
     async fn a_token_opens_its_own_household_and_nothing_else() {

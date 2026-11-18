@@ -1,22 +1,49 @@
 {% extends "base.html" %}
 
+{% block schema %}
+{%- set_global extra %},
+    {
+      "@type": "CollectionPage",
+      "@id": "{{ section.permalink }}#page",
+      "name": {{ section.title | json_encode | safe }},
+      "description": {{ section.description | default(value=config.description) | json_encode | safe }},
+      "url": "{{ section.permalink }}",
+      "isPartOf": { "@id": "{{ config.base_url }}/#website" },
+      "about": { "@id": "{{ config.base_url }}/#project" },
+      "inLanguage": "en"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "@id": "{{ section.permalink }}#breadcrumb",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "hems", "item": "{{ config.base_url }}/" },
+        { "@type": "ListItem", "position": 2, "name": {{ section.title | json_encode | safe }}, "item": "{{ section.permalink }}" }
+      ]
+    }{% endset %}
+{%- include "partials/schema.html" %}
+{% endblock %}
+
 {% block content %}
 <div class="docs-shell">
   {% set here = section.path %}
-  {% include "partials/docs-nav.html" %}
   <article>
     <h1>{{ section.title }}</h1>
     {% if section.description %}<p class="lead">{{ section.description }}</p>{% endif %}
     {{ section.content | safe }}
+    {% set_global n = 0 %}
+    {% for g in config.extra.doc_groups %}
+    <h2 class="cards-title">{{ g }}</h2>
     <ol class="cards">
-      {% for page in section.pages %}
+      {% for page in section.pages %}{% if page.extra.group == g %}{% set_global n = n + 1 %}
       <li class="card">
-        <span class="num">{{ loop.index }}</span>
+        <span class="num">{{ n }}</span>
         <h3><a href="{{ page.permalink }}">{{ page.title }}</a></h3>
         <p>{{ page.description | default(value="") }}</p>
       </li>
-      {% endfor %}
+      {% endif %}{% endfor %}
     </ol>
+    {% endfor %}
   </article>
+  {% include "partials/docs-nav.html" %}
 </div>
 {% endblock %}

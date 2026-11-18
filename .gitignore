@@ -20,11 +20,23 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Internal-only documents (not published) — the architecture notes and the backlog
-concepts/
-# Third-party specifications, laws, standards and papers (copyrighted; indexed
-# with retrieval URLs in specs/README.md so the folder can be rebuilt).
-specs/
+# Internal-only documents (not published) — the architecture notes and the backlog.
+#
+# The third-party corpus — specifications, laws, Festlegungen, standards and papers,
+# copyrighted — lives at `concepts/reference/` and is covered by this line, indexed
+# with retrieval URLs in `concepts/REFERENCES.md` so the folder can be rebuilt.
+/concepts/
+
+# This project's own feature specifications, and the Spec Kit machinery that
+# produces them: one `specs/NNN-slug/` per change (spec, plan, tasks, the
+# threatspec threat-model.yaml), `.specify/memory/constitution.md`, the threatspec
+# extension, and the `/speckit-*` skills. Same rule as `concepts/` — internal.
+#
+# Until 2026-11-17 `specs/` held the corpus now under `concepts/reference/`; a
+# stale copy is ignored by the same line. Matches ocpp-kit, mako and agentplane.
+/specs/
+/.specify/
+/.claude/
 
 # Feedback for sibling crates (bug reports / feature requests; always internal — sent to their teams)
 *_FEEDBACK.md

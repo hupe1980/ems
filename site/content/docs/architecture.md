@@ -1,7 +1,10 @@
 +++
 title = "Architecture"
 description = "Three control planes at three cadences, and a fixed order of authority between them."
-weight = 2
+weight = 4
+
+[extra]
+group = "The box"
 +++
 
 ## Three planes
@@ -428,8 +431,8 @@ The table, and the rest of the vocabulary the whole workspace shares, is on
 
 Six daemons sit around the box and none of them is a trust anchor. `tariffd`
 fetches prices, `forecastd` fetches the sky, `histd` keeps everybody's two years
-of § 14a evidence, `fleetd` enrols a box and offers it **signed** configuration
-and releases, `obsd` is the fleet view, and `agentd` is an advisory plane that
+of § 14a evidence, `fleetd` enrols boxes and serves **signed** configuration
+and release manifests (the box-side client is not built yet), `obsd` is the fleet view, and `agentd` is an advisory plane that
 proposes and cannot act. They share one shell, `hems-service`, which owns
 configuration, logging, a health surface, a shutdown and the credential model —
 and owns nothing about energy.

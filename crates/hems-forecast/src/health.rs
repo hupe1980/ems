@@ -95,7 +95,6 @@
 //! The ratio also arrives already scaled: the corrector maintains a calibrated
 //! dispersion per hour-of-day bucket, so the question "is this far?" has an
 //! answer here that a generic z-score on a stored column cannot reach.
-//! `CHRONIX_FEEDBACK.md` says what would change that.
 
 /// How many spreads below its own baseline a roof has to sit.
 ///

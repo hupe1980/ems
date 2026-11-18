@@ -22,8 +22,10 @@ fn main() -> Result<()> {
         Some("check-notes") => check_notes(&root),
         Some("check-deps") => check_deps(&root),
         Some("check-deps-used") => check_deps_used(&root).map(drop),
+        Some("check-actions") => check_actions(&root),
         Some("check-all") => {
             check_citations(&root)?;
+            check_actions(&root)?;
             check_events(&root)?;
             check_manifests(&root)?;
             check_wire(&root)?;
@@ -51,7 +53,7 @@ fn print_help() {
 cargo xtask <task>
 
   check-citations   every regulatory citation in the code names a document that
-                    specs/README.md actually indexes
+                    concepts/REFERENCES.md actually indexes
   check-events      every CloudEvents type used in the workspace is in the
                     hems-events catalogue
   check-manifests   every publishable crate can actually be packaged: the files
@@ -73,6 +75,9 @@ cargo xtask <task>
                     the ones the workspace manifest resolves
   check-deps-used   every dependency a crate declares is one its source reaches,
                     so a published manifest does not promise what it never uses
+  check-actions     every GitHub Action a workflow uses is pinned to a commit
+                    SHA, so a tag moved upstream cannot change what a release
+                    is built with
   check-all         all of the above
 "
     );
@@ -118,17 +123,96 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+// ── check-actions ───────────────────────────────────────────────────────────
+
+/// Every `uses:` in a workflow names a full 40-hex commit, or a local `./` action.
+///
+/// The failure it prevents: a tag is a pointer its owner can move. A release
+/// workflow that says `actions/checkout@v4` runs whatever `v4` points at on the
+/// day it runs, which includes the day somebody else's account is compromised —
+/// and the release it builds carries a provenance attestation that would vouch
+/// for it. A commit cannot move. The tag stays beside it as a comment, so a
+/// reader still sees which release it is.
+fn check_actions(root: &Path) -> Result<()> {
+    let dir = root.join(".github/workflows");
+    if !dir.exists() {
+        println!("check-actions: no workflows in this checkout");
+        return Ok(());
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "yml" || e == "yaml"))
+        .collect();
+    files.sort();
+    let mut pinned = 0usize;
+    let mut loose = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file)?;
+        for (n, line) in text.lines().enumerate() {
+            if let Some(target) = action_reference(line) {
+                if action_is_pinned(target) {
+                    pinned += 1;
+                } else {
+                    loose.push(format!(
+                        "  {}:{}: `{target}`",
+                        file.strip_prefix(root).unwrap_or(file).display(),
+                        n + 1
+                    ));
+                }
+            }
+        }
+    }
+    if loose.is_empty() {
+        println!(
+            "check-actions: {pinned} action references across {} workflows, every one pinned to a commit",
+            files.len()
+        );
+        Ok(())
+    } else {
+        eprintln!("check-actions: actions referenced by a movable ref rather than a commit SHA:");
+        for l in &loose {
+            eprintln!("{l}");
+        }
+        bail!("{} unpinned action reference(s)", loose.len())
+    }
+}
+
+/// The target of a `uses:` key on this line, without a trailing comment.
+fn action_reference(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start().trim_start_matches("- ").trim_start();
+    let rest = trimmed.strip_prefix("uses:")?;
+    let target = rest
+        .split('#')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches(['"', '\'']);
+    (!target.is_empty()).then_some(target)
+}
+
+/// Pinned means a local action, a container digest, or `owner/repo@<40 hex>`.
+fn action_is_pinned(target: &str) -> bool {
+    if target.starts_with("./") || target.starts_with("docker://") && target.contains("@sha256:") {
+        return true;
+    }
+    target.rsplit_once('@').is_some_and(|(_, r)| {
+        r.len() == 40
+            && r.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
 // ── check-citations ─────────────────────────────────────────────────────────
 
 /// Every regulatory claim in hems cites its source in the form `[A1 4.5.2]` or
 /// `[LPC-031]`. This checks that the documents those refer to are indexed in
-/// `specs/README.md`, so a citation can always be followed to a file and a
+/// `concepts/REFERENCES.md`, so a citation can always be followed to a file and a
 /// retrieval URL.
 ///
 /// The failure it prevents: a rule that cites a Festlegung nobody can produce,
 /// which is indistinguishable from a rule somebody invented.
 /// Which document each citation prefix belongs to, and a string that must
-/// appear in `specs/README.md` for that document to count as present.
+/// appear in `concepts/REFERENCES.md` for that document to count as present.
 ///
 /// A family is added here only once the document is actually indexed. An entry
 /// whose needle is broad enough to match anything is worse than no entry: it
@@ -174,9 +258,9 @@ fn count_citations(root: &Path) -> Result<usize> {
 }
 
 fn check_citations(root: &Path) -> Result<()> {
-    let index = root.join("specs/README.md");
+    let index = root.join("concepts/REFERENCES.md");
     if !index.exists() {
-        println!("check-citations: specs/README.md is absent (it is gitignored); skipping");
+        println!("check-citations: concepts/REFERENCES.md is absent (it is gitignored); skipping");
         return Ok(());
     }
     let index = std::fs::read_to_string(&index)?;
@@ -200,7 +284,7 @@ fn check_citations(root: &Path) -> Result<()> {
     for (prefix, document, needle) in &sources {
         if used.contains(prefix) && !index.contains(needle) {
             missing.push(format!(
-                "  {prefix}…]  →  {document}  (not indexed in specs/README.md)"
+                "  {prefix}…]  →  {document}  (not indexed in concepts/REFERENCES.md)"
             ));
         }
     }
@@ -408,13 +492,16 @@ fn stale_names(root: &Path, wrong: &mut Vec<String>) -> Result<usize> {
             "the shared-limit term in the planner's own notation",
         ),
     ];
-    // These four are *about* what does not exist: rejected alternatives, open
-    // risks, unbuilt work, other people's products.
-    const REGISTERS: [&str; 4] = [
+    // These five are *about* what does not exist: rejected alternatives, open
+    // risks, unbuilt work, other people's products, other people's documents —
+    // the primary-source index describes what each file in `reference/` covers
+    // in the source's own vocabulary, not in this workspace's.
+    const REGISTERS: [&str; 5] = [
         "DECISIONS.md",
         "RISKS.md",
         "ROADMAP.md",
         "MARKET_LANDSCAPE.md",
+        "REFERENCES.md",
     ];
 
     let notes = root.join("concepts");
@@ -1589,4 +1676,34 @@ fn workspace_requirements(manifest: &str) -> std::collections::BTreeMap<String, 
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{action_is_pinned, action_reference};
+
+    // Evidence for SR-025: an Action referenced by tag or branch is not pinned.
+    #[test]
+    fn a_tag_or_a_branch_is_not_a_pin_and_a_commit_is() {
+        assert!(!action_is_pinned("actions/checkout@v4"));
+        assert!(!action_is_pinned("dtolnay/rust-toolchain@stable"));
+        assert!(!action_is_pinned("actions/checkout@11d5960a"));
+        assert!(action_is_pinned(
+            "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        ));
+        assert!(action_is_pinned("./.github/actions/local"));
+        assert!(!action_is_pinned("docker://alpine:3"));
+    }
+
+    #[test]
+    fn the_reference_is_read_past_the_list_dash_and_the_tag_comment() {
+        assert_eq!(
+            action_reference(
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4"
+            ),
+            Some("actions/checkout@11d5960a326750d5838078e36cf38b85af677262")
+        );
+        assert_eq!(action_reference("        uses: \"a/b@v1\""), Some("a/b@v1"));
+        assert_eq!(action_reference("      - run: cargo test"), None);
+    }
 }

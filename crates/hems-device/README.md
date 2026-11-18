@@ -43,6 +43,15 @@ Emitting active power to all of them is the obvious first implementation, and it
 leaves most of a household undriveable. This crate is the translation, and it is
 a pure function of the asset and the decision.
 
+## Use it
+
+```console
+$ cargo add hems-device
+```
+
+API reference on [docs.rs](https://docs.rs/hems-device); the design is explained in
+[Devices and drivers](https://hupe1980.github.io/hems/docs/devices/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

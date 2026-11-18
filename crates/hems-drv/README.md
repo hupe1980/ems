@@ -139,6 +139,15 @@ The isolation a crate each would buy is bought by `optional = true` instead: a
 box built with `--features modbus` never compiles, audits or ships the EEBUS
 stack. What one crate adds is that the feature matrix lives in one manifest.
 
+## Use it
+
+```console
+$ cargo add hems-drv
+```
+
+API reference on [docs.rs](https://docs.rs/hems-drv); the design is explained in
+[Devices and drivers](https://hupe1980.github.io/hems/docs/devices/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

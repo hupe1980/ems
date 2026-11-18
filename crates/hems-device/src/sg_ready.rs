@@ -1,7 +1,7 @@
 //! The SG Ready interface, as the Bundesverband Wärmepumpe defines it.
 //!
 //! Two dry contacts, three states — not four. Version 1.1 of the BWP interface
-//! specification (`specs/sg-ready/sg-ready-interface-1.1-en.pdf`) dropped the
+//! specification (Bundesverband Wärmepumpe, *SG Ready* interface 1.1) dropped the
 //! old "start command" state, and an implementation that still sends four is
 //! talking to a device that no longer listens.
 //!

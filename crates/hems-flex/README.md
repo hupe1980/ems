@@ -122,6 +122,15 @@ added and never notices that no `describe_*` was ever written for it, so a devic
 can sit inside the count with nothing to send. A gap says so out loud:
 `6 resources, 1 it cannot express`.
 
+## Use it
+
+```console
+$ cargo add hems-flex
+```
+
+API reference on [docs.rs](https://docs.rs/hems-flex); the design is explained in
+[Flexibility](https://hupe1980.github.io/hems/docs/flexibility/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

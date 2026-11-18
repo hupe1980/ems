@@ -35,7 +35,7 @@ pub struct BatteryModel {
     /// The term most home energy managers leave out. A study of cost-only
     /// receding-horizon control found the degradation it provoked could exceed
     /// the energy savings it produced by up to an order of magnitude
-    /// (`specs/arxiv/arxiv-2606.16051.pdf`); leaving it at zero reproduces that
+    /// (arXiv:2606.16051); leaving it at zero reproduces that
     /// behaviour exactly.
     ///
     /// A reasonable value is the cell price divided by the warranted throughput:

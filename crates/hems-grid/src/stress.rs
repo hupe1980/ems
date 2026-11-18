@@ -36,8 +36,8 @@
 
 use std::collections::BTreeMap;
 
+use hems_core::calendar::Bundesland;
 use hems_core::prelude::{DayType, GuardRule, Power, Slot};
-use metering::holiday::Bundesland;
 
 use crate::evidence::ControlEvent;
 

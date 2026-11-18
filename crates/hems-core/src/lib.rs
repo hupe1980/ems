@@ -51,6 +51,7 @@
 )]
 
 pub mod asset;
+pub mod calendar;
 pub mod circuit;
 pub mod envelope;
 pub mod error;

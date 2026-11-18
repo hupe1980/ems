@@ -198,7 +198,7 @@ fn a_battery_buys_cheap_and_sells_expensive_when_the_spread_covers_the_wear() {
 
 #[test]
 fn wear_stops_a_battery_cycling_for_a_spread_that_does_not_pay() {
-    // The finding of `specs/arxiv/arxiv-2606.16051.pdf`, as a test: with no wear
+    // The finding of arXiv:2606.16051, as a test: with no wear
     // term a cost-minimising plan cycles for any spread at all. With one, it
     // only cycles when the spread covers the damage.
     let h = horizon(8);

@@ -436,7 +436,7 @@ mod tests {
             sites: 20,
             ..Summary::default()
         }));
-        assert!(proposal.advice.is_empty());
+        assert_eq!(proposal.advice, []);
         assert_eq!(proposal.considered, 200);
     }
 

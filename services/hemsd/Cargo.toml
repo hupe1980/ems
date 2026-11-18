@@ -1,6 +1,6 @@
 [package]
 name        = "hemsd"
-description = "The hems edge daemon — the guard, arbiter and planner of one household, with a simulated site to run them against"
+description = "The hems edge daemon — the guard, arbiter and planner of one household, the page it shows the people who live there, and a simulated day to run them against"
 publish     = false
 version.workspace      = true
 authors.workspace      = true
@@ -32,7 +32,7 @@ hems-grid      = { workspace = true }
 # would rather not have a C++ toolchain than for the thing doing the solving.
 hems-optimizer = { workspace = true, features = ["highs"] }
 hems-realtime  = { workspace = true }
-hems-service   = { workspace = true }
+hems-service   = { workspace = true, features = ["tls"] }
 
 # **The I/O half of EEBUS, which `hems-drv` may not have.** That crate is on the
 # purity list and owns the SPINE engine, so what crosses its edge is a datagram
@@ -82,6 +82,10 @@ rust_decimal = { workspace = true }
 # number or a clock is one somebody can compute (`runtime::access`).
 getrandom    = { workspace = true }
 hex          = { workspace = true }
+# The box's own HTTPS (runtime::tls): the server configuration and the
+# certificate it issues itself, on the provider the rest of the box names.
+rustls       = { workspace = true }
+rcgen        = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 thiserror    = { workspace = true }

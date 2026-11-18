@@ -183,6 +183,13 @@ fuse_a = 35.0
 # as a Sunday in a load profile, and Fronleichnam is a working day in Berlin and
 # is not in Bayern.
 bundesland = "BE"
+# The household's own annual consumption, kWh — WITHOUT heat pump, car or
+# battery: the "Haushaltsstrom" a household of this size uses. It scales BDEW's
+# H25 profile, which the box plans its first days on until it has measured the
+# household. Leave it out and the box scales H25 to its own first whole day, and
+# before that to its first reading, never below a typical family house. Not the
+# figure on a bill that meters a heat pump or a wallbox on the same register.
+# household_kwh_per_year = 3500
 
 latitude = 52.52
 longitude = 13.4

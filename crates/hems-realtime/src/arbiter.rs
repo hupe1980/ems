@@ -850,7 +850,7 @@ impl Arbiter {
             .into_iter()
             .filter(|g| g.power > Power::ZERO)
             .map(|g| {
-                let now_p = tick.site.asset(&g.asset).map_or(Power::ZERO, &current);
+                let now_p = tick.site.asset(&g.asset).map_or(Power::ZERO, current);
                 // Both directions add the grant to what the asset is **already
                 // doing**, signed, because that is what the claim was: an
                 // increment on a measurement taken with the asset running.

@@ -127,6 +127,8 @@ const MANAGERS: TableDefinition<&str, &[u8]> = TableDefinition::new("managers");
 /// writer that disagreed about the spelling would produce a box that issues a
 /// fresh token on every boot and never says why.
 const API_TOKEN: &str = "api-token";
+/// The certificate and key the box serves HTTPS with, PEM, in one record.
+const API_TLS: &str = "api-tls";
 
 /// The failsafe a network operator wrote, per direction.
 const FAILSAFE: TableDefinition<&str, &[u8]> = TableDefinition::new("failsafe");
@@ -223,6 +225,13 @@ pub struct StoredIdentity {
     pub ship_id: String,
     /// The private key, PKCS#8 PEM.
     pub key_pem: String,
+    /// The self-signed certificate, PEM — kept so a restart presents the same
+    /// certificate byte for byte. Its fingerprint is what SHIP's Pairing
+    /// Service trusts and what the pairing QR code prints, so a box that
+    /// re-issued it on every start would change it on every start. Absent in a
+    /// store written before it was kept; the next start issues one and keeps it.
+    #[serde(default)]
+    pub certificate_pem: Option<String>,
     /// The trusted peers, as `eebus::runtime::TrustStore`'s own JSON.
     pub trusted: String,
 }
@@ -506,6 +515,37 @@ impl Store {
             Some(bytes) => Ok(Some(decode(0, bytes.value())?)),
             None => Ok(None),
         }
+    }
+
+    /// The certificate and key the box serves HTTPS with, if it has made one.
+    ///
+    /// Kept for the reason the SHIP identity is (D215): its fingerprint is what
+    /// a household's browser or an S2 manager pins at commissioning, and one
+    /// that changed on every start would be a stranger after every reboot.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the read fails.
+    pub fn api_tls(&self) -> Result<Option<(String, String)>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let table = sql!(read.open_table(IDENTITY))?;
+        match sql!(table.get(API_TLS))? {
+            Some(bytes) => Ok(Some(decode(0, bytes.value())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Keep the certificate and key the box serves HTTPS with.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails.
+    pub fn put_api_tls(&self, certificate_pem: &str, key_pem: &str) -> Result<(), StoreError> {
+        let bytes = encode(&(certificate_pem.to_owned(), key_pem.to_owned()))?;
+        let write = sql!(self.db.begin_write())?;
+        {
+            let mut table = sql!(write.open_table(IDENTITY))?;
+            sql!(table.insert(API_TLS, bytes.as_slice()))?;
+        }
+        sql!(write.commit())
     }
 
     /// Keep the token this box issued itself.
@@ -1423,6 +1463,7 @@ mod tests {
                 &StoredIdentity {
                     ship_id: "hems_test".into(),
                     key_pem: "-----BEGIN PRIVATE KEY-----".into(),
+                    certificate_pem: None,
                     trusted: "[]".into(),
                 },
                 NOW,
@@ -1456,10 +1497,10 @@ mod tests {
         // let whoever held them read the new household's electricity, and let
         // the previous household's aggregator go on driving its battery (D188).
         assert_eq!(store.api_token().unwrap(), None);
-        assert!(store.managers().unwrap().is_empty());
+        assert_eq!(store.managers().unwrap(), []);
         assert_eq!(store.eebus_identity().unwrap(), None);
-        assert!(store.control_events().unwrap().is_empty());
-        assert!(store.quarter_hours().unwrap().is_empty());
+        assert_eq!(store.control_events().unwrap(), []);
+        assert_eq!(store.quarter_hours().unwrap(), []);
         assert!(store.backlog().unwrap().is_empty());
         // …and it is a box with an empty database rather than one with no
         // database: the next write must not need a migration.
@@ -1492,7 +1533,7 @@ mod tests {
         store
             .factory_reset_discarding_evidence()
             .expect("a box that will never see a WAN again");
-        assert!(store.control_events().unwrap().is_empty());
+        assert_eq!(store.control_events().unwrap(), []);
     }
 
     #[test]
@@ -1669,7 +1710,7 @@ mod tests {
         assert_eq!(store.control_events().unwrap().len(), 1);
         // A day after, it is not — and its trace went with it.
         assert_eq!(store.prune(almost + time::Duration::days(2)).unwrap(), 1);
-        assert!(store.control_events().unwrap().is_empty());
+        assert_eq!(store.control_events().unwrap(), []);
         // The trace went with it. `redb` has no cascade, so this is the
         // assertion that the explicit drain in `prune` actually ran — a trace
         // whose event has been deleted is a set of numbers nobody can interpret,
@@ -1792,7 +1833,7 @@ mod outbound_tests {
         store
             .mark_sent(&[1], NOW + time::Duration::hours(2))
             .unwrap();
-        assert!(store.pending_outbound(10).unwrap().is_empty());
+        assert_eq!(store.pending_outbound(10).unwrap(), []);
         assert_eq!(store.backlog().unwrap().outbound, 0);
     }
 
@@ -1808,7 +1849,7 @@ mod outbound_tests {
             .unwrap();
         store.abandon_event(1, "HTTP 400", NOW).unwrap();
 
-        assert!(store.pending_outbound(10).unwrap().is_empty());
+        assert_eq!(store.pending_outbound(10).unwrap(), []);
         assert_eq!(store.backlog().unwrap().outbound, 0);
         let read = store.db.begin_read().unwrap();
         let outbound = read.open_table(OUTBOUND).unwrap();

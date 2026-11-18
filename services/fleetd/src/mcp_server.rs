@@ -26,7 +26,7 @@ use rmcp::handler::server::tool::Extension;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolResult, ContentBlock, Implementation, InitializeResult, PromptMessage, Role,
-    ServerCapabilities, ServerInfo,
+    ServerCapabilities, ServerConfig,
 };
 use rmcp::{
     ErrorData as McpError, ServerHandler, prompt, prompt_handler, prompt_router, schemars, tool,
@@ -267,10 +267,14 @@ impl Handler {
     }
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "rmcp's #[tool_handler] and #[prompt_handler] generate these async trait methods"
+)]
 #[tool_handler]
 #[prompt_handler]
 impl ServerHandler for Handler {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         InitializeResult::new(
             ServerCapabilities::builder()
                 .enable_tools()

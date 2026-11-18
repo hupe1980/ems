@@ -1,7 +1,10 @@
 +++
 title = "Devices and drivers"
 description = "What a wanted power becomes on real hardware — amperes, contact states, contactors — and the sans-I/O driver contract behind EEBUS, SunSpec and Modbus."
-weight = 9
+weight = 11
+
+[extra]
+group = "The box"
 +++
 
 The control planes decide in **watts**, because watts are what the physics and

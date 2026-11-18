@@ -22,6 +22,7 @@ pub struct History {
     store: Store,
     credentials: Arc<Credentials>,
     mispel: Arc<std::collections::BTreeMap<String, crate::config::MispelSettings>>,
+    state_aid_approved_on: Option<time::Date>,
 }
 
 impl History {
@@ -37,6 +38,7 @@ impl History {
             store,
             credentials: Arc::new(credentials),
             mispel: Arc::new(std::collections::BTreeMap::new()),
+            state_aid_approved_on: None,
         }
     }
 
@@ -48,11 +50,17 @@ impl History {
     /// Nachweis from them, which is exactly what every deployment did before
     /// this existed.
     #[must_use]
+    ///
+    /// `state_aid_approved_on` is the one fact that is not per site: the day
+    /// the European Commission approved § 19 Abs. 3c EEG, which opens the
+    /// Pauschaloption from the following month, `[MiSpeL Tenor 9]` b).
     pub fn settling(
         mut self,
         declarations: std::collections::BTreeMap<String, crate::config::MispelSettings>,
+        state_aid_approved_on: Option<time::Date>,
     ) -> Self {
         self.mispel = Arc::new(declarations);
+        self.state_aid_approved_on = state_aid_approved_on;
         self
     }
 
@@ -206,7 +214,8 @@ async fn get_mispel(
     Path(site): Path<String>,
     headers: HeaderMap,
     Query(period): Query<Period>,
-) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     // The **household's** document, on the same footing as the Data Act export
     // rather than the § 14a Nachweis — and the difference is who the reader is.
     // `[A1 7.2]` is the record of what a *network operator* commanded, so an
@@ -216,45 +225,63 @@ async fn get_mispel(
     // *Anlagenbetreiber* produce and submit it, so it is theirs to hand over —
     // and a § 14a operator credential that could read every household's
     // storage economics is a reach nothing granted it.
-    deny_unless(state.authority(&headers)?.may_read_everything(&site))?;
+    let allowed = state
+        .authority(&headers)
+        .and_then(|a| deny_unless(a.may_read_everything(&site)));
+    if let Err(status) = allowed {
+        return status.into_response();
+    }
     let Some(declared) = state.declaration(&site) else {
         // Refused rather than defaulted: every option produces a different
         // Nachweis from the same registers.
-        return Err(StatusCode::NOT_FOUND);
+        return StatusCode::NOT_FOUND.into_response();
     };
     let outcome = crate::export::mispel(
         &state.store,
         &site,
         Some(declared),
+        state.state_aid_approved_on,
         period.year,
         period.month,
         period.as_of,
     )
     .await;
+    // A refusal says why, in the clause's own words: "the period ends before
+    // the installation was assigned" is something the caller can act on, and a
+    // bare status is not.
+    let explained = |status: StatusCode, e: &crate::export::MispelExportError| {
+        (
+            status,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response()
+    };
     match outcome {
-        Ok(value) => Ok(axum::Json(value)),
+        Ok(value) => axum::Json(value).into_response(),
         // The caller asked wrongly — a window the declared option does not
-        // settle over, a month that is not one, or a period earlier than the
-        // Festlegung that would settle it. The last is a `400` rather than a
+        // settle over, a month that is not one, or a period the Festlegung
+        // does not govern for this site. The last is a `400` rather than a
         // `404` on purpose: the site exists and its option is declared, and what
         // is wrong is the *period* the caller named.
         Err(
-            crate::export::MispelExportError::WrongWindow(_)
+            e @ (crate::export::MispelExportError::WrongWindow(_)
             | crate::export::MispelExportError::NotACalendarMonth { .. }
-            | crate::export::MispelExportError::BeforeTheRules { .. },
-        ) => Err(StatusCode::BAD_REQUEST),
-        Err(crate::export::MispelExportError::Undeclared { .. }) => Err(StatusCode::NOT_FOUND),
+            | crate::export::MispelExportError::NotGoverned { .. }),
+        ) => explained(StatusCode::BAD_REQUEST, &e),
+        Err(crate::export::MispelExportError::Undeclared { .. }) => {
+            StatusCode::NOT_FOUND.into_response()
+        }
         // The request was well formed and the **registers** cannot support a
-        // settlement — a negative quantity, case A4 without its storage meter,
-        // a share whose denominator is zero. That is a fact about the record
-        // rather than about the question, which is what `422` is for.
-        Err(crate::export::MispelExportError::Arithmetic(e)) => {
+        // settlement — a negative quantity, case A4 without its storage meter.
+        // That is a fact about the record rather than about the question,
+        // which is what `422` is for.
+        Err(e @ crate::export::MispelExportError::Arithmetic(_)) => {
             tracing::warn!(error = %e, "a MiSpeL settlement was refused");
-            Err(StatusCode::UNPROCESSABLE_ENTITY)
+            explained(StatusCode::UNPROCESSABLE_ENTITY, &e)
         }
         Err(crate::export::MispelExportError::Store(e)) => {
             tracing::error!(error = %e, "a query failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
 }

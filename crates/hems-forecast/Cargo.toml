@@ -15,6 +15,9 @@ rust-version.workspace = true
 [dependencies]
 hems-core = { workspace = true }
 metering  = { workspace = true }
+# metering answers an SLP value exactly; the planner takes floats, and this is
+# the one conversion between them (the H25 prior).
+rust_decimal = { workspace = true }
 serde     = { workspace = true, optional = true }
 # Reading somebody else's weather model. A pure parser — a `&str` in, a series
 # out — so `hems-forecast` stays a domain crate that does no I/O: the fetching

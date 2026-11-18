@@ -5,7 +5,7 @@
 set shell := ["bash", "-uc"]
 
 # Keep in sync with rust-toolchain.toml and `rust-version` in Cargo.toml.
-msrv := "1.94"
+msrv := "1.99"
 
 # The one version every publishable crate carries, from `[workspace.package]`.
 version := `sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -1`

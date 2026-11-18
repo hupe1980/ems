@@ -934,7 +934,7 @@ mod tests {
             // that falls back to 4,2 kW on a household owed 10,5 has given away
             // six kilowatts nobody asked it to.
             Power::from_kw(10.5),
-            StdDuration::from_secs(2 * 3600),
+            StdDuration::from_hours(2),
             START,
         )
     }
@@ -1128,7 +1128,7 @@ mod tests {
         let _ = limits(&mut d);
 
         // 17:00 — a reduction to 4,2 kW for ninety minutes.
-        let write = LimitWrite::active_for(4_200.0, StdDuration::from_secs(90 * 60));
+        let write = LimitWrite::active_for(4_200.0, StdDuration::from_mins(90));
         let outcome = d.on_limit(&write, at(17 * 3600));
         assert!(
             outcome.is_accepted(),

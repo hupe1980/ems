@@ -48,9 +48,15 @@ figure however wrong the forecast was.
   zero-order-hold step the planner uses — and a refusal where the record has no
   excitation in it, because a week in which the heating never changed says
   nothing about the response to heating.
+- 🌅 **A published first evening** — BDEW's **H25** household profile (2025
+  revision, the table BDEW publishes, on `metering`'s model), scaled to a
+  declared household, to its own first whole day, or to one reading floored at a
+  typical family house, and faded out cell by cell as the household's own
+  history arrives, so a new box does not plan against the night trough.
 - 🪫 **Naive fallbacks** — seasonal-naive and persistence, with a band that
-  widens over the horizon — for the first morning and the Tuesday the WAN went
-  down. Refusing to forecast is worse than forecasting badly.
+  widens over the horizon — for an embedder with neither a profile nor a prior,
+  and the Tuesday the WAN went down. Refusing to forecast is worse than
+  forecasting badly.
 - 🎯 **Calibration metrics** — pinball, coverage, bias, MAE and **CRPS**, in the
   units the forecasting literature compares models in — because a forecast nobody
   scores is a number nobody should act on, and because a score of zero means the
@@ -66,6 +72,15 @@ figure however wrong the forecast was.
   produces no forecast at all.
 - 🧊 **No I/O, no clock.** Every model is a pure function of a record, so a
   simulated season of forecasting is a unit test.
+
+## Use it
+
+```console
+$ cargo add hems-forecast
+```
+
+API reference on [docs.rs](https://docs.rs/hems-forecast); the design is explained in
+[Forecasting](https://hupe1980.github.io/hems/docs/forecasting/) on the hems site.
 
 ## License
 

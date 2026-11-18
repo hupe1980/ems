@@ -16,12 +16,12 @@
 //! * the **wall-clock time** a slot starts at, which is what a § 14a Modul 3
 //!   time window or a heat-pump comfort schedule is written in.
 //!
-//! Both go through [`metering::calendar`], so hems and the metering layer can
+//! Both go through [`metering::time::calendar`], so hems and the metering layer can
 //! never disagree about what a quarter hour is.
 
 use core::fmt;
 
-use metering::holiday::Bundesland;
+use crate::calendar::Bundesland;
 use time::{Date, Duration, OffsetDateTime};
 
 /// The length of one slot.
@@ -131,7 +131,7 @@ impl Slot {
     /// a Modul 3 calendar means.
     #[must_use]
     pub fn local_date(&self) -> Date {
-        metering::calendar::local_day(self.start)
+        crate::calendar::local_day(self.start)
     }
 
     /// Minutes since local midnight at the start of this slot, `0..1440`.
@@ -145,7 +145,7 @@ impl Slot {
     /// the window twice.
     #[must_use]
     pub fn local_minute_of_day(&self) -> u16 {
-        let local = metering::calendar::to_berlin(self.start);
+        let local = crate::calendar::to_berlin(self.start);
         u16::from(local.hour()) * 60 + u16::from(local.minute())
     }
 
@@ -156,14 +156,14 @@ impl Slot {
     /// array, because the wall clock repeats on the long day.
     #[must_use]
     pub fn index_in_local_day(&self) -> u32 {
-        let day_start = metering::calendar::day_start_utc(self.local_date());
+        let day_start = crate::calendar::day_start_utc(self.local_date());
         u32::try_from((self.start - day_start).whole_seconds() / SLOT.whole_seconds()).unwrap_or(0)
     }
 }
 
 impl fmt::Display for Slot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let local = metering::calendar::to_berlin(self.start);
+        let local = crate::calendar::to_berlin(self.start);
         write!(
             f,
             "{:04}-{:02}-{:02} {:02}:{:02} local",
@@ -279,7 +279,7 @@ mod tests {
             (time::macros::date!(2026 - 03 - 29), 92),
             (time::macros::date!(2026 - 10 - 25), 100),
         ] {
-            let mut s = Slot::containing(metering::calendar::day_start_utc(day));
+            let mut s = Slot::containing(crate::calendar::day_start_utc(day));
             let mut n = 0;
             while s.local_date() == day {
                 n += 1;
@@ -339,10 +339,10 @@ impl DayType {
     /// The day type of `slot` in `land`.
     #[must_use]
     pub fn of(slot: Slot, land: Bundesland) -> Self {
-        match metering::holiday::slp_day_type(slot.local_date(), land) {
-            metering::load_profile::SlpDayType::Samstag => DayType::Saturday,
-            metering::load_profile::SlpDayType::SonnFeiertag => DayType::Sunday,
-            metering::load_profile::SlpDayType::Werktag => DayType::Workday,
+        match metering::time::holiday::SlpCalendar::new(land).day_type(slot.local_date()) {
+            metering::slp::strom::SlpDayType::Samstag => DayType::Saturday,
+            metering::slp::strom::SlpDayType::SonnFeiertag => DayType::Sunday,
+            metering::slp::strom::SlpDayType::Werktag => DayType::Workday,
         }
     }
 }

@@ -141,7 +141,11 @@ impl DayStats {
 
 /// Nearest-rank quantile: the answer is always a value that was observed.
 fn quantile(samples: &[f64], q: f64) -> f64 {
-    debug_assert!(!samples.is_empty());
+    debug_assert_ne!(
+        samples,
+        &[] as &[f64],
+        "a quantile of nothing has no observed value"
+    );
     let mut sorted = samples.to_vec();
     sorted.sort_by(f64::total_cmp);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -240,7 +244,7 @@ mod tests {
     /// filed by the *local* hour it started at and forecast against a *local*
     /// midnight. Mixing the two shifts every window by an hour in winter and
     /// two in summer, which is precisely the DST bug this workspace makes
-    /// `metering::calendar` responsible for.
+    /// `metering::time::calendar` responsible for.
     fn session(day_offset: i64, arrive_h: f64, hours: f64, kwh: f64) -> Session {
         let midnight = datetime!(2026-01-05 00:00:00 +01:00) + time::Duration::days(day_offset);
         let plugged_in = midnight + time::Duration::seconds_f64(arrive_h * 3600.0);

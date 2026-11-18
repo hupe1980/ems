@@ -37,8 +37,8 @@
 
 use hems_core::prelude::{Energy, GeoPoint, Horizon, Power, Slot};
 use hems_forecast::{
-    ArrayModel, Band, Calibration, Forecast, LoadProfile, ResidualModel, Session, SessionForecast,
-    SessionHistory,
+    ArrayModel, Band, Calibration, Forecast, LoadProfile, Prior, ResidualModel, Session,
+    SessionForecast, SessionHistory, StandardProfile,
 };
 use hems_sim::Realisation;
 use time::{Duration, OffsetDateTime};
@@ -456,37 +456,62 @@ pub fn pv_forecast(
 
 /// The load forecast a box plans against — warm or **cold**.
 ///
-/// One function because there are two callers and they disagreed. The running
-/// box gated on `LoadProfile::is_empty` and fell back to persistence from its
-/// own meter; the reference days called `forecast` unconditionally. A profile
-/// with no history at all answers `p10 = p50 = p90 = 0` — *the house will use
-/// nothing, and I am sure* — so a simulated cold box planned against a household
-/// that does not exist, deferred every flexible kilowatt-hour into hours it
-/// believed were free, and came out **worse than having no energy manager**.
-/// That was a property of the harness rather than of the product, which is the
-/// worst kind of difference to have: it measures a path production does not run
-/// (D187).
+/// One function because there are two callers and they disagreed once: the
+/// running box gated on `LoadProfile::is_empty` and the reference days did not,
+/// so the simulated first evening measured a path production never ran (D187).
 ///
-/// It takes the **profile** rather than either of this daemon's two `Learned`
-/// types, because the decision is about the profile: a caller that has one can
-/// ask, whichever bundle it keeps it in.
+/// With a `prior` — BDEW's H25 scaled to this household, see [`household_prior`]
+/// — every cell the household has not filled leans on the published shape, and
+/// the forecast is the household's own from four observations a cell onwards.
+/// Without one, a learned profile answers alone, and a profile with nothing in
+/// it falls back to persistence from the box's own meter: doubling by this time
+/// tomorrow, about what a single reading is worth twenty-four hours out.
 ///
 /// `measured_now` is what the household's own meter says at the start of the
-/// horizon. `None` where nothing is measuring it, and then there is no forecast
-/// to be had: a box that cannot read its own connection point has no load to
-/// persist and inventing one would plan a house nobody is watching.
+/// horizon. `None` where nothing is measuring it, and then a box with no history
+/// and no prior has no forecast to be had: inventing one would plan a house
+/// nobody is watching.
 #[must_use]
 pub fn load_forecast(
     profile: &LoadProfile,
+    prior: Option<&Prior>,
     horizon: Horizon,
     measured_now: Option<Power>,
 ) -> Option<Forecast> {
+    if let Some(prior) = prior {
+        return Some(profile.forecast_with_prior(horizon, prior));
+    }
     if !profile.is_empty() {
         return Some(profile.forecast(horizon));
     }
-    // Doubling by this time tomorrow, which is about what a single reading is
-    // worth twenty-four hours out.
     measured_now.map(|recent| hems_forecast::naive::persistence(recent, horizon, 0.9))
+}
+
+/// BDEW's H25 scaled to this household, by the best basis the box has.
+///
+/// A declared household consumption first; then the household's own whole
+/// metered days (**fitted**), once there is one; then the box's reading at
+/// `at` (**anchored**). `None` only with none of the three — a box that has
+/// measured nothing and been told nothing.
+///
+/// The fitted basis is preferred to the anchor as soon as it exists because a
+/// box re-plans every quarter hour: anchored on each new reading, a prior would
+/// declare a large household every time somebody boiled a kettle.
+#[must_use]
+pub fn household_prior(
+    profile: &LoadProfile,
+    declared_kwh_per_year: Option<f64>,
+    at: Slot,
+    measured_now: Option<Power>,
+) -> Option<Prior> {
+    let h25 = StandardProfile::h25(profile.land);
+    if let Some(kwh) = declared_kwh_per_year.filter(|k| *k > 0.0) {
+        return Some(h25.declared(kwh));
+    }
+    if let Some(fitted) = h25.clone().fitted(profile, at, profile.land) {
+        return Some(fitted);
+    }
+    measured_now.map(|reading| h25.anchored(at, reading))
 }
 
 /// The charging session the planner should be given at `now`.

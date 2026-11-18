@@ -32,7 +32,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
-use hems_grid::modul3::{Modul3Conformance, Modul3Context};
+use hems_grid::modul3::{Modul3Conformance, Modul3Context, TranscriptionError};
 
 use crate::config::Modul3Entry;
 
@@ -55,7 +55,7 @@ pub enum CatalogueError {
     /// The calendar breaks the Anwendungshilfe.
     #[error(
         "{netzbetreiber}/{year} breaks the BDEW Anwendungshilfe: {findings} — \
-         see specs/bnetza/bdew-awh-modul-3-v1.1-20250207.pdf"
+         see the BDEW Anwendungshilfe Modul 3 V1.1 (07.02.2025)"
     )]
     Violates {
         /// Whose calendar.
@@ -114,24 +114,32 @@ impl Catalogue {
                     year,
                 });
             }
-            let Some(calendar) = entry.calendar.calendar() else {
-                return Err(CatalogueError::NotAQuarter {
-                    netzbetreiber,
-                    year,
-                    given: entry.calendar.billed_quarters.clone(),
-                });
+            let calendar = match entry.calendar.calendar() {
+                Ok(calendar) => calendar,
+                Err(TranscriptionError::UnknownQuarter(_)) => {
+                    return Err(CatalogueError::NotAQuarter {
+                        netzbetreiber,
+                        year,
+                        given: entry.calendar.billed_quarters.clone(),
+                    });
+                }
+                // A calendar `metering` cannot build — no billed quarter, a
+                // bound past 24:00 — breaks the Anwendungshilfe as surely as
+                // one it builds and then rejects.
+                Err(TranscriptionError::Definition(error)) => {
+                    return Err(CatalogueError::Violates {
+                        netzbetreiber,
+                        year,
+                        findings: error.to_string(),
+                    });
+                }
             };
             // The delivery-point preconditions of § 1 are per household and are
             // deliberately not asserted here, so their findings come back
             // `Unknown` — which is "could not be checked", not "broken", and a
             // catalogue must not refuse to exist over a fact about a household
             // it has never met.
-            let (verdict, findings) = calendar.assess(&Modul3Context {
-                billed_quarters: None,
-                modul_1_selected: None,
-                registrierende_leistungsmessung: None,
-                intelligentes_messsystem: None,
-            });
+            let (verdict, findings) = calendar.assess(&Modul3Context::new());
             if verdict == Modul3Conformance::Violates {
                 return Err(CatalogueError::Violates {
                     netzbetreiber,

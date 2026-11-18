@@ -60,10 +60,8 @@
 //! distribution has. It is the update of **adaptive conformal inference** (Gibbs
 //! and Candès, *Adaptive Conformal Inference Under Distribution Shift*, 2021)
 //! applied to one scalar per tail rather than to a miscoverage level, and it
-//! costs two multiplications per observation. The paper is not in `specs/`,
-//! because that index carries the regulatory and domain sources this workspace
-//! cites *normatively*; this is a method, and the fixed point above is its whole
-//! content.
+//! costs two multiplications per observation. It is cited as a method rather
+//! than as a normative source; the fixed point above is its whole content.
 //!
 //! Three consequences worth naming. The band comes out **asymmetric**, which is
 //! right: a roof can fall a long way below the model and cannot rise far above

@@ -1,7 +1,10 @@
 +++
 title = "The grid rules"
 description = "§ 14a EnWG, the EEBUS limitation state machine, § 9 EEG, Modul 3, MiSpeL and § 42c — as code, with the citation for every number."
-weight = 4
+weight = 6
+
+[extra]
+group = "The box"
 +++
 
 Every rule in `hems-grid` names the document it comes from. `[A1 4.5.2]` is
@@ -566,17 +569,20 @@ none. Both are what the document means.
 
 ## MiSpeL — which kilowatt-hour was green
 
-From **1 October 2026** a household battery that has ever been charged from the
-grid, or a bidirectional charge point, keeps its levy privileges and its EEG
-support only if the energy through it is separated: which quantity was green,
-which was grey, quarter hour by quarter hour, summed over a calendar month. Get
-it wrong and the household loses the privilege on its grid draw, the market
-premium on its feed-in, or both.
+The Bundesnetzagentur adopted MiSpeL (Az. 618-25-02) on 1 October 2026, and it
+took effect on **21 October 2026**. Since then a household battery that has ever
+been charged from the grid, or a bidirectional charge point, keeps its levy
+privileges and its EEG support only if the energy through it is separated: which
+quantity was green, which was grey, quarter hour by quarter hour, summed over a
+calendar month or year. Get it wrong and the household loses the privilege on
+its grid draw, the market premium on its feed-in, or both.
 
-`hems-grid::mispel` implements the two options that need arithmetic, formula by
-numbered formula, in exact decimals.
+The formulas are [`metering`](https://crates.io/crates/metering)'s
+`eeg::mispel`, written against the adopted text in exact decimals, and held by
+tests to the regulator's own worked examples (Anlage 1 Beispiele 1–2, Anlage 2
+§ 2.1.6, Tabelle 1, the § 9.3 Rumpfjahre).
 
-**Abgrenzungsoption** (Anlage 1, formulas (1)–(33)) follows the electrons. The
+**Abgrenzungsoption** (Anlage 1, formulas (1)–(32)) follows the electrons. The
 whole thing turns on one `MIN` applied *per quarter hour*:
 
 ```text
@@ -594,7 +600,8 @@ the meter and *presumed* at 85 % wherever a charge point makes measurement
 impossible; energy a car brought home from somebody else's charge point
 (**Fremdtankstrom**) is taken back out before anything is settled or supported;
 and storage losses are privilegeable only where the storage system's own meter
-can see them.
+can see them. A month in which the store took nothing at all has an *undefined*
+efficiency and no green storage output — a figure, not an error.
 
 That last clause is a **Basisfall**, and it is worth its own paragraph because
 it decides who pays for the conversion loss. `Z2V¼`/`Z2E¼` are the store and the
@@ -607,12 +614,14 @@ does not writes `Z3` as *absent*, which is not zero — a zero would be a
 settlement claiming the battery stood still — and a household that declared A4
 is then refused a Nachweis rather than handed a wrong one.
 
-**Pauschaloption** (Anlage 2, formulas (P1)–(P15)) is open to solar up to
-30 kWp and draws two flat lines through the year instead: 500 kWh per kilowatt
-installed is supportable, an indifference band above it is neither, and anything
-above *that* — in quarter hours where the spot price was not negative — is
-settleable. The band widens as the store shrinks against the roof, because a
-small store leaves less room for the arbitrage the band exists to keep out.
+**Pauschaloption** (Anlage 2, formulas (P1)–(P16)) is open to solar up to
+30 kWp and needs one meter. It draws two flat lines through the year instead:
+500 kWh per kilowatt installed is supportable, an indifference band above it is
+neither, and anything above *that* — in quarter hours where the spot price was
+not negative — is settleable up to what the household drew. The band widens as
+the store shrinks against the roof; for a charge point it is a flat fifth. An
+8 kWp roof with a 10 kWh battery: 4 000 kWh supportable, 320 kWh indifferent,
+settleable above 4 320 kWh — the regulator's own example, and a test.
 
 **What grid charging is actually worth, and why the planner still does not price
 it.** Differentiate that chain at one more kilowatt-hour of `(1)¼`, with `η` the
@@ -648,9 +657,37 @@ the period, says whether the claim held, and names the quarter hours that broke
 it. A household should hear that from its own box rather than from its network
 operator.
 
-The Festlegung is an Arbeitsstand of 05.08.2026, so every result carries the
-`RuleSet` that produced it and the day that rule set starts to apply. A Nachweis
-that cannot say which rules made it is not evidence of anything.
+### When a period is settled at all
+
+Every result carries the rule set that produced it, and a settlement covers only
+the part of a month or year the rules govern **for that household**. Each
+condition below is a refusal that names its clause, not a silent zero:
+
+| Condition | From the Festlegung | What it means |
+|---|---|---|
+| The rules took effect on 21.10.2026 | Tenorziffer 8 | nothing earlier is settled |
+| An existing installation switches on the first of a month | Anlage 1 § 11, Anlage 2 § 9, § 21b EEG | for a roof that already existed, the first month is **November 2026** |
+| A newly commissioned plant may start mid-month | the same sections | its first period is a *Rumpfmonat* or *Rumpfjahr*, with prorated limits |
+| Until 30.09.2027, only with the network and metering operators' consent | Tenorziffer 9 a) | without it, nothing before October 2027 |
+| The Pauschaloption waits for EU state-aid approval | Tenorziffer 9 b) | it starts on the first of the month after approval, and not before |
+
+The settlement document prints the window it covers, whether that is a partial
+period, and the conditions it relied on — the assignment date, the consent, the
+state-aid date. A Nachweis that cannot say what it rests on is not evidence of
+anything, and a declaration printed on one is something somebody can check.
+
+```toml
+# histd: one site on the Abgrenzungsoption
+[mispel."haus-1"]
+option           = "abgrenzung"
+basisfall        = "a1"            # battery alone behind the connection point
+assigned_from    = "2026-11-01"    # first of a month, unless first_assignment
+operator_consent = true            # required until 30.09.2027
+```
+
+An assignment the text does not permit — an existing plant switched on the 12th
+— stops `histd` at start-up, so the operator learns it before anybody asks for
+the Nachweis that would rest on it.
 
 ## § 42c EnWG — sharing electricity with the neighbours
 

@@ -68,7 +68,7 @@ use crate::allocate::{Claim, allocate_indivisible};
 /// The VDE-AR-N 4100 Abschnitt 5.5.2 ceiling on the Unsymmetrieleistung of a
 /// customer installation.
 ///
-/// The watt view of `metering::power_quality::UNSYMMETRIE_LIMIT_KVA`, which
+/// The watt view of `metering::grid::power_quality::UNSYMMETRIE_LIMIT_KVA`, which
 /// carries the derivation: EN 50160 caps the voltage unbalance at 2 %, and at
 /// 20 A per Außenleiter that is 4,6 kVA — the same limit expressed twice. It is
 /// a *default* rather than a constant, which is why
@@ -183,7 +183,7 @@ pub struct GuardConfig {
     /// conservative one, which can never understate the controllable share. A
     /// household whose network operator has agreed the pro-rata reading in its
     /// Technische Mindestanforderungen may say so here; nobody else should.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[cfg_attr(feature = "serde", serde(default = "default_verursachungsregel"))]
     pub verursachungsregel: Verursachungsregel,
     /// The largest unbalance the installation may present.
     pub unbalance_limit: ApparentPower,
@@ -261,11 +261,20 @@ pub(crate) mod duration_secs {
     }
 }
 
+/// The conservative reading of `[A1 2.3]`: local generation serves the
+/// uncontrollable load first, so the controllable share of the grid draw is
+/// never understated. `metering` names no default, because which reading
+/// applies is the network operator's to agree.
+#[must_use]
+pub const fn default_verursachungsregel() -> Verursachungsregel {
+    Verursachungsregel::SteuVeZuletzt
+}
+
 impl Default for GuardConfig {
     fn default() -> Self {
         Self {
             control_mode: ControlMode::Ems,
-            verursachungsregel: Verursachungsregel::default(),
+            verursachungsregel: default_verursachungsregel(),
             unbalance_limit: UNBALANCE_LIMIT,
             max_measurement_age: default_max_age(),
             tick_period: default_tick_period(),

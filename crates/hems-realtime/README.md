@@ -65,6 +65,15 @@ measurements, plans and user overrides asserts the § 14a promise on every tick.
 - 🧊 **No I/O, no clock** — `now` is a parameter, so a January day with a § 14a
   reduction and a control box that stops talking is a unit test.
 
+## Use it
+
+```console
+$ cargo add hems-realtime
+```
+
+API reference on [docs.rs](https://docs.rs/hems-realtime); the design is explained in
+[Architecture](https://hupe1980.github.io/hems/docs/architecture/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

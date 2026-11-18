@@ -401,11 +401,11 @@ impl AssetMeta {
 /// This is `metering`'s type, not a copy of it. The grouping matters — heat
 /// pumps and cooling are each summed **per Fallgruppe** behind one connection
 /// before the 4,2 kW threshold is applied `[A1 2.4.2]`, charge points and
-/// storage are not — and `metering::para14a` is where the arithmetic that
+/// storage are not — and `metering::grid::para14a` is where the arithmetic that
 /// depends on it lives. Two enumerations of the same four Fallgruppen are two
 /// things that can disagree about a regulation, which is the one kind of
 /// duplication this workspace cannot afford.
-pub use metering::para14a::SteuVeFallgruppe as Fallgruppe;
+pub use metering::grid::para14a::SteuVeFallgruppe as Fallgruppe;
 
 /// How a heat pump can be told what to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

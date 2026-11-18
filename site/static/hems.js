@@ -166,6 +166,35 @@
     })();
   }
 
+  /* ── "/" focuses search; the TOC follows the reader ─────────────────── */
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+    var t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    var input = document.getElementById("search-input");
+    if (input && !document.getElementById("search").hidden) { e.preventDefault(); input.focus(); }
+  });
+
+  var tocLinks = document.querySelectorAll("aside.toc a[href*='#']");
+  if (tocLinks.length && "IntersectionObserver" in window) {
+    var byId = {};
+    tocLinks.forEach(function (a) { byId[decodeURIComponent(a.hash.slice(1))] = a; });
+    var heads = Array.prototype.filter.call(
+      document.querySelectorAll("article h2[id], article h3[id]"),
+      function (h) { return byId[h.id]; });
+    var current = null;
+    var spy = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        if (current) current.classList.remove("active");
+        current = byId[en.target.id];
+        current.classList.add("active");
+      });
+    }, { rootMargin: "0px 0px -75% 0px" });
+    heads.forEach(function (h) { spy.observe(h); });
+  }
+
   /* ── Mermaid ──────────────────────────────────────────────────────────── */
 
   var diagrams = document.querySelectorAll("pre.mermaid");

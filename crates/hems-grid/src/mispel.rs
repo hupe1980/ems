@@ -1,102 +1,110 @@
-//! MiSpeL — Marktintegration von Speichern und Ladepunkten, BK 618-25-02.
+//! MiSpeL — Marktintegration von Speichern und Ladepunkten, BNetzA Az. 618-25-02.
 //!
-//! From **1 October 2026** a household battery that has ever been charged from
-//! the grid, or a bidirectional charge point, keeps its levy privileges and its
-//! EEG support only if the energy flowing through it is *separated* — which
-//! quantity was green and which was grey, quarter hour by quarter hour, over a
-//! whole calendar month. Get it wrong and the household loses the Umlage
-//! privilege on its grid draw, the market premium on its feed-in, or both.
-//!
-//! The Festlegung offers three options and this module implements the two that
-//! need arithmetic:
+//! A household battery that has ever been charged from the grid, or a
+//! bidirectional charge point, keeps its levy privileges (§ 21 EnFG) and its
+//! market premium (§ 19 EEG) only for the energy the Festlegung attributes to
+//! it — green or grey, quarter hour by quarter hour, summed over a calendar
+//! month (Anlage 1) or a calendar year (Anlage 2). Get it wrong and the
+//! household loses the levy privilege on its grid draw, the premium on its
+//! feed-in, or both.
 //!
 //! | Option | Who it is for | Here |
 //! |---|---|---|
-//! | **Ausschließlichkeit** | a store that is never charged from the grid | nothing to compute — it is `Battery::grid_charging_allowed == false` |
-//! | **Abgrenzung** (Anlage 1) | anything else | [`abgrenzung_month`], formulas (1)–(33) |
-//! | **Pauschal** (Anlage 2) | solar ≤ 30 kWp | [`pauschal_year`], formulas (P1)–(P15) |
+//! | **Ausschließlichkeit** | a store that is never charged from the grid | nothing to compute — `Battery::grid_charging_allowed == false` |
+//! | **Abgrenzung** (Anlage 1) | anything else | [`abgrenzung_month`], formulas (1)–(32), Basisfälle A1–A4 |
+//! | **Pauschal** (Anlage 2) | solar ≤ 30 kWp, one meter | [`pauschal_period`], formulas (P1)–(P16), Basisfälle P1–P3 |
+//!
+//! # Whose arithmetic
+//!
+//! **`metering`'s.** Every formula is `metering::eeg::mispel`, written against
+//! the adopted text and held to its worked examples; this module keeps what is
+//! hems's — the register record a box writes ([`QuarterHour`]), the refusal of
+//! a register no meter could have produced, the rule set a result was computed
+//! under, and the window the rules govern ([`governed`]). A second copy of the
+//! formulas here was a second answer to one bill, and it had already drifted:
+//! it followed the Arbeitsstand of 05.08.2026, whose (P2)P2 was 0,5 where the
+//! adopted Anlage 2 says 0,2.
 //!
 //! Citations are `[MiSpeL A1 (n)]` for formula `n` of Anlage 1 and
-//! `[MiSpeL A2 (Pn)]` for Anlage 2
-//! (`specs/bnetza/mispel-anlage1-abgrenzungsoption-arbeitsstand-20260805.pdf`,
-//! `specs/bnetza/mispel-anlage2-pauschaloption-arbeitsstand-20260805.pdf`).
+//! `[MiSpeL A2 (Pn)]` for Anlage 2 (BNetzA, Az. 618-25-02, Festlegung of
+//! 01.10.2026, Anlage 1 *Abgrenzungsoption* and Anlage 2 *Pauschaloption*),
+//! and `[MiSpeL Tenor n]` for a Tenorziffer (Amtsblatt 19/2026, Vfg. Nr. 73/2026).
 //!
-//! # Why this is exact arithmetic and not control
+//! # When the rules govern
+//!
+//! `[MiSpeL Tenor 8]` makes the rules take effect with the Bekanntgabe — two
+//! weeks after the Amtsblatt of 07.10.2026, so **21.10.2026**. `[MiSpeL Tenor 9]`
+//! adds two conditions: until 30.09.2027 only with the consent of the network
+//! and metering operators, and the Pauschaloption only from the first day of the
+//! month after the European Commission's state-aid approval. And an installation
+//! already assigned to a Veräußerungsform switches only on the first day of a
+//! month (Anlage 1 § 11, Anlage 2 § 9, § 21b Abs. 1 S. 2 EEG by analogy), so a
+//! partial month or year — a *Rumpfmonat*, a *Rumpfjahr* — arises only from a
+//! first assignment. [`governed`] turns all of that into the one window a
+//! settlement may cover.
 //!
 //! Every number here becomes money or a Nachweis, so it is
-//! [`rust_decimal::Decimal`] throughout — principle P3 of the concept. The
-//! optimiser's `f64` view of the same site is a *forecast*; this is the record.
-//! The two must never be confused, and the type system is what stops them being.
-//!
-//! # The Festlegung is not final
-//!
-//! The published text is an Arbeitsstand of 05.08.2026 with Bekanntgabe planned
-//! for 01.10.2026, so every result carries the [`RuleSet`] that produced it, and
-//! a rule set knows the day it starts to apply. A Nachweis that cannot say which
-//! rules produced it is not evidence of anything.
+//! [`rust_decimal::Decimal`] throughout.
 
 use core::fmt;
+use std::collections::BTreeSet;
 
 use hems_core::prelude::Slot;
+use metering::eeg::EegError;
+use metering::eeg::mispel::{Einspeisung, Gate, abgrenzung as ma, pauschal as mp};
+use metering::{DayBoundary, MeterInterval, QualityFlag, Resolution, Series};
 use rust_decimal::Decimal;
 use thiserror::Error;
-use time::Date;
+use time::{Date, Month, OffsetDateTime};
 
 /// The storage round-trip efficiency the Festlegung *presumes* wherever a charge
-/// point makes a measured one impossible, `[MiSpeL A1 (14)A2,A3,A4]`.
-pub const PRESUMED_EFFICIENCY: Decimal = Decimal::from_parts(85, 0, 0, false, 2);
+/// point makes a measured one impossible, `[MiSpeL A1 (14)]` for A2–A4.
+pub const PRESUMED_EFFICIENCY: Decimal = ma::WIRKUNGSGRAD_LADEPUNKT;
 
-/// The yearly feed-in per kilowatt of installed solar power that the
-/// Pauschaloption treats as supportable, `[MiSpeL A2 (P1)]` (§ 19 Abs. 3c EEG).
-pub const PAUSCHAL_KWH_PER_KW: Decimal = Decimal::from_parts(500, 0, 0, false, 0);
-
-/// The factor behind the indifference band of a bidirectional charge point,
-/// `[MiSpeL A2 (P2)P2]`.
-pub const PAUSCHAL_EVSE_FACTOR: Decimal = Decimal::from_parts(5, 0, 0, false, 1);
-
-/// The coefficient of the storage-to-solar size ratio, kWh/kW,
-/// `[MiSpeL A2 (P2)P1]`.
-pub const PAUSCHAL_STORAGE_COEFFICIENT: Decimal = Decimal::from_parts(1, 0, 0, false, 1);
+/// The yearly feed-in per kilowatt of installed solar power the Pauschaloption
+/// treats as supportable, `[MiSpeL A2 (P1)]`.
+pub const PAUSCHAL_KWH_PER_KW: Decimal = mp::FOERDERGRENZE_KWH_JE_KWP;
 
 /// The largest solar installation the Pauschaloption is open to, kWp
 /// (§ 19 Abs. 3c EEG).
 pub const PAUSCHAL_MAX_KWP: Decimal = Decimal::from_parts(30, 0, 0, false, 0);
 
+// ── The rule set ─────────────────────────────────────────────────────────────
+
 /// Which version of the Festlegung a result was computed under.
 ///
-/// The formulas below are read from an **Arbeitsstand**. A Nachweis that cannot
-/// name the rule set that produced it is not evidence of anything, so the
-/// version travels with every result — and a new Festlegung is a new variant
-/// here, which makes every place that has to think about the difference fail to
-/// compile until it does.
+/// A Nachweis that cannot name the rules that produced it is not evidence of
+/// anything, so the version travels with every result — and a new Festlegung is
+/// a new variant here, which makes every place that has to think about the
+/// difference fail to compile until it does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-// The lint fires because `rust_decimal`'s `Decimal` has `unsafe` methods and
-// this module's constants are built with `from_parts`; nothing here is unsafe
-// and nothing about deserialising a fieldless enum can be.
+// The lint fires because `Decimal` has `unsafe` methods; nothing about
+// deserialising a fieldless enum can be.
 #[allow(clippy::unsafe_derive_deserialize)]
 #[non_exhaustive]
 pub enum RuleSet {
-    /// BK 618-25-02, Arbeitsstand 05.08.2026, Bekanntgabe planned 01.10.2026.
+    /// BNetzA 618-25-02, decided 01.10.2026, in effect from 21.10.2026
+    /// (`[MiSpeL Tenor 8]`).
     #[default]
-    Arbeitsstand20260805,
+    Festlegung20261001,
 }
 
 impl RuleSet {
-    /// The day these rules start to apply.
-    #[must_use]
-    pub const fn effective_from(self) -> Date {
-        match self {
-            RuleSet::Arbeitsstand20260805 => time::macros::date!(2026 - 10 - 01),
-        }
-    }
-
     /// The document this version was read from.
     #[must_use]
     pub const fn version(self) -> &'static str {
         match self {
-            RuleSet::Arbeitsstand20260805 => "BK 618-25-02, Arbeitsstand 05.08.2026",
+            RuleSet::Festlegung20261001 => "BNetzA 618-25-02, Festlegung 01.10.2026",
+        }
+    }
+
+    /// The day these rules take effect, `[MiSpeL Tenor 8]`.
+    #[must_use]
+    pub const fn effective_from(self) -> Date {
+        match self {
+            RuleSet::Festlegung20261001 => time::macros::date!(2026 - 10 - 21),
         }
     }
 
@@ -105,6 +113,24 @@ impl RuleSet {
     pub fn applies_on(self, day: Date) -> bool {
         day >= self.effective_from()
     }
+
+    /// The last day on which the rules apply only with the network and
+    /// metering operators' consent, `[MiSpeL Tenor 9]` a).
+    #[must_use]
+    pub const fn consent_required_until(self) -> Option<Date> {
+        match self {
+            RuleSet::Festlegung20261001 => Some(time::macros::date!(2027 - 09 - 30)),
+        }
+    }
+
+    /// The first day the Pauschaloption applies, given the day the European
+    /// Commission approved § 19 Abs. 3c EEG — the first day of the following
+    /// month, `[MiSpeL Tenor 9]` b). `None` while there is no approval.
+    #[must_use]
+    pub fn pauschal_applicable_from(self, approved_on: Option<Date>) -> Option<Date> {
+        // Never before the Festlegung itself took effect.
+        first_of_next_month(approved_on?).map(|d| d.max(self.effective_from()))
+    }
 }
 
 impl fmt::Display for RuleSet {
@@ -112,6 +138,208 @@ impl fmt::Display for RuleSet {
         f.write_str(self.version())
     }
 }
+
+fn first_of_next_month(day: Date) -> Option<Date> {
+    let (year, month) = match day.month() {
+        Month::December => (day.year() + 1, Month::January),
+        m => (day.year(), m.next()),
+    };
+    Date::from_calendar_date(year, month, 1).ok()
+}
+
+// ── The governed window ─────────────────────────────────────────────────────
+
+/// The option a window is computed for: what unit it settles over, and whether
+/// the state-aid gate applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MispelOption {
+    /// Anlage 1 — per calendar month.
+    Abgrenzung,
+    /// Anlage 2 — per calendar year, from the state-aid month.
+    Pauschal,
+}
+
+/// The assignment of the installation to the option, `[MiSpeL Tenor 5]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Assignment {
+    /// The first day the installation is assigned on the option's basis.
+    pub from: Date,
+    /// Whether this is the **first** assignment of a newly commissioned plant.
+    /// Only then may it start mid-month; a switch of a plant that was already
+    /// assigned to a Veräußerungsform happens on the first of a month.
+    pub first: bool,
+}
+
+impl Assignment {
+    /// Whether the text permits this assignment at all.
+    ///
+    /// # Errors
+    /// [`Refusal::AssignedBeforeTheRules`] before the rules took effect,
+    /// [`Refusal::MidMonthSwitch`] for a switch that is not on the first of a
+    /// month (Anlage 1 § 11, § 21b Abs. 1 S. 2 EEG by analogy).
+    pub fn validate(self, rules: RuleSet) -> Result<(), Refusal> {
+        let effective_from = rules.effective_from();
+        if self.from < effective_from {
+            return Err(Refusal::AssignedBeforeTheRules {
+                assigned_from: self.from,
+                effective_from,
+            });
+        }
+        if !self.first && self.from.day() != 1 {
+            return Err(Refusal::MidMonthSwitch {
+                assigned_from: self.from,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// The facts the window depends on that are declared rather than measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Conditions {
+    /// The assignment.
+    pub assignment: Assignment,
+    /// Whether the network and metering operators consented, `[MiSpeL Tenor 9]` a).
+    pub operator_consent: bool,
+    /// The day the European Commission approved § 19 Abs. 3c EEG, if it has.
+    pub state_aid_approved_on: Option<Date>,
+}
+
+/// The part of a period the rules govern, inclusive at both ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Governed {
+    /// The first governed day.
+    pub first: Date,
+    /// The last governed day.
+    pub last: Date,
+    /// Whether the window is shorter than the period — a Rumpfmonat (Anlage 1
+    /// § 11) or Rumpfjahr (Anlage 2 § 9).
+    pub rumpf: bool,
+}
+
+/// Why a period settles under no rules at all.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum Refusal {
+    /// The period ends before the rules took effect.
+    #[error(
+        "the period ends before the Festlegung took effect on {effective_from} \
+         (Tenorziffer 8: effect with the Bekanntgabe)"
+    )]
+    BeforeTheRules {
+        /// The effect date.
+        effective_from: Date,
+    },
+    /// The period ends before the installation was assigned.
+    #[error(
+        "the period ends before the installation was assigned to the option on {assigned_from}"
+    )]
+    BeforeTheAssignment {
+        /// The assignment date.
+        assigned_from: Date,
+    },
+    /// An assignment dated before the rules took effect.
+    #[error(
+        "an assignment on {assigned_from} is before the Festlegung took effect on {effective_from}"
+    )]
+    AssignedBeforeTheRules {
+        /// The assignment date.
+        assigned_from: Date,
+        /// The effect date.
+        effective_from: Date,
+    },
+    /// A switch of an existing plant that does not start on the first of a month.
+    #[error(
+        "an installation already assigned to a Veräußerungsform switches only on the first \
+         day of a month (§ 21b Abs. 1 S. 2 EEG by analogy), not on {assigned_from}; declare \
+         `first_assignment` only for a newly commissioned plant"
+    )]
+    MidMonthSwitch {
+        /// The assignment date.
+        assigned_from: Date,
+    },
+    /// Before the consent deadline without consent.
+    #[error(
+        "until {until} the Festlegung applies only with the consent of the network and \
+         metering operators (Tenorziffer 9 a), and none is declared"
+    )]
+    NoConsent {
+        /// The last day consent is required.
+        until: Date,
+    },
+    /// The Pauschaloption before any state-aid approval.
+    #[error(
+        "the Pauschaloption applies only from the month after the European Commission's \
+         state-aid approval of § 19 Abs. 3c EEG (Tenorziffer 9 b), and none is configured"
+    )]
+    NoStateAid,
+    /// The Pauschaloption before the month after approval.
+    #[error("the Pauschaloption applies from {applicable_from} (Tenorziffer 9 b)")]
+    BeforeStateAid {
+        /// The first applicable day.
+        applicable_from: Date,
+    },
+}
+
+/// The part of `[period_first, period_last]` the rules govern for one site.
+///
+/// The window starts at the latest of: the period's own start, the effect date
+/// (`[MiSpeL Tenor 8]`), the assignment, the day after the consent deadline
+/// where no consent is declared (`[MiSpeL Tenor 9]` a), and — for the
+/// Pauschaloption — the first day of the month after state-aid approval
+/// (`[MiSpeL Tenor 9]` b). A start inside the period makes it a Rumpf period,
+/// which the Anlagen settle *"an die Stelle des Kalendermonats"* / *"…des
+/// Kalenderjahres"*.
+///
+/// # Errors
+/// A [`Refusal`] naming the condition that leaves nothing of the period
+/// governed.
+pub fn governed(
+    rules: RuleSet,
+    option: MispelOption,
+    conditions: Conditions,
+    period_first: Date,
+    period_last: Date,
+) -> Result<Governed, Refusal> {
+    let effective_from = rules.effective_from();
+    if effective_from > period_last {
+        return Err(Refusal::BeforeTheRules { effective_from });
+    }
+    let mut first = period_first.max(effective_from);
+
+    let assigned_from = conditions.assignment.from;
+    if assigned_from > period_last {
+        return Err(Refusal::BeforeTheAssignment { assigned_from });
+    }
+    first = first.max(assigned_from);
+
+    if !conditions.operator_consent
+        && let Some(until) = rules.consent_required_until()
+    {
+        if until >= period_last {
+            return Err(Refusal::NoConsent { until });
+        }
+        first = first.max(until.next_day().unwrap_or(until));
+    }
+
+    if option == MispelOption::Pauschal {
+        let applicable_from = rules
+            .pauschal_applicable_from(conditions.state_aid_approved_on)
+            .ok_or(Refusal::NoStateAid)?;
+        if applicable_from > period_last {
+            return Err(Refusal::BeforeStateAid { applicable_from });
+        }
+        first = first.max(applicable_from);
+    }
+
+    Ok(Governed {
+        first,
+        last: period_last,
+        rumpf: first > period_first,
+    })
+}
+
+// ── The register record ─────────────────────────────────────────────────────
 
 /// Which Basisfall of Anlage 1 the installation's metering concept matches,
 /// `[MiSpeL A1 4.1]`.
@@ -143,10 +371,6 @@ impl Basisfall {
     }
 
     /// Whether storage losses can be privileged at all, `[MiSpeL A1 (19)]`.
-    ///
-    /// Only where the storage system's own consumption and generation are
-    /// separately visible: A1 has no charge point to confuse them, A4 has a
-    /// dedicated meter. In A2 and A3 the answer is always zero.
     #[must_use]
     pub const fn losses_are_privilegeable(self) -> bool {
         matches!(self, Basisfall::A1 | Basisfall::A4)
@@ -236,8 +460,9 @@ impl QuarterHour {
     /// quarter hour, `[MiSpeL A1 (1)]`.
     ///
     /// This single `MIN` is the **Speichervorrang** (`[MiSpeL A1 2.1.5]`): grid
-    /// draw is attributed to the store before it is attributed to anything else,
-    /// which is the legally willed priority and not an accounting convenience.
+    /// draw is attributed to the store before it is attributed to anything else.
+    /// The planner reads it to refuse a simultaneous charge, and the
+    /// Ausschließlichkeit check reads it to prove none happened.
     #[must_use]
     pub fn simultaneous_grid_charging(&self) -> Decimal {
         self.grid_draw.min(self.device_consumption)
@@ -252,9 +477,6 @@ impl QuarterHour {
 
     /// `(24)¼ = WENN[AW¼ > 0 ; 1 ; 0]` — whether support is payable at all in
     /// this quarter hour, `[MiSpeL A1 (24)]`.
-    ///
-    /// Zero in a negative-price quarter hour under § 51 EEG, which is exactly
-    /// the coupling that makes the § 51 hours worth planning around.
     #[must_use]
     pub fn supported(&self) -> bool {
         self.anzulegender_wert > Decimal::ZERO
@@ -269,6 +491,7 @@ impl QuarterHour {
 
 /// Why a set of quarter hours could not be evaluated.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
 pub enum MispelError {
     /// No quarter hours at all. An empty month is not a zero month; it is a
     /// missing measurement, and the difference matters to a Nachweis.
@@ -290,17 +513,83 @@ pub enum MispelError {
     /// The Pauschaloption is open only to solar up to 30 kWp.
     #[error("the Pauschaloption needs a solar installation of at most 30 kWp, got {0} kWp")]
     TooLargeForPauschal(Decimal),
-    /// A denominator that is zero: nothing came out of the store all month, so
-    /// the shares of `(14)A1`, `(18)` and `(30)` are undefined rather than zero.
-    #[error("{0} is zero, so the share it is the denominator of is undefined")]
-    UndefinedShare(&'static str),
+    /// A storage case of the Pauschaloption without a storage capacity.
+    #[error("Pauschalfall {0:?} needs the installed storage capacity SKinst")]
+    NoStorageCapacity(PauschalFall),
+    /// A quarter hour outside the month or year being settled.
+    #[error("the quarter hour starting {0} lies outside the settled period")]
+    OutsidePeriod(OffsetDateTime),
+    /// `metering` refused the evaluation for another reason.
+    #[error("the settlement arithmetic refused the registers: {0}")]
+    Metering(String),
 }
 
-/// The Abgrenzungsoption for one calendar month, `[MiSpeL A1 4.2]`.
+impl From<EegError> for MispelError {
+    fn from(e: EegError) -> Self {
+        match e {
+            EegError::Empty => MispelError::NoValues,
+            EegError::OutsidePeriod { at } => MispelError::OutsidePeriod(at),
+            other => MispelError::Metering(other.to_string()),
+        }
+    }
+}
+
+/// A register's Festlegung name and how to read it off a quarter hour.
+type Register = (&'static str, fn(&QuarterHour) -> Decimal);
+
+fn validate(quarters: &[QuarterHour], fields: &[Register]) -> Result<(), MispelError> {
+    if quarters.is_empty() {
+        return Err(MispelError::NoValues);
+    }
+    for q in quarters {
+        for (field, value) in fields {
+            if value(q) < Decimal::ZERO {
+                return Err(MispelError::NegativeValue {
+                    slot: q.slot,
+                    field,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One register as a `metering` series on the settlement grid.
+fn series(
+    quarters: &[QuarterHour],
+    value: impl Fn(&QuarterHour) -> Decimal,
+) -> Result<Series, MispelError> {
+    let intervals = quarters
+        .iter()
+        .map(|q| {
+            MeterInterval::quarter_hour(q.slot.start(), value(q), QualityFlag::Measured)
+                .map_err(|e| MispelError::Metering(e.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Series::new(Resolution::QUARTER_HOUR, DayBoundary::Strom, intervals)
+        .map_err(|e| MispelError::Metering(e.to_string()))
+}
+
+fn gate(
+    quarters: &[QuarterHour],
+    passes: impl Fn(&QuarterHour) -> bool,
+) -> BTreeSet<OffsetDateTime> {
+    quarters
+        .iter()
+        .filter(|q| passes(q))
+        .map(|q| q.slot.start())
+        .collect()
+}
+
+// ── Anlage 1 — the Abgrenzungsoption ─────────────────────────────────────────
+
+/// The Abgrenzungsoption for one calendar month or Rumpfmonat,
+/// `[MiSpeL A1 4.2]`.
 ///
 /// Every intermediate figure is kept, numbered as in the Festlegung, because a
-/// Nachweis is checked by somebody re-deriving it and the only useful form of it
-/// is the one that shows the working.
+/// Nachweis is checked by somebody re-deriving it. A share whose denominator is
+/// zero is **undefined** (`None`), not zero: the Festlegung defines no value
+/// for it, and the figures it feeds are zero by their own formulas.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Abgrenzung {
@@ -308,10 +597,10 @@ pub struct Abgrenzung {
     pub fall: Basisfall,
     /// Which version of the Festlegung.
     pub rules: RuleSet,
-    /// `(3)` total grid draw in the month.
+    /// `(3)` total grid draw.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub grid_draw: Decimal,
-    /// `(4)` total grid feed-in in the month.
+    /// `(4)` total grid feed-in.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub grid_feed_in: Decimal,
     /// `(5)` total consumption of storage and/or charge point.
@@ -326,32 +615,32 @@ pub struct Abgrenzung {
     /// `(10)` plant electricity that went into the store.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub plant_charged: Decimal,
-    /// `(11)` base value of simultaneous feed-in out of the store.
+    /// `(11)` feed-in out of the store, quarter hour by quarter hour.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub device_feed_in_base: Decimal,
-    /// `(12)` **Fremdtankstrom**: energy the car brought back from somebody
-    /// else's charge point, which may be neither settled nor supported here.
+    /// `(12)` **Fremdtankstrom**: energy a car brought from somebody else's
+    /// charge point, which may be neither settled nor supported here.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub foreign_charge: Decimal,
     /// `(13)` feed-in out of the store that may be considered at all.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub device_feed_in_considered: Decimal,
-    /// `(14)` round-trip efficiency — measured in A1, presumed at 0,85 otherwise.
-    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
-    pub efficiency: Decimal,
+    /// `(14)` round-trip efficiency — measured `(6)/(5)` in A1, presumed at 0,85
+    /// otherwise; undefined in an A1 month the store took nothing.
+    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str_option"))]
+    pub efficiency: Option<Decimal>,
     /// `(15)` the green share of what came out of the store.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub renewable_storage_output: Decimal,
-    /// `(16)` **saldierungsfähige Netzeinspeisung** — the feed-in that reduces
-    /// the levies on the grid draw.
+    /// `(16)` **saldierungsfähige Netzeinspeisung**.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub settleable_feed_in: Decimal,
-    /// `(17)` storage losses in the month, where they can be seen at all.
-    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
-    pub storage_losses: Decimal,
-    /// `(18)` the settleable share of the store's output.
-    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
-    pub settleable_share: Decimal,
+    /// `(17)` storage losses — A1 from `Z2`, A4 from `Z3`; not visible in A2/A3.
+    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str_option"))]
+    pub storage_losses: Option<Decimal>,
+    /// `(18)` the settleable share of the store's output; undefined when `(6)` is zero.
+    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str_option"))]
+    pub settleable_share: Option<Decimal>,
     /// `(19)` the privilegeable part of the storage losses.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub privilegeable_losses: Decimal,
@@ -367,21 +656,20 @@ pub struct Abgrenzung {
     /// `(28)` supportable feed-in out of the store, before the AW>0 share.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub supportable_storage_feed_in: Decimal,
-    /// `(30)` the AW>0 share of the store's feed-in.
-    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
-    pub supported_share_of_storage: Decimal,
+    /// `(30)` the AW>0 share of the store's feed-in; undefined when `(11)` is zero.
+    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str_option"))]
+    pub supported_share_of_storage: Option<Decimal>,
     /// `(31)` supportable feed-in out of the store.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub supported_storage: Decimal,
-    /// `(32)` **förderfähige Netzeinspeisung** for the month.
+    /// `(32)` **förderfähige Netzeinspeisung**.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub supported_feed_in: Decimal,
 }
 
 impl Abgrenzung {
-    /// How much of the month's grid draw escaped the levies, as a fraction.
-    ///
-    /// The one number a household wants out of all of this.
+    /// How much of the period's grid draw escaped the levies, as a fraction —
+    /// the one number a household wants out of all of this.
     #[must_use]
     pub fn levy_relief_share(&self) -> Decimal {
         if self.grid_draw.is_zero() {
@@ -392,169 +680,108 @@ impl Abgrenzung {
     }
 }
 
-/// Evaluate the Abgrenzungsoption over one calendar month, `[MiSpeL A1 4.2]`.
+/// Evaluate the Abgrenzungsoption over one calendar month or Rumpfmonat,
+/// `[MiSpeL A1 4.2]`, with `metering`'s formulas (1)–(32).
 ///
-/// `quarters` must be the quarter hours of exactly one calendar month; the
-/// Festlegung sums `∑M` over that period and nothing here can check it for you.
+/// `quarters` must lie in one calendar month; `metering` refuses one that does
+/// not ([`MispelError::OutsidePeriod`]).
 ///
 /// # Errors
-/// [`MispelError`] when a value is negative, when case A4 is asked for without
-/// the separate storage meter, or when a share's denominator is zero.
+/// [`MispelError`] when there are no values, a value is negative, case A4 is
+/// asked for without the separate storage meter, or the quarters span months.
+#[allow(
+    clippy::similar_names,
+    reason = "z1nb, z1ne, z2v, z2e are the Festlegung's own meter names"
+)]
 pub fn abgrenzung_month(
     fall: Basisfall,
     rules: RuleSet,
     quarters: &[QuarterHour],
 ) -> Result<Abgrenzung, MispelError> {
-    if quarters.is_empty() {
-        return Err(MispelError::NoValues);
+    validate(
+        quarters,
+        &[
+            ("Z1NB", |q| q.grid_draw),
+            ("Z1NE", |q| q.grid_feed_in),
+            ("Z2V", |q| q.device_consumption),
+            ("Z2E", |q| q.device_generation),
+        ],
+    )?;
+    if fall.needs_z3()
+        && quarters
+            .iter()
+            .any(|q| q.storage_consumption.is_none() || q.storage_generation.is_none())
+    {
+        return Err(MispelError::MissingStorageMeter);
     }
-    validate(fall, quarters)?;
 
-    // ── Monthly sums, (3)–(8) ───────────────────────────────────────────────
-    let sum = |f: fn(&QuarterHour) -> Decimal| -> Decimal { quarters.iter().map(f).sum() };
-    let grid_draw = sum(|q| q.grid_draw); // (3)
-    let grid_feed_in = sum(|q| q.grid_feed_in); // (4)
-    let device_consumption = sum(|q| q.device_consumption); // (5)
-    let device_generation = sum(|q| q.device_generation); // (6)
-
-    // (9), (10): what the store was charged with, split by where it came from.
-    // The `MIN` inside (1)¼ is the Speichervorrang, applied per quarter hour and
-    // only then summed — summing first and taking the minimum afterwards is the
-    // mistake that makes a month of perfectly ordinary operation look like
-    // arbitrage.
-    let grid_charged: Decimal = quarters
-        .iter()
-        .map(QuarterHour::simultaneous_grid_charging)
-        .sum();
-    let plant_charged = device_consumption - grid_charged;
-
-    // (11), (12), (13)
-    let device_feed_in_base: Decimal = quarters
-        .iter()
-        .map(QuarterHour::simultaneous_device_feed_in)
-        .sum();
-    let foreign_charge = (device_generation - device_consumption).max(Decimal::ZERO);
-    let device_feed_in_considered = (device_feed_in_base - foreign_charge).max(Decimal::ZERO);
-
-    // (14): measured only where nothing but a battery is on the meter. With a
-    // charge point in the picture the car's own losses are invisible, so the
-    // Festlegung fixes the figure at 85 % rather than inviting a computed one
-    // that would be wrong in a direction nobody could audit.
-    let efficiency = if fall.efficiency_is_measured() {
-        if device_consumption.is_zero() {
-            return Err(MispelError::UndefinedShare("(5) device consumption"));
-        }
-        device_generation / device_consumption
+    let z1nb = series(quarters, |q| q.grid_draw)?;
+    let z1ne = series(quarters, |q| q.grid_feed_in)?;
+    let z2v = series(quarters, |q| q.device_consumption)?;
+    let z2e = series(quarters, |q| q.device_generation)?;
+    let (z3v, z3e) = if fall.needs_z3() {
+        (
+            Some(series(quarters, |q| {
+                q.storage_consumption.unwrap_or_default()
+            })?),
+            Some(series(quarters, |q| {
+                q.storage_generation.unwrap_or_default()
+            })?),
+        )
     } else {
-        PRESUMED_EFFICIENCY
+        (None, None)
     };
-
-    // (15), (16)
-    let renewable_storage_output = efficiency * plant_charged;
-    let settleable_feed_in =
-        (device_feed_in_considered - renewable_storage_output).max(Decimal::ZERO);
-
-    // (17)–(19): losses, and the part of them that shares the settleable fate of
-    // the output they belong to.
-    let storage_losses = if fall.losses_are_privilegeable() {
-        let (consumed, generated) = match fall {
-            Basisfall::A4 => (
-                sum(|q| q.storage_consumption.unwrap_or_default()),
-                sum(|q| q.storage_generation.unwrap_or_default()),
-            ),
-            _ => (device_consumption, device_generation),
-        };
-        (consumed - generated).max(Decimal::ZERO)
-    } else {
-        Decimal::ZERO
+    let basisfall = match (fall, &z3v, &z3e) {
+        (Basisfall::A1, ..) => ma::Basisfall::Stromspeicher,
+        (Basisfall::A2, ..) => ma::Basisfall::Ladepunkt,
+        (Basisfall::A3, ..) => ma::Basisfall::StromspeicherUndLadepunkt,
+        (Basisfall::A4, Some(z3v), Some(z3e)) => ma::Basisfall::MitSpeicherzaehler { z3v, z3e },
+        (Basisfall::A4, ..) => return Err(MispelError::MissingStorageMeter),
     };
-    let settleable_share = if device_generation.is_zero() {
-        Decimal::ZERO
-    } else {
-        settleable_feed_in / device_generation
-    };
-    let privilegeable_losses = if fall.losses_are_privilegeable() {
-        settleable_share * storage_losses
-    } else {
-        Decimal::ZERO
-    };
-
-    // (20), (21)
-    let levy_reducing = (settleable_feed_in + privilegeable_losses).min(grid_draw);
-    let levied_grid_draw = grid_draw - levy_reducing;
-
-    // (23)–(26): support for what the plant fed in directly, counted only in the
-    // quarter hours where the anzulegender Wert is positive.
-    let supported_direct: Decimal = quarters
-        .iter()
-        .filter(|q| q.supported())
-        .map(|q| (q.grid_feed_in - q.simultaneous_device_feed_in()).max(Decimal::ZERO))
-        .sum();
-
-    // (27)–(31): support for what the store fed in, scaled by the share of the
-    // store's feed-in that fell in supported quarter hours.
-    let supported_storage_feed_in: Decimal = quarters
-        .iter()
-        .filter(|q| q.supported())
-        .map(QuarterHour::simultaneous_device_feed_in)
-        .sum();
-    let supportable_storage_feed_in = device_feed_in_considered.min(renewable_storage_output);
-    let supported_share_of_storage = if device_feed_in_base.is_zero() {
-        Decimal::ZERO
-    } else {
-        supported_storage_feed_in / device_feed_in_base
-    };
-    let supported_storage = supported_share_of_storage * supportable_storage_feed_in;
+    let supported = gate(quarters, QuarterHour::supported);
+    let monat = ma::Abgrenzungsoption {
+        z1nb: &z1nb,
+        einspeisung: Einspeisung::Z1(&z1ne),
+        z2v: &z2v,
+        z2e: &z2e,
+        basisfall,
+        anlagen: ma::Anlagen::Eine(Gate::Flagged(&supported)),
+    }
+    .monat()?;
+    let plant = monat
+        .anlagen
+        .first()
+        .ok_or_else(|| MispelError::Metering("no plant in the month's result".into()))?;
 
     Ok(Abgrenzung {
         fall,
         rules,
-        grid_draw,
-        grid_feed_in,
-        device_consumption,
-        device_generation,
-        grid_charged,
-        plant_charged,
-        device_feed_in_base,
-        foreign_charge,
-        device_feed_in_considered,
-        efficiency,
-        renewable_storage_output,
-        settleable_feed_in,
-        storage_losses,
-        settleable_share,
-        privilegeable_losses,
-        levy_reducing,
-        levied_grid_draw,
-        supported_direct,
-        supportable_storage_feed_in,
-        supported_share_of_storage,
-        supported_storage,
-        supported_feed_in: supported_direct + supported_storage,
+        grid_draw: monat.f3,
+        grid_feed_in: monat.f4,
+        device_consumption: monat.f5,
+        device_generation: monat.f6,
+        grid_charged: monat.f9,
+        plant_charged: monat.f10,
+        device_feed_in_base: monat.f11,
+        foreign_charge: monat.f12,
+        device_feed_in_considered: monat.f13,
+        efficiency: monat.f14,
+        renewable_storage_output: monat.f15,
+        settleable_feed_in: monat.f16,
+        storage_losses: monat.f17,
+        settleable_share: monat.f18,
+        privilegeable_losses: monat.f19,
+        levy_reducing: monat.f20,
+        levied_grid_draw: monat.f21,
+        supported_direct: plant.f26,
+        supportable_storage_feed_in: monat.f28,
+        supported_share_of_storage: plant.f30,
+        supported_storage: plant.f31,
+        supported_feed_in: monat.foerderfaehig()?,
     })
 }
 
-fn validate(fall: Basisfall, quarters: &[QuarterHour]) -> Result<(), MispelError> {
-    for q in quarters {
-        for (value, field) in [
-            (q.grid_draw, "Z1NB"),
-            (q.grid_feed_in, "Z1NE"),
-            (q.device_consumption, "Z2V"),
-            (q.device_generation, "Z2E"),
-        ] {
-            if value < Decimal::ZERO {
-                return Err(MispelError::NegativeValue {
-                    slot: q.slot,
-                    field,
-                });
-            }
-        }
-        if fall.needs_z3() && (q.storage_consumption.is_none() || q.storage_generation.is_none()) {
-            return Err(MispelError::MissingStorageMeter);
-        }
-    }
-    Ok(())
-}
+// ── Anlage 2 — the Pauschaloption ───────────────────────────────────────────
 
 /// Which Basisfall of Anlage 2 the installation matches, `[MiSpeL A2 4.1]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -584,33 +811,62 @@ pub struct PauschalPlant {
 }
 
 impl PauschalPlant {
-    /// `(P2)` — the size ratio the indifference band is built from,
-    /// `[MiSpeL A2 (P2)]`.
-    ///
-    /// The smaller the store is against the roof, the *wider* the band: with
-    /// little capacity there is little room for the arbitrage the band exists to
-    /// keep out of the settleable quantity.
-    ///
-    /// # Errors
-    /// [`MispelError::UndefinedShare`] when a case that needs a storage capacity
-    /// is given none.
-    pub fn ratio(&self) -> Result<Decimal, MispelError> {
-        let storage = || -> Result<Decimal, MispelError> {
-            if self.storage_kwh.is_zero() {
-                return Err(MispelError::UndefinedShare("SKinst storage capacity"));
+    fn basis(&self) -> Result<mp::Pauschalbasis, MispelError> {
+        let capacity = || {
+            if self.storage_kwh > Decimal::ZERO {
+                Ok(self.storage_kwh)
+            } else {
+                Err(MispelError::NoStorageCapacity(self.fall))
             }
-            Ok(PAUSCHAL_STORAGE_COEFFICIENT * self.solar_kwp / self.storage_kwh)
         };
-        match self.fall {
-            PauschalFall::P1 => storage(),
-            PauschalFall::P2 => Ok(PAUSCHAL_EVSE_FACTOR),
-            // The more favourable of the two applies, `[MiSpeL A2 (P2)P3]`.
-            PauschalFall::P3 => Ok(storage()?.min(PAUSCHAL_EVSE_FACTOR)),
-        }
+        Ok(match self.fall {
+            PauschalFall::P1 => mp::Pauschalbasis::Stromspeicher {
+                kapazitaet_kwh: capacity()?,
+            },
+            PauschalFall::P2 => mp::Pauschalbasis::Ladepunkt,
+            PauschalFall::P3 => mp::Pauschalbasis::StromspeicherUndLadepunkt {
+                kapazitaet_kwh: capacity()?,
+            },
+        })
     }
 }
 
-/// The Pauschaloption for one calendar year, `[MiSpeL A2 4.2]`.
+/// The period one Pauschaloption evaluation covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum PauschalPeriod {
+    /// A whole Berlin calendar year.
+    Year(i32),
+    /// A Rumpfjahr, inclusive at both ends, in one calendar year (Anlage 2 § 9).
+    Rumpfjahr {
+        /// First day.
+        #[cfg_attr(feature = "serde", serde(with = "hems_core::wire::iso_date"))]
+        first: Date,
+        /// Last day.
+        #[cfg_attr(feature = "serde", serde(with = "hems_core::wire::iso_date"))]
+        last: Date,
+    },
+}
+
+/// The days a Rumpfjahr's limits are prorated by (Anlage 2 § 9.1–9.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RumpfjahrDays {
+    /// First day.
+    #[cfg_attr(feature = "serde", serde(with = "hems_core::wire::iso_date"))]
+    pub first: Date,
+    /// Last day.
+    #[cfg_attr(feature = "serde", serde(with = "hems_core::wire::iso_date"))]
+    pub last: Date,
+    /// `(P22)R` — days of the Rumpfjahr.
+    pub days: u16,
+    /// `(P19)R` — of them, days April to September.
+    pub summer_days: u16,
+}
+
+/// The Pauschaloption for one calendar year or Rumpfjahr, `[MiSpeL A2 4.2]`,
+/// with the adopted numbering.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Pauschal {
@@ -618,446 +874,124 @@ pub struct Pauschal {
     pub plant: PauschalPlant,
     /// Which version of the Festlegung.
     pub rules: RuleSet,
-    /// `(P1)` the cap on supportable feed-in, kWh.
+    /// The Rumpfjahr, where the period is one; its limits are the `R` ones.
+    pub rumpfjahr: Option<RumpfjahrDays>,
+    /// `(P1)` / `(P1)R` — Pauschalgrenze der Förderfähigkeit, kWh.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub support_cap: Decimal,
-    /// `(P3)` the indifference band: feed-in that is neither supported nor
-    /// settleable.
+    /// `(P3)` / `(P3)R` — the Indifferenzbereich, kWh.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub indifference_band: Decimal,
-    /// `(P4)` the threshold above which feed-in becomes settleable.
+    /// `(P4)` / `(P4)R` — Pauschalgrenze der Saldierungsfähigkeit, kWh.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub settlement_threshold: Decimal,
-    /// `(P7)` total grid draw in the year.
-    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
-    pub grid_draw: Decimal,
-    /// `(P8)` feed-in in quarter hours with a non-negative spot price.
+    /// `(P7)` — feed-in in quarter hours with a non-negative spot price.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub feed_in_at_non_negative_prices: Decimal,
-    /// `(P10)` **saldierungsfähige Netzeinspeisung** for the year.
+    /// `(P8)` — of it, the part above the settlement threshold.
+    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
+    pub above_threshold: Decimal,
+    /// `(P9)` — total grid draw.
+    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
+    pub grid_draw: Decimal,
+    /// `(P10)` — **saldierungsfähige Netzeinspeisung**.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub settleable_feed_in: Decimal,
-    /// `(P11)` **umlagebelasteter Netzbezug** for the year.
+    /// `(P11)` — **umlagebelasteter Netzbezug**.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub levied_grid_draw: Decimal,
-    /// `(P14)` feed-in in supported quarter hours.
+    /// `(P14)` — feed-in in quarter hours with a positive anzulegender Wert.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub feed_in_when_supported: Decimal,
-    /// `(P15)` **förderfähige Netzeinspeisung** for the year.
+    /// `(P16)` — **förderfähige Netzeinspeisung**.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub supported_feed_in: Decimal,
 }
 
-/// Evaluate the Pauschaloption over one calendar year, `[MiSpeL A2 4.2]`.
+/// Evaluate the Pauschaloption over one calendar year or Rumpfjahr,
+/// `[MiSpeL A2 4.2]`, with `metering`'s formulas (P1)–(P22).
 ///
 /// Where the Abgrenzungsoption follows the electrons quarter by quarter, this
-/// draws two flat lines through the year's feed-in — one at 500 kWh/kW, one an
-/// indifference band above it — and asks only which side of them a kilowatt-hour
-/// fell on. It is open to solar installations up to 30 kWp, which is most German
-/// roofs, and it needs one meter rather than three.
+/// draws two flat lines through the year's feed-in — one at 500 kWh/kWp, one an
+/// indifference band above it — and asks only which side of them a
+/// kilowatt-hour fell on. It needs one meter rather than two.
 ///
 /// # Errors
-/// [`MispelError`] when there are no values, when a value is negative, when the
-/// installation is too large for the option, or when a case that needs a storage
-/// capacity is given none.
-pub fn pauschal_year(
+/// [`MispelError`] when there are no values, a value is negative, the
+/// installation is over 30 kWp, a storage case has no capacity, or a quarter
+/// hour lies outside the period.
+#[allow(
+    clippy::similar_names,
+    reason = "z1nb, z1ne, z2v, z2e are the Festlegung's own meter names"
+)]
+pub fn pauschal_period(
     plant: PauschalPlant,
     rules: RuleSet,
+    period: PauschalPeriod,
     quarters: &[QuarterHour],
 ) -> Result<Pauschal, MispelError> {
-    if quarters.is_empty() {
-        return Err(MispelError::NoValues);
-    }
+    validate(
+        quarters,
+        &[("Z1NB", |q| q.grid_draw), ("Z1NE", |q| q.grid_feed_in)],
+    )?;
     if plant.solar_kwp > PAUSCHAL_MAX_KWP {
         return Err(MispelError::TooLargeForPauschal(plant.solar_kwp));
     }
-    for q in quarters {
-        for (value, field) in [(q.grid_draw, "Z1NB"), (q.grid_feed_in, "Z1NE")] {
-            if value < Decimal::ZERO {
-                return Err(MispelError::NegativeValue {
-                    slot: q.slot,
-                    field,
-                });
-            }
-        }
+    let z1nb = series(quarters, |q| q.grid_draw)?;
+    let z1ne = series(quarters, |q| q.grid_feed_in)?;
+    let sp = gate(quarters, QuarterHour::spot_non_negative);
+    let aw = gate(quarters, QuarterHour::supported);
+    let zeitraum = match period {
+        PauschalPeriod::Year(year) => mp::Zeitraum::Kalenderjahr(year),
+        PauschalPeriod::Rumpfjahr { first, last } => mp::Zeitraum::Rumpfjahr {
+            erster_tag: first,
+            letzter_tag: last,
+        },
+    };
+    let jahr = mp::Pauschaloption {
+        z1nb: &z1nb,
+        einspeisung: Einspeisung::Z1(&z1ne),
+        sp: Gate::Flagged(&sp),
+        basis: plant.basis()?,
+        anlagen: vec![mp::SolarAnlage {
+            kwp: plant.solar_kwp,
+            aw: Gate::Flagged(&aw),
+        }],
+        zeitraum,
     }
-
-    let support_cap = plant.solar_kwp * PAUSCHAL_KWH_PER_KW; // (P1)
-    let indifference_band = plant.ratio()? * support_cap; // (P3)
-    let settlement_threshold = support_cap + indifference_band; // (P4)
-
-    let grid_draw: Decimal = quarters.iter().map(|q| q.grid_draw).sum(); // (P7)
-    // (P6)/(P8): a negative spot price makes the quarter hour worthless for
-    // settlement, which is § 51 EEG arriving through a different door.
-    let feed_in_at_non_negative_prices: Decimal = quarters
-        .iter()
-        .filter(|q| q.spot_non_negative())
-        .map(|q| q.grid_feed_in)
-        .sum();
-
-    // (P9), (P10), (P11)
-    let above_threshold =
-        (feed_in_at_non_negative_prices - settlement_threshold).max(Decimal::ZERO);
-    let settleable_feed_in = above_threshold.min(grid_draw);
-    let levied_grid_draw = grid_draw - settleable_feed_in;
-
-    // (P13)–(P15)
-    let feed_in_when_supported: Decimal = quarters
-        .iter()
-        .filter(|q| q.supported())
-        .map(|q| q.grid_feed_in)
-        .sum();
-    let supported_feed_in = feed_in_when_supported.min(support_cap);
+    .jahr()?;
+    let (support_cap, indifference_band, settlement_threshold, rumpfjahr) = match &jahr.rumpfjahr {
+        Some(r) => (
+            r.p1,
+            r.p3,
+            r.p4,
+            Some(RumpfjahrDays {
+                first: r.erster_tag,
+                last: r.letzter_tag,
+                days: r.tr,
+                summer_days: r.trs,
+            }),
+        ),
+        None => (jahr.grenzen.p1, jahr.grenzen.p3, jahr.grenzen.p4, None),
+    };
+    let feed_in_when_supported = jahr.anlagen.iter().map(|a| a.p14).sum();
 
     Ok(Pauschal {
         plant,
         rules,
+        rumpfjahr,
         support_cap,
         indifference_band,
         settlement_threshold,
-        grid_draw,
-        feed_in_at_non_negative_prices,
-        settleable_feed_in,
-        levied_grid_draw,
+        feed_in_at_non_negative_prices: jahr.p7,
+        above_threshold: jahr.p8,
+        grid_draw: jahr.p9,
+        settleable_feed_in: jahr.p10,
+        levied_grid_draw: jahr.p11,
         feed_in_when_supported,
-        supported_feed_in,
+        supported_feed_in: jahr.foerderfaehig()?,
     })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use rust_decimal::prelude::FromPrimitive;
-
-    const RULES: RuleSet = RuleSet::Arbeitsstand20260805;
-
-    fn dec(v: f64) -> Decimal {
-        Decimal::from_f64(v).unwrap().round_dp(6)
-    }
-
-    fn slot(i: i64) -> Slot {
-        Slot::containing(time::macros::datetime!(2026-10-01 00:00:00 UTC)).offset(i)
-    }
-
-    /// A quarter hour: (draw, feed-in, device consumption, device generation, AW).
-    fn q(i: i64, nb: f64, ne: f64, v: f64, e: f64, aw: f64) -> QuarterHour {
-        QuarterHour {
-            grid_draw: dec(nb),
-            grid_feed_in: dec(ne),
-            device_consumption: dec(v),
-            device_generation: dec(e),
-            anzulegender_wert: dec(aw),
-            ..QuarterHour::empty(slot(i))
-        }
-    }
-
-    // ── (1)/(2): the Speichervorrang ────────────────────────────────────────
-
-    #[test]
-    fn the_storage_priority_is_a_minimum_per_quarter_hour_and_not_over_the_month() {
-        // Two quarter hours: in the first the house draws 4 kWh and the store
-        // takes 1; in the second it draws nothing and the store takes 4 from the
-        // roof. Per quarter hour only 1 kWh was charged from the grid. Summing
-        // first — 4 kWh of draw against 5 kWh of charging — would claim 4, and
-        // turn a perfectly ordinary day into three kilowatt-hours of arbitrage.
-        let month = [q(0, 4.0, 0.0, 1.0, 0.0, 8.0), q(1, 0.0, 0.0, 4.0, 0.0, 8.0)];
-        let r = abgrenzung_month(Basisfall::A1, RULES, &month).unwrap();
-        assert_eq!(r.grid_charged, dec(1.0));
-        assert_eq!(r.plant_charged, dec(4.0));
-    }
-
-    // ── A worked month, checked figure by figure ────────────────────────────
-
-    /// A month of a single battery (A1): charged 100 kWh from the roof and
-    /// 20 kWh from the grid, gave back 102 kWh, of which 60 kWh reached the grid
-    /// at the same time as the store was producing.
-    fn worked_month() -> Vec<QuarterHour> {
-        let mut month = Vec::new();
-        // 20 quarter hours of grid charging, 1 kWh each, house drawing 3 kWh.
-        for i in 0..20 {
-            month.push(q(i, 3.0, 0.0, 1.0, 0.0, 8.0));
-        }
-        // 100 quarter hours charging from the roof, 1 kWh each.
-        for i in 20..120 {
-            month.push(q(i, 0.0, 0.0, 1.0, 0.0, 8.0));
-        }
-        // 102 quarter hours discharging 1 kWh, 60 of which feed 1 kWh to the
-        // grid at the same moment.
-        for i in 120..222 {
-            let ne = if i < 180 { 1.0 } else { 0.0 };
-            month.push(q(i, 0.0, ne, 0.0, 1.0, 8.0));
-        }
-        month
-    }
-
-    #[test]
-    fn a_worked_month_reproduces_every_figure_of_anlage_1() {
-        let r = abgrenzung_month(Basisfall::A1, RULES, &worked_month()).unwrap();
-        assert_eq!(r.grid_draw, dec(60.0), "(3)");
-        assert_eq!(r.grid_feed_in, dec(60.0), "(4)");
-        assert_eq!(r.device_consumption, dec(120.0), "(5)");
-        assert_eq!(r.device_generation, dec(102.0), "(6)");
-        assert_eq!(r.grid_charged, dec(20.0), "(9)");
-        assert_eq!(r.plant_charged, dec(100.0), "(10)");
-        assert_eq!(r.device_feed_in_base, dec(60.0), "(11)");
-        assert_eq!(
-            r.foreign_charge,
-            Decimal::ZERO,
-            "(12): no car, no free lunch"
-        );
-        assert_eq!(r.device_feed_in_considered, dec(60.0), "(13)");
-        // (14)A1 = 102 / 120 = 0,85 — measured, and it happens to land on the
-        // presumed figure, which is why the presumption is 0,85.
-        assert_eq!(r.efficiency, dec(0.85), "(14)A1");
-        assert_eq!(r.renewable_storage_output, dec(85.0), "(15)");
-        // (16) = MAX[60 − 85 ; 0] = 0. The store gave back less than the roof put
-        // into it, so nothing it fed in was grey and nothing is settleable.
-        assert_eq!(r.settleable_feed_in, Decimal::ZERO, "(16)");
-        assert_eq!(r.storage_losses, dec(18.0), "(17)A1");
-        assert_eq!(r.privilegeable_losses, Decimal::ZERO, "(19)");
-        assert_eq!(
-            r.levied_grid_draw,
-            dec(60.0),
-            "(21): all of it still levied"
-        );
-        // Every quarter hour is supported here, so the whole feed-in counts.
-        assert_eq!(
-            r.supported_direct,
-            Decimal::ZERO,
-            "(26): all of it via the store"
-        );
-        assert_eq!(r.supported_feed_in, dec(60.0), "(32)");
-    }
-
-    #[test]
-    fn a_month_of_grid_arbitrage_produces_a_settleable_quantity() {
-        // The case the Festlegung exists for: the store is charged from the grid
-        // in cheap hours and emptied into it in dear ones. None of that is green,
-        // so all of it is settleable against the levies on the draw.
-        let mut month = Vec::new();
-        for i in 0..40 {
-            month.push(q(i, 2.0, 0.0, 2.0, 0.0, 8.0)); // 80 kWh in, all from the grid
-        }
-        for i in 40..108 {
-            month.push(q(i, 0.0, 1.0, 0.0, 1.0, 8.0)); // 68 kWh out, all to the grid
-        }
-        let r = abgrenzung_month(Basisfall::A1, RULES, &month).unwrap();
-        assert_eq!(r.grid_charged, dec(80.0));
-        assert_eq!(r.plant_charged, Decimal::ZERO);
-        assert_eq!(
-            r.renewable_storage_output,
-            Decimal::ZERO,
-            "(15): nothing green"
-        );
-        assert_eq!(r.settleable_feed_in, dec(68.0), "(16)");
-        // (17) = 80 − 68 = 12 kWh of losses, and (18) = 68/68 = 1, so all of them
-        // are privilegeable.
-        assert_eq!(r.storage_losses, dec(12.0), "(17)");
-        assert_eq!(r.settleable_share, Decimal::ONE, "(18)");
-        assert_eq!(r.privilegeable_losses, dec(12.0), "(19)");
-        // (20) = MIN[68 + 12 ; 80] = 80, so the whole draw escapes the levies.
-        assert_eq!(r.levy_reducing, dec(80.0), "(20)");
-        assert_eq!(r.levied_grid_draw, Decimal::ZERO, "(21)");
-        assert_eq!(r.levy_relief_share(), Decimal::ONE);
-    }
-
-    #[test]
-    fn the_levy_reduction_can_never_exceed_the_draw_it_reduces() {
-        // (20)'s MIN. A month that feeds in far more than it draws must not
-        // produce a negative levied quantity — which would be a refund.
-        let mut month = vec![q(0, 1.0, 0.0, 1.0, 0.0, 8.0)];
-        for i in 1..50 {
-            month.push(q(i, 0.0, 1.0, 0.0, 1.0, 8.0));
-        }
-        let r = abgrenzung_month(Basisfall::A1, RULES, &month).unwrap();
-        assert_eq!(r.levy_reducing, r.grid_draw);
-        assert_eq!(r.levied_grid_draw, Decimal::ZERO);
-        assert!(r.levied_grid_draw >= Decimal::ZERO);
-    }
-
-    #[test]
-    fn a_negative_price_quarter_hour_carries_no_support() {
-        // § 51 EEG through (24)¼: the anzulegender Wert is zero, so the feed-in
-        // of that quarter hour is worth nothing in support — while still counting
-        // in every settlement figure, because the levies do not care about the
-        // spot price.
-        let supported = [q(0, 0.0, 5.0, 0.0, 0.0, 8.0)];
-        let unsupported = [q(0, 0.0, 5.0, 0.0, 0.0, 0.0)];
-        let a = abgrenzung_month(Basisfall::A2, RULES, &supported).unwrap();
-        let b = abgrenzung_month(Basisfall::A2, RULES, &unsupported).unwrap();
-        assert_eq!(a.supported_feed_in, dec(5.0));
-        assert_eq!(b.supported_feed_in, Decimal::ZERO);
-        assert_eq!(a.grid_feed_in, b.grid_feed_in);
-    }
-
-    #[test]
-    fn energy_a_car_brought_from_somewhere_else_is_taken_back_out() {
-        // (12) Fremdtankstrom. The car was charged at work, comes home full and
-        // feeds the house: the store produced more than it was ever given here,
-        // and the difference may be neither settled nor supported.
-        let month = [q(0, 0.0, 0.0, 2.0, 0.0, 8.0), q(1, 0.0, 6.0, 0.0, 6.0, 8.0)];
-        let r = abgrenzung_month(Basisfall::A2, RULES, &month).unwrap();
-        assert_eq!(r.foreign_charge, dec(4.0), "(12) = MAX[6 − 2 ; 0]");
-        assert_eq!(r.device_feed_in_considered, dec(2.0), "(13) = 6 − 4");
-    }
-
-    #[test]
-    fn a_charge_point_gets_the_presumed_efficiency_and_no_privilegeable_losses() {
-        let month = [q(0, 2.0, 0.0, 2.0, 0.0, 8.0), q(1, 0.0, 1.0, 0.0, 1.0, 8.0)];
-        for fall in [Basisfall::A2, Basisfall::A3] {
-            let r = abgrenzung_month(fall, RULES, &month).unwrap();
-            assert_eq!(r.efficiency, PRESUMED_EFFICIENCY, "(14) in {fall}");
-            assert_eq!(r.privilegeable_losses, Decimal::ZERO, "(19) in {fall}");
-        }
-    }
-
-    #[test]
-    fn case_a4_measures_the_storage_losses_on_their_own_meter() {
-        // A3 and A4 differ in exactly one thing: A4 can see the *battery's* own
-        // consumption and generation, so its losses are privilegeable while the
-        // charge point's are not.
-        let month: Vec<QuarterHour> = (0..2)
-            .map(|i| QuarterHour {
-                storage_consumption: Some(dec(if i == 0 { 2.0 } else { 0.0 })),
-                storage_generation: Some(dec(if i == 0 { 0.0 } else { 1.7 })),
-                ..q(
-                    i,
-                    if i == 0 { 4.0 } else { 0.0 },
-                    if i == 0 { 0.0 } else { 4.0 },
-                    if i == 0 { 4.0 } else { 0.0 },
-                    if i == 0 { 0.0 } else { 4.0 },
-                    8.0,
-                )
-            })
-            .collect();
-        let a4 = abgrenzung_month(Basisfall::A4, RULES, &month).unwrap();
-        assert_eq!(a4.storage_losses, dec(0.3), "(17)A4 = 2,0 − 1,7");
-        assert!(a4.privilegeable_losses > Decimal::ZERO);
-
-        let a3 = abgrenzung_month(Basisfall::A3, RULES, &month).unwrap();
-        assert_eq!(a3.privilegeable_losses, Decimal::ZERO, "(19)A2,A3");
-    }
-
-    #[test]
-    fn case_a4_refuses_to_guess_at_a_meter_it_does_not_have() {
-        let month = [q(0, 1.0, 0.0, 1.0, 0.0, 8.0)];
-        assert_eq!(
-            abgrenzung_month(Basisfall::A4, RULES, &month),
-            Err(MispelError::MissingStorageMeter)
-        );
-    }
-
-    #[test]
-    fn an_empty_month_is_a_missing_measurement_and_not_a_zero() {
-        assert_eq!(
-            abgrenzung_month(Basisfall::A1, RULES, &[]),
-            Err(MispelError::NoValues)
-        );
-        assert_eq!(
-            pauschal_year(
-                PauschalPlant {
-                    fall: PauschalFall::P1,
-                    solar_kwp: dec(9.8),
-                    storage_kwh: dec(10.0)
-                },
-                RULES,
-                &[]
-            ),
-            Err(MispelError::NoValues)
-        );
-    }
-
-    #[test]
-    fn a_meter_that_counts_backwards_is_refused_rather_than_clamped() {
-        let mut month = vec![q(0, 1.0, 0.0, 1.0, 0.0, 8.0)];
-        month[0].grid_draw = dec(-1.0);
-        assert!(matches!(
-            abgrenzung_month(Basisfall::A1, RULES, &month),
-            Err(MispelError::NegativeValue { field: "Z1NB", .. })
-        ));
-    }
-
-    // ── The Pauschaloption ──────────────────────────────────────────────────
-
-    fn plant(fall: PauschalFall, kwp: f64, kwh: f64) -> PauschalPlant {
-        PauschalPlant {
-            fall,
-            solar_kwp: dec(kwp),
-            storage_kwh: dec(kwh),
-        }
-    }
-
-    #[test]
-    fn the_pauschal_thresholds_come_out_of_the_size_of_the_installation() {
-        // 9,8 kWp and 10 kWh: the support cap is 4 900 kWh, the ratio is
-        // 0,1 × 9,8 / 10 = 0,098, so the indifference band is 480,2 kWh and the
-        // settlement threshold 5 380,2 kWh.
-        let p = plant(PauschalFall::P1, 9.8, 10.0);
-        assert_eq!(p.ratio().unwrap(), dec(0.098));
-        let year = [q(0, 0.0, 0.0, 0.0, 0.0, 8.0)];
-        let r = pauschal_year(p, RULES, &year).unwrap();
-        assert_eq!(r.support_cap, dec(4900.0), "(P1)");
-        assert_eq!(r.indifference_band, dec(480.2), "(P3)");
-        assert_eq!(r.settlement_threshold, dec(5380.2), "(P4)");
-    }
-
-    #[test]
-    fn a_smaller_store_widens_the_indifference_band() {
-        // The whole idea of (P2)P1: less capacity against the same roof means
-        // less room for arbitrage, so more of the feed-in is presumed innocent —
-        // and a *wider* band before anything counts as settleable.
-        let small = plant(PauschalFall::P1, 10.0, 5.0).ratio().unwrap();
-        let large = plant(PauschalFall::P1, 10.0, 20.0).ratio().unwrap();
-        assert!(small > large, "{small} should exceed {large}");
-    }
-
-    #[test]
-    fn a_charge_point_takes_the_flat_half_and_both_take_the_better_of_the_two() {
-        assert_eq!(
-            plant(PauschalFall::P2, 10.0, 0.0).ratio().unwrap(),
-            PAUSCHAL_EVSE_FACTOR
-        );
-        // P3 takes the *smaller* ratio, which is the narrower band and therefore
-        // the more settleable feed-in — the favourable one for the household.
-        let both = plant(PauschalFall::P3, 10.0, 20.0);
-        assert_eq!(both.ratio().unwrap(), dec(0.05));
-    }
-
-    #[test]
-    fn only_feed_in_above_the_threshold_and_at_non_negative_prices_is_settleable() {
-        let p = plant(PauschalFall::P1, 1.0, 10.0);
-        // (P1) = 500, ratio = 0,01, (P3) = 5, (P4) = 505.
-        let mut year: Vec<QuarterHour> = (0..600)
-            .map(|i| {
-                let mut h = q(i, 1.0, 1.0, 0.0, 0.0, 8.0);
-                h.spot_price = dec(5.0);
-                h
-            })
-            .collect();
-        // Fifty of them at a negative spot price: they feed in, and they count
-        // for nothing in the settlement.
-        for h in year.iter_mut().take(50) {
-            h.spot_price = dec(-2.0);
-        }
-        let r = pauschal_year(p, RULES, &year).unwrap();
-        assert_eq!(r.feed_in_at_non_negative_prices, dec(550.0), "(P8)");
-        assert_eq!(r.settleable_feed_in, dec(45.0), "(P10) = 550 − 505");
-        assert_eq!(r.levied_grid_draw, dec(555.0), "(P11) = 600 − 45");
-        assert_eq!(r.supported_feed_in, dec(500.0), "(P15) capped at (P1)");
-    }
-
-    #[test]
-    fn the_pauschal_option_refuses_a_roof_it_is_not_open_to() {
-        let year = [q(0, 0.0, 0.0, 0.0, 0.0, 8.0)];
-        assert_eq!(
-            pauschal_year(plant(PauschalFall::P1, 45.0, 10.0), RULES, &year),
-            Err(MispelError::TooLargeForPauschal(dec(45.0)))
-        );
-    }
-
-    #[test]
-    fn the_rule_set_says_when_it_applies() {
-        assert!(!RULES.applies_on(time::macros::date!(2026 - 09 - 30)));
-        assert!(RULES.applies_on(time::macros::date!(2026 - 10 - 01)));
-    }
-}
+mod tests;

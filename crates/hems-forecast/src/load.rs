@@ -4,7 +4,7 @@
 //! other weekdays at the same time of day — and the residual around that
 //! periodicity is what a forecast has to quantify. Recent work on single-household
 //! series finds that simple seasonal models with empirical residual quantiles
-//! stay competitive with much larger ones (`specs/arxiv/arxiv-2512.00856.pdf`),
+//! stay competitive with much larger ones (arXiv:2512.00856),
 //! which is fortunate: this has to run on a gateway box with no GPU and no
 //! internet connection.
 //!
@@ -15,9 +15,10 @@
 
 use std::collections::BTreeMap;
 
+use hems_core::calendar::Bundesland;
 use hems_core::prelude::{DayType, Horizon, Power, Slot};
-use metering::holiday::Bundesland;
 
+use crate::prior::Prior;
 use crate::quantile::{Band, Forecast};
 
 /// One cell of the profile: everything observed at this day type and time.
@@ -45,6 +46,15 @@ impl Cell {
 /// The smallest number of observations a cell needs before its spread is
 /// treated as informative.
 pub const MIN_SAMPLES: usize = 3;
+
+/// How many observations a cell needs before the published prior has no say
+/// in it.
+///
+/// Four: one more than [`MIN_SAMPLES`], so a cell's own spread is already
+/// informative when the prior leaves it. A box warmed for six weeks has at
+/// least six of every day type it has seen, so a learned household plans
+/// exactly as it would with no prior at all.
+pub const PRIOR_FADE_SAMPLES: usize = 4;
 
 /// How much wider a band gets when it is answered from a **different day type**.
 ///
@@ -262,6 +272,85 @@ impl LoadProfile {
         Forecast {
             slots: horizon.slots().map(|s| (s, self.band_at(s))).collect(),
         }
+    }
+
+    /// The household's learned energy for a whole day of `day_type`, kWh — the
+    /// sum of its cells' medians — or `None` until every quarter hour of that
+    /// day type has been seen at least once.
+    #[must_use]
+    pub fn day_kwh(&self, day_type: DayType) -> Option<f64> {
+        let mut kwh = 0.0;
+        for quarter in 0..96 {
+            let cell = self.cells.get(&(day_type, quarter))?;
+            if cell.samples.is_empty() {
+                return None;
+            }
+            kwh += cell.quantile(0.5) / 1_000.0 * 0.25;
+        }
+        Some(kwh)
+    }
+
+    /// How much say the published prior still has in `slot`: one where this
+    /// household has never been seen at this day type and quarter hour, falling
+    /// linearly to zero at [`PRIOR_FADE_SAMPLES`] observations.
+    #[must_use]
+    pub fn prior_weight(&self, slot: Slot) -> f64 {
+        let n = self.support(slot).min(PRIOR_FADE_SAMPLES);
+        1.0 - n as f64 / PRIOR_FADE_SAMPLES as f64
+    }
+
+    /// The band for one slot, leaning on `prior` where this household's own
+    /// history is thin.
+    ///
+    /// Each percentile is the two bands mixed by [`LoadProfile::prior_weight`]:
+    /// the prior alone in a cell nobody has measured, the household alone from
+    /// [`PRIOR_FADE_SAMPLES`] observations on — so a box that has learned its
+    /// household plans exactly as it did before there was a prior. A cell is
+    /// faded on its **own** support rather than on days since installation,
+    /// because a box six weeks old has seen thirty Tuesdays and perhaps no
+    /// public holiday at all.
+    #[must_use]
+    pub fn band_with_prior(&self, slot: Slot, prior: &Prior) -> Band {
+        let w = self.prior_weight(slot);
+        if w <= 0.0 {
+            return self.band_at(slot);
+        }
+        let p = prior.band_at(slot);
+        if w >= 1.0 {
+            return p;
+        }
+        let l = self.band_at(slot);
+        let mix = |own: f64, published: f64| (1.0 - w) * own + w * published;
+        Band {
+            p10: mix(l.p10, p.p10),
+            p50: mix(l.p50, p.p50),
+            p90: mix(l.p90, p.p90),
+        }
+        .sorted()
+    }
+
+    /// A forecast over a horizon, leaning on `prior` where history is thin.
+    #[must_use]
+    pub fn forecast_with_prior(&self, horizon: Horizon, prior: &Prior) -> Forecast {
+        Forecast {
+            slots: horizon
+                .slots()
+                .map(|s| (s, self.band_with_prior(s, prior)))
+                .collect(),
+        }
+    }
+
+    /// The share of `horizon`'s slots in which the prior still has a say — the
+    /// figure a day report gives so a household can see how much of tonight's
+    /// plan rests on its own meter and how much on a published average.
+    #[must_use]
+    pub fn prior_share(&self, horizon: Horizon) -> f64 {
+        let (mut leaning, mut all) = (0.0, 0.0);
+        for s in horizon.slots() {
+            leaning += self.prior_weight(s);
+            all += 1.0;
+        }
+        if all > 0.0 { leaning / all } else { 0.0 }
     }
 }
 

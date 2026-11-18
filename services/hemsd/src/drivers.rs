@@ -1178,7 +1178,7 @@ mod tests {
                 id("netzanschluss"),
                 Use::Lpc,
                 Power::from_kw(10.5),
-                core::time::Duration::from_secs(2 * 3600),
+                core::time::Duration::from_hours(2),
                 NOW,
             )),
             &s,
@@ -1369,7 +1369,7 @@ mod tests {
             id("netzanschluss"),
             Use::Lpc,
             Power::from_kw(10.5),
-            core::time::Duration::from_secs(2 * 3600),
+            core::time::Duration::from_hours(2),
             NOW,
         );
         // Contact, then a reduction to 4,2 kW.

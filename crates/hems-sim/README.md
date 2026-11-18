@@ -53,6 +53,15 @@ milliseconds and gives the same answer twice, on any machine and under any numbe
 of threads. Without that, a regression in the planner is indistinguishable from
 noise and no saving figure can be reproduced.
 
+## Use it
+
+```console
+$ cargo add hems-sim
+```
+
+API reference on [docs.rs](https://docs.rs/hems-sim); the design is explained in
+[Simulation](https://hupe1980.github.io/hems/docs/simulation/) on the hems site.
+
 ## License
 
 MIT OR Apache-2.0

@@ -462,7 +462,8 @@ mod tests {
             (17 * 60, 20 * 60),
             (22 * 60, 6 * 60),
             vec![Quarter::Q1, Quarter::Q4],
-        );
+        )
+        .expect("a calendar metering can build");
         let n = NetworkCharge::Modul3 {
             calendar,
             ht: Decimal::new(1800, 2),

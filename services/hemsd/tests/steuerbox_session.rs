@@ -659,3 +659,45 @@ async fn reported(registry: &Arc<Mutex<Registry>>) -> Option<hems_drv::Failsafe>
         .get(&hems_drv::LimitDirection::Consumption)
         .copied()
 }
+
+#[tokio::test]
+async fn a_restart_presents_the_same_certificate_and_not_only_the_same_ski() {
+    // SHIP's Pairing Service trusts a certificate **fingerprint**, and the
+    // pairing QR code prints it. Re-issuing the certificate from the kept key
+    // keeps the SKI and changes the fingerprint, so a box that did so on every
+    // start would be a stranger to whatever paired it by fingerprint.
+    use hemsd::store::{Store, StoredIdentity};
+
+    let path = std::env::temp_dir().join(format!("hems-identity-{}.redb", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let store = Arc::new(Mutex::new(Store::open(&path).expect("a store")));
+    let settings = hemsd::runtime::ship::ShipSettings {
+        ship_id: "hems_restart-test".into(),
+        ..quiet()
+    };
+    let now = time::OffsetDateTime::now_utc();
+    let start = || hemsd::runtime::ship::identity(&settings, Some(&store), now);
+
+    let (_, first_ski, first) = start().await.expect("the first start");
+    let (_, second_ski, second) = start().await.expect("a restart");
+    assert_eq!(first_ski, second_ski);
+    assert_eq!(first.certificate_pem(), second.certificate_pem());
+
+    // A store written before the certificate was kept: the next start issues
+    // one from the kept key — same SKI — and every start after presents it.
+    let mut legacy = store.lock().await.eebus_identity().unwrap().expect("kept");
+    legacy.certificate_pem = None;
+    store.lock().await.put_eebus_identity(&legacy, now).unwrap();
+    let (_, upgraded_ski, upgraded) = start().await.expect("the first start after the upgrade");
+    let (_, _, after) = start().await.expect("the start after that");
+    assert_eq!(upgraded_ski, first_ski, "the SKI follows the key");
+    assert_eq!(upgraded.certificate_pem(), after.certificate_pem());
+    let kept: StoredIdentity = store.lock().await.eebus_identity().unwrap().expect("kept");
+    assert_eq!(
+        kept.certificate_pem.as_deref(),
+        Some(after.certificate_pem())
+    );
+
+    drop(store);
+    let _ = std::fs::remove_file(&path);
+}

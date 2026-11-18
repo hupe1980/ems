@@ -574,7 +574,7 @@ mod modelled_production_tests {
     }
 
     fn series(day: time::Date, factor: f64) -> WeatherSeries {
-        let start = Slot::containing(metering::calendar::day_start_utc(day));
+        let start = Slot::containing(hems_core::calendar::day_start_utc(day));
         WeatherSeries {
             slots: (0..96)
                 .map(|i| {

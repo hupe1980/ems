@@ -269,8 +269,10 @@ fn decode_pdu(pdu: &[u8]) -> Result<ResponseBody, FrameError> {
             }
             Ok(ResponseBody::Registers(
                 values
-                    .chunks_exact(2)
-                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| u16::from_be_bytes(*c))
                     .collect(),
             ))
         }

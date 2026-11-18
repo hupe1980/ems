@@ -1,13 +1,15 @@
 +++
 title = "Simulation and evaluation"
 description = "Seven reference days and a cold one, hardware simulators that all know how to say no, a seeded weather the planner never sees, and multi-day sweeps that can falsify a day."
-weight = 10
+weight = 12
+
+[extra]
+group = "Running it"
 +++
 
-Nothing in hems talks to household hardware yet, so `hems-sim` stands in for
-every device. That makes the simulator the thing every figure on this site rests
-on — which is why the design question it answers is not “does it run?” but **can
-it fail?**
+`hems-sim` stands in for every device on a reference day, and every saving or
+compliance figure on this site comes out of it. So the design question it
+answers is not “does it run?” but **can it fail?**
 
 ## The reference household
 
@@ -250,8 +252,7 @@ eats a kilowatt-hour of exactly that surplus would make both days unreadable.
 The solver's time budget is measured against the **wall clock**, so the answer
 depends on how busy the machine was. Two runs of the same day on the same inputs
 can differ — which is exactly what “replay the day and compare” needs not to
-happen. That is how it was found: the determinism test passed on its own and
-failed under a parallel test run.
+happen.
 
 So a box in the field keeps the budget, and anything that has to be
 **reproducible** sets it to zero and waits. The relative gap is unaffected: it is

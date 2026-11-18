@@ -14,7 +14,7 @@
 //! * **Eligibility** — a delivery point may only take part if both its
 //!   consumption and its generation are measured by Zählerstandsgangmessung
 //!   *or* by quarter-hourly registrierende Leistungsmessung (§ 42c Abs. 1).
-//!   That decision belongs to metering and lives in [`metering::sharing`]; hems
+//!   That decision belongs to metering and lives in [`metering::allocation::sharing`]; hems
 //!   consumes it rather than restating it.
 //! * **Allocation** — the arithmetic below.
 //!
@@ -38,12 +38,14 @@
 //!
 //! # Whose arithmetic
 //!
-//! Each pass is [`metering::allocation::allocate`] — one implementation of
-//! "divide a quantity by a key and cap each part", with the identity
-//! `Σ allocated + residual = total` as a theorem rather than a check, and shares
-//! cut to a millionth of a kilowatt-hour before anything is subtracted. hems
-//! contributes the *cascade*, which is the § 42c-specific part; the conservation
-//! is metering's and is the same one § 42b is settled with.
+//! All of it is [`metering::allocation::community::allocate`] — one
+//! implementation of "divide a quantity by a key and cap each part", with the
+//! identity `Σ allocated + residual = total` holding exactly on every row. The
+//! static key is metering's `Constant` Aufteilungsfaktor (six decimal places,
+//! rounded down so the factors never sum above one), the dynamic one its
+//! `Cascading` key. hems contributes the community, the slot and the choice;
+//! the arithmetic and its conservation are metering's, the same § 42b is
+//! settled with.
 //!
 //! Every number here is billed, so it is [`rust_decimal::Decimal`]: a
 //! settlement that went through an `f64` is one nobody can reproduce. The
@@ -53,7 +55,11 @@
 use core::fmt;
 
 use hems_core::prelude::Slot;
-use metering::allocation::{AllocationBasis, AllocationPart, allocate as allocate_once};
+use std::collections::BTreeMap;
+
+use metering::allocation::community::{AllocationKey, allocate as allocate_series};
+use metering::allocation::formula::SplitFactor;
+use metering::{DayBoundary, MeloId, MeterInterval, QualityFlag, Resolution, Series};
 use rust_decimal::Decimal;
 use thiserror::Error;
 use time::Date;
@@ -163,6 +169,10 @@ pub enum SharingError {
         /// How many values were supplied.
         actual: usize,
     },
+    /// `metering` refused the interval — a value outside `Decimal`'s range,
+    /// or a slot that is not a quarter hour.
+    #[error("metering refused the allocation: {0}")]
+    Allocation(String),
 }
 
 /// What one member was allocated in one quarter hour.
@@ -271,7 +281,7 @@ pub fn allocate(
 /// Aufteilung, § 42c Abs. 3.
 ///
 /// `consumption` is one value per member of `community`, in the same order.
-/// Each pass is `metering`'s allocation, so `Σ shared + unallocated` equals the
+/// The arithmetic is `metering`'s, so `Σ shared + unallocated` equals the
 /// generation exactly, whichever [`Aufteilung`] is used.
 ///
 /// # Errors
@@ -309,54 +319,70 @@ pub fn allocate_by(
     }
 
     let n = community.members.len();
-    let mut shared = vec![Decimal::ZERO; n];
-    let mut remaining = generation;
-
-    // Each pass divides what is left by the key of the members who can still
-    // take something, and caps each at their unmet consumption. A static key
-    // stops after one; a dynamic one repeats, and every pass either exhausts
-    // the generation or fills at least one member, so it runs at most once per
-    // member — the loop bound says so rather than trusting the arithmetic to
-    // terminate.
-    let passes = match aufteilung {
-        Aufteilung::Statisch => 1,
-        Aufteilung::Dynamisch => n,
+    let total = community.key_total();
+    let refused = |e: &dyn fmt::Display| SharingError::Allocation(e.to_string());
+    let one = |kwh: Decimal| -> Result<Series, SharingError> {
+        let interval = MeterInterval::quarter_hour(slot.start(), kwh, QualityFlag::Measured)
+            .map_err(|e| refused(&e))?;
+        Series::new(Resolution::QUARTER_HOUR, DayBoundary::Strom, vec![interval])
+            .map_err(|e| refused(&e))
     };
-    for pass in 0..passes {
-        if remaining <= Decimal::ZERO {
-            break;
+
+    // The key, in `metering`'s terms. A member with no share of it is no
+    // participant: under either Aufteilung it is credited nothing.
+    let melo = |i: usize| -> MeloId {
+        format!("DE{i:031}")
+            .parse()
+            .expect("a 33-character DE identifier is a MeloId")
+    };
+    let key = match aufteilung {
+        // The key as written, applied once. `metering`'s Aufteilungsfaktor has
+        // six decimal places, so each fraction is rounded **down** to six:
+        // their sum stays at most one, and what the rounding leaves over stays
+        // unallocated rather than being credited to nobody in particular.
+        Aufteilung::Statisch => AllocationKey::Constant {
+            fractions: (0..n)
+                .filter_map(|i| {
+                    let fraction = (community.members[i].key / total)
+                        .round_dp_with_strategy(6, rust_decimal::RoundingStrategy::ToZero);
+                    SplitFactor::new(fraction).ok().map(|f| (melo(i), f))
+                })
+                .collect::<BTreeMap<_, _>>(),
+        },
+        // What a member cannot use is re-offered to whoever still has unmet
+        // consumption, in the key's proportions, until nothing moves —
+        // `metering`'s cascading key, exact in `Decimal`.
+        Aufteilung::Dynamisch => AllocationKey::Cascading {
+            weights: (0..n)
+                .filter(|&i| community.members[i].key > Decimal::ZERO)
+                .map(|i| (melo(i), community.members[i].key))
+                .collect(),
+        },
+    };
+    let in_key = |i: usize| match &key {
+        AllocationKey::Constant { fractions } => fractions.contains_key(&melo(i)),
+        AllocationKey::Cascading { weights } => weights.contains_key(&melo(i)),
+        _ => false,
+    };
+    let members: Vec<usize> = (0..n).filter(|&i| in_key(i)).collect();
+    let series = members
+        .iter()
+        .map(|&i| one(consumption[i]))
+        .collect::<Result<Vec<_>, _>>()?;
+    let participants: Vec<(MeloId, &Series)> =
+        members.iter().map(|&i| melo(i)).zip(&series).collect();
+    let rows = allocate_series(&one(generation)?, &participants, &key).map_err(|e| refused(&e))?;
+    let row = rows
+        .first()
+        .ok_or_else(|| SharingError::Allocation("no interval was allocated".into()))?;
+
+    let mut shared = vec![Decimal::ZERO; n];
+    for &i in &members {
+        if let Some(share) = row.share(&melo(i)) {
+            shared[i] = share.allocated;
         }
-        // The **first** pass is the key as written: every member with a share
-        // takes part, and one who used nothing simply cannot fill theirs. Later
-        // passes are the cascade, and they are the ones that have to leave a
-        // full member out — otherwise their key would go on claiming
-        // generation that is being re-offered precisely because they cannot use
-        // it.
-        let active: Vec<usize> = (0..n)
-            .filter(|&i| community.members[i].key > Decimal::ZERO)
-            .filter(|&i| pass == 0 || shared[i] < consumption[i])
-            .collect();
-        if active.is_empty() {
-            break;
-        }
-        let parts: Vec<AllocationPart> = active
-            .iter()
-            .map(|&i| {
-                AllocationPart::new(i.to_string(), community.members[i].key)
-                    .capped_at(consumption[i] - shared[i])
-            })
-            .collect();
-        let row = allocate_once(remaining, parts, AllocationBasis::Proportional)
-            .map_err(|_| SharingError::EmptyKey)?;
-        for (&i, part) in active.iter().zip(&row.parts) {
-            shared[i] += part.allocated;
-        }
-        if row.allocated().is_zero() {
-            // Nothing moved, so nothing will: stop rather than spin.
-            break;
-        }
-        remaining = row.residual;
     }
+    let remaining = row.residual;
 
     let allocated = community
         .members

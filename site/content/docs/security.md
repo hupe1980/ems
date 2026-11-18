@@ -1,7 +1,10 @@
 +++
 title = "Security and supply chain"
 description = "The box trusts a key it was built with, not a server. Secrets are references, authorisation is per site, and every release ships an SBOM and provenance."
-weight = 13
+weight = 15
+
+[extra]
+group = "Running it"
 +++
 
 A home energy manager holds a grid connection open, decides when a car charges,
@@ -34,6 +37,13 @@ sequenceDiagram
 so a compromised `fleetd` can serve a manifest **no box will accept**. That is
 what makes the fleet server ordinary infrastructure rather than the root of
 trust.
+
+> [!NOTE]
+> **Built, and not yet wired on the box.** The verification functions and
+> `fleetd`'s side of the exchange exist and are tested. The client on the box
+> that pulls a manifest or a configuration and installs it does not exist yet:
+> today a configuration and an update reach a box through its installer or the
+> operating system's own update mechanism.
 
 ### A configuration is the same question
 
@@ -154,9 +164,22 @@ radio-equipped one. A deployment with its own credentials sets `[api] token`.
 **An energy manager gets a credential of its own**, connected by name, listed and
 withdrawn — the shape a Steuerbox already has through the SHIP trust store, and
 for the same reason: a household that can see *that* something is driving its
-battery but not *what* cannot revoke it. The token is shown once, the subject
-carries the name so an audit line says which manager it was, and both credentials
-are cleared by the factory reset.
+battery but not *what* cannot revoke it. The token is shown once and both
+credentials are cleared by the factory reset.
+
+**Every instruction says who sent it.** A manager's S2 session runs under the
+subject of the credential that opened it — `cem:aggregator-nord`, or
+`site:<id>` for the household's own — and every line the session writes carries
+it:
+
+```console
+INFO s2{asset=battery subject=cem:aggregator-nord}: hemsd::runtime::s2: the manager asked for a power power=…
+```
+
+Because that name ends up in the household's audit trail, it is restricted to
+letters, digits, `-`, `_` and `.`: a name with a newline or an `=` in it could
+otherwise write a line that reads as another manager's. Household overrides do
+not carry a subject yet.
 
 It carries the household's capabilities **less the Data Act export**. An
 aggregator drives devices; Article 4 is a right of the user, and the one-second
@@ -167,6 +190,28 @@ because a capability granted and never checked is not a boundary.
 gives about the two open services: they carry no household data, and an
 orchestrator that needed a household's credential to restart a crashed box would
 be given it far too widely.
+
+## The box serves HTTPS on the household's network
+
+A household network is phones, a television and a guest's laptop. A token sent
+in clear there is a token any of them can read, and an S2 energy manager will
+not send one at all: S2 Connect forbids S2 over an unencrypted channel. So the
+box serves HTTPS whenever it listens on a network address, with a certificate it
+issues itself on first start and **keeps**, so the fingerprint a browser or a
+manager pins at commissioning survives every restart. The fingerprint is on the
+household page's Setup view and printed at start-up.
+
+Plain HTTP on a network address is refused unless the configuration says
+`[api] insecure_lan = true` — a written decision, logged at every start, for a
+box behind a proxy that terminates TLS itself.
+
+The household page signs in once: its access code is exchanged for a cookie no
+script on the page can read (`HttpOnly`, `SameSite=Strict`, `Secure` over
+HTTPS). A write that relies on the cookie must also carry a JSON body type,
+which a form on another site cannot send. The page itself loads nothing from
+the internet, and its Content-Security-Policy allows scripts and styles only
+from the box. Only the household's own credential signs in: an energy
+manager's may drive devices and may not read the household's life.
 
 ## Two services are open, and that is written down
 
@@ -351,6 +396,14 @@ $ cargo audit bin hemsd
 answers “what is in this thing” from an artefact **found in the field**, with no
 build tree and no manifest to hand.
 
+**Every GitHub Action the build uses is pinned to a commit**, with its release
+tag beside it as a comment. A tag is a pointer its owner can move, so a workflow
+that names `actions/checkout@v4` runs whatever `v4` means on the day it runs —
+and the provenance attestation above would vouch for the result. A commit cannot
+move. `cargo xtask check-actions` fails the build on any reference that is not a
+commit, and Dependabot proposes each update as a pull request, so a pin moves
+only when somebody reviewed why.
+
 `cargo deny check` runs in CI over licences, advisories, bans and sources, and
 every domain crate carries `#![forbid(unsafe_code)]` — enforced a second time by
 `just purity`, which fails the build if a domain crate reaches for the clock, the
@@ -358,9 +411,8 @@ filesystem, the network or `unsafe`.
 
 ## What is deliberately not claimed
 
-- Nothing here has been through a certification lab. The EEBUS conformance
-  harness and the ElaadNL interoperability event are on the roadmap, and the
-  state machine deliberately lives in the [`eebus`](https://crates.io/crates/eebus)
+- Nothing here has been through a certification lab. The EEBUS state machine
+  deliberately lives in the [`eebus`](https://crates.io/crates/eebus)
   crate so that there is only one implementation to certify.
 - There is no secure-element or measured-boot story. The release-signing key is
   built into the binary and the box's SHIP private key sits in its database —
