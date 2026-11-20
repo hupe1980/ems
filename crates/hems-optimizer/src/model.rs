@@ -165,18 +165,17 @@ impl EvSession {
     ///
     /// It is the cheap answer to "is this household at risk today", and the
     /// reason it exists is a measurement. Planning against three futures instead
-    /// of one median is worth €0,13 a day on the evening a car arrives *as* a
-    /// § 14a reduction starts, removes the charge the median plan leaves
-    /// undelivered, and takes that evening's **worst** weather from −€0,58 to
-    /// €0,54 — the median plan does not merely save less on a bad day, it costs
-    /// the household money. The same machinery turns a €0,46 saving into a
-    /// €0,46 loss on an ordinary winter day where nothing is at stake, at five
-    /// to nine times the solve. Something has to decide which day it is.
+    /// of one median is worth €0,29 a day on the evening a car arrives *as* a
+    /// § 14a reduction starts, more than halves the charge the median plan
+    /// leaves undelivered, and takes that evening's **worst** weather from
+    /// −€1,01 to −€0,04. On an ordinary winter day, where nothing is at stake,
+    /// the same machinery costs €0,18 a day at about three times the solve.
+    /// Something has to decide which day it is.
     ///
     /// Those figures are against a baseline that owns the same battery. Against
     /// the batteryless one they read the other way round on the worst day, which
     /// is how a handicapped counterfactual hid a controller's downside for five
-    /// versions (D200).
+    /// versions.
     ///
     /// The obvious candidate — ask the plan whether it expects a shortfall —
     /// **does not work**, and the way it fails is worth stating: a plan that has
@@ -658,6 +657,16 @@ pub struct DhwModel {
     pub shortfall_eur_per_kwh: f64,
 }
 
+/// A household's hot-water goal, in the tank's own terms.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DhwTarget {
+    /// Heat the tank should hold, above its lowest acceptable temperature.
+    pub stored: Energy,
+    /// The slot it should hold it at the start of.
+    pub by: Slot,
+}
+
 impl DhwModel {
     /// A three-hundred-litre tank on a hot-water heat pump, half charged.
     ///
@@ -990,6 +999,8 @@ pub struct Problem<'a> {
     pub thermal: Option<ThermalModel>,
     /// The hot-water tank, if there is one.
     pub dhw: Option<DhwModel>,
+    /// Heat the household asked the tank to hold by a time, if it asked.
+    pub dhw_target: Option<DhwTarget>,
     /// Appliances waiting to run a programme, in the order
     /// [`crate::solve::AssetNames::shiftable`] names them.
     ///
@@ -1570,6 +1581,7 @@ impl<'a> Problem<'a> {
             ev: None,
             thermal: None,
             dhw: None,
+            dhw_target: None,
             shiftable: Vec::new(),
             dhw_draw: &[],
             community_share: &[],
@@ -1650,6 +1662,25 @@ impl<'a> Problem<'a> {
         self.dhw = Some(dhw);
         self.dhw_draw = draw_wh;
         self
+    }
+
+    /// Ask the tank to hold `target` by a time — *50 °C by 18:00*.
+    #[must_use]
+    pub fn with_dhw_target(mut self, target: DhwTarget) -> Self {
+        self.dhw_target = Some(target);
+        self
+    }
+
+    /// The slot the tank's target must be met at the end of, and the heat owed
+    /// there in watt-hours — capped at what the tank can hold.
+    ///
+    /// `None` where there is no tank, no target, or the time lies outside the
+    /// horizon: a target the plan cannot see is not one it may be charged for.
+    #[must_use]
+    pub fn dhw_target_at(&self) -> Option<(usize, f64)> {
+        let (d, target) = self.dhw.zip(self.dhw_target)?;
+        let k = self.horizon.index_of(target.by)?.checked_sub(1)?;
+        Some((k, target.stored.get().clamp(0.0, d.capacity.get())))
     }
 
     /// Heat drawn from the tank in slot `k`, watt-hours.

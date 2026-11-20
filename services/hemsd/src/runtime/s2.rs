@@ -279,7 +279,7 @@ impl Cem {
 }
 
 /// What the local API says about the managers connected to this box.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub struct CemStatus {
     /// Assets a manager has opened a session on and chosen a control type for.
     pub connected: Vec<String>,

@@ -345,36 +345,36 @@ under each policy:
 ```console
 $ just risk deadline 20
   policy                mean     worst      best    unserved     solve
-  one median           1.09€    -0.58€     1.75€       0.10€       81s
-  three futures        1.22€     0.54€     1.60€       0.00€      651s
-  …and the tail        1.20€     0.62€     1.69€       0.00€      567s
-  only when at risk     1.18€     0.61€     1.69€       0.00€      480s
+  one median           0.61€    -1.01€     1.45€       0.05€      227s
+  three futures        0.90€    -0.04€     1.48€       0.02€      700s
+  …and the tail        0.81€    -0.21€     1.46€       0.03€      688s
+  only when at risk     0.75€    -0.23€     1.45€       0.03€      814s
 
   band               covered      CRPS    episodes
   production             80%      165W          20
-  household load         81%       21W          20
+  household load         79%       21W          20
 
   a 10–90 band should cover 80 %. It does, over enough days to say so.
 ```
 
 Over twenty seeded weathers on each of two days, scenarios **pay where a service
-is at risk** — three futures beat the median on the mean, €1,22 against €1,09,
-and take the undelivered charge from €0,10 to nothing. They **cost about ninety
-cents a day where nothing is at risk**, turning a €0,46 saving into a €0,46 loss
-on an ordinary winter day. And the hedge **does** buy a better bad day: on the
-tight evening it takes the worst weather from **−€0,58 to €0,62** — the median
-plan does not merely save less on its worst day, it costs the household money.
+is at risk**: on the tight evening three futures save €0,90 against the median's
+€0,61, more than halve the undelivered charge, and take the worst weather from
+**−€1,01 to −€0,04** — the median plan does not merely save less on its worst
+day, it costs the household money. On an ordinary winter day they **cost
+eighteen cents** (€0,09 against −€0,09) and still lift the worst day.
 
-That last finding depends entirely on what the comparison household owns. Against
+The tail is the better hedge to carry everywhere. With CVaR, the plan saves more
+than the median on **both** days — €0,81 against €0,61, €0,15 against €0,09 —
+and its worst day is better on both, at about three times the solve. `adaptive`,
+three futures only where a charging session is tight, is never better than the
+tail. The default is still one median; on this evidence that is a setting to
+change, not one to defend.
+
+That finding depends entirely on what the comparison household owns. Against
 one with **no battery**, the median plan's downside is invisible: a handicapped
 baseline is one you beat on a bad day as well as a good one. It is the sharpest
 reason here to own the sweep rather than footnote it.
-
-The default is still one median, for a narrower reason than before: `adaptive` —
-three futures only where the charging session is tight — is the best of the four
-on this evidence, within €0,04 of always hedging on the day that needs it and
-€0,08 of the median on the day that does not, but it fires on a charging session
-a real box does not yet carry in its plan.
 
 A calibrated band is a *precondition* for planning against scenarios, not an
 improvement to it. Scored only where there is something to forecast — a band of
@@ -585,8 +585,8 @@ Two things are easy to get wrong here and both cost real money in the report.
 **Only the energy component changes.** § 42c does not exempt the Netzentgelt, the
 Stromsteuer, the Konzessionsabgabe or 19 % of value added tax, because the
 electricity reaches the member over the public grid. A community selling at
-12 ct/kWh net delivers a **32,5 ct** kilowatt-hour where the supplier delivers
-**47,9** — a third off, which is real money and is nothing like the ninety per
+12 ct/kWh net delivers a **34,0 ct** kilowatt-hour where the supplier delivers
+**49,5** — a third off, which is real money and is nothing like the ninety per
 cent "free solar from the neighbours" implies.
 
 **The baseline joins the same community.** A household signs up and then does

@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 pub const BASES: [u16; 3] = [40_000, 50_000, 0];
 
 /// `SunS`, as two registers.
-const MARKER: [u16; 2] = [0x5375, 0x6e53];
+pub(crate) const MARKER: [u16; 2] = [0x5375, 0x6e53];
 
 /// The identifier that ends the model chain.
 const END_OF_CHAIN: u16 = 0xffff;
@@ -38,6 +38,8 @@ pub struct ModelMap {
     found: BTreeMap<u16, (u16, u16)>,
     /// The device's rated power, from the site's own configuration.
     rating: Option<Power>,
+    /// Model 123's `WMaxLimPct_SF`, once the device has been asked for it.
+    curtail_scale: Option<i16>,
     /// Which model the current poll round is on.
     cursor: usize,
 }
@@ -128,21 +130,51 @@ impl ModelMap {
         self.cursor = 0;
     }
 
+    /// `WMaxLimPct_SF`, if it has been read this session.
+    #[must_use]
+    pub fn curtail_scale(&self) -> Option<i16> {
+        self.curtail_scale
+    }
+
+    /// Note the device's `WMaxLimPct_SF`.
+    pub(crate) fn set_curtail_scale(&mut self, scale: i16) {
+        self.curtail_scale = Some(scale);
+    }
+
+    /// Forget it: a reconnect may be a different device.
+    pub(crate) fn forget_curtail_scale(&mut self) {
+        self.curtail_scale = None;
+    }
+
+    /// Where model 123 keeps `WMaxLimPct_SF` — the `sunspec` crate's offset.
+    #[must_use]
+    pub fn curtail_scale_address(&self) -> Option<u16> {
+        let (body, _) = *self.found.get(&123)?;
+        body.checked_add(sunspec::models::model123::Model123::W_MAX_LIM_PCT_SF.offset)
+    }
+
     /// The registers that express a production ceiling, if the device can take one.
     ///
     /// Model 123's `WMaxLimPct` is a **percentage of the rating**, so a device
     /// that has not published a rating cannot be curtailed in watts and says so
     /// rather than being sent a percentage computed from a guess.
+    /// `None` too until the device's scale factor is known.
     #[must_use]
     pub fn curtailment_write(&self, ceiling: Power) -> Option<super::CurtailWrite> {
-        let (address, _) = *self.found.get(&123)?;
-        let percent = super::curtail_percent(ceiling, self.rating()?)?;
-        // `WMaxLimPct` is the first point of the model body, and `WMaxLim_Ena`
-        // the fifth. Writing the value without enabling it is the classic way to
-        // curtail nothing at all and believe otherwise, so both go in one write.
+        let (body, _) = *self.found.get(&123)?;
+        let raw = super::curtail_register(ceiling, self.rating()?, self.curtail_scale?)?;
+        // `WMaxLimPct` is the **fourth** point of the model, after the three
+        // `Conn` registers, and `WMaxLim_Ena` the fourth after it — the offset
+        // is the `sunspec` crate's, not a number typed here. The same five
+        // values written at the body's first register set `Conn` to zero, which
+        // disconnects the inverter. Writing the value without enabling it is
+        // the classic way to curtail nothing at all and believe otherwise, so
+        // both go in one write.
+        let address =
+            body.checked_add(sunspec::models::model123::Model123::W_MAX_LIM_PCT.offset)?;
         Some(super::CurtailWrite {
             address,
-            values: vec![percent, 0, 0, 0, 1],
+            values: vec![raw, 0, 0, 0, 1],
         })
     }
 }

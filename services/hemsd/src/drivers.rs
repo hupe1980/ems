@@ -129,6 +129,10 @@ pub struct Registry {
     /// never reads it — the driver enforces it — so the only reason it is here
     /// is that something has to write it down before the next power cut.
     failsafe: BTreeMap<hems_drv::LimitDirection, hems_drv::Failsafe>,
+    /// Assets whose driver has said it cannot express a command it was given.
+    refused: BTreeSet<AssetId>,
+    /// Assets whose driver has taken at least one command.
+    taken: BTreeSet<AssetId>,
 }
 
 struct Entry {
@@ -238,6 +242,8 @@ impl std::fmt::Debug for Registry {
             .field("drivers", &self.entries.len())
             .field("limits", &self.limits)
             .field("failsafe", &self.failsafe)
+            .field("refused", &self.refused)
+            .field("taken", &self.taken)
             .finish()
     }
 }
@@ -256,6 +262,8 @@ impl Registry {
             entries: Vec::new(),
             limits: GridLimits::default(),
             failsafe: BTreeMap::new(),
+            refused: BTreeSet::new(),
+            taken: BTreeSet::new(),
         }
     }
 
@@ -530,7 +538,32 @@ impl Registry {
         else {
             return Err(DriverError::NoDriver(setpoint.asset.to_string()));
         };
-        entry.driver.command(&setpoint.command, now)
+        match entry.driver.command(&setpoint.command, now) {
+            Ok(()) => {
+                let _ = self.taken.insert(setpoint.asset.clone());
+                Ok(())
+            }
+            // "This protocol has no way to say that" is as true on the next
+            // tick as on this one. It is reported once, as the fault it is, and
+            // from then on the asset is one nothing drives: `uncommandable`
+            // names it on the status surface instead of in the log every
+            // second. A SunSpec battery is the case — the standard's storage
+            // model carries rate limits and no setpoint.
+            Err(DriverError::Unsupported(what)) => {
+                if self.refused.insert(setpoint.asset.clone()) {
+                    Err(DriverError::Unsupported(what))
+                } else {
+                    Err(DriverError::NoDriver(setpoint.asset.to_string()))
+                }
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Assets whose driver refused what it was asked and has never taken a
+    /// command: read, and not driven.
+    pub fn uncommandable(&self) -> impl Iterator<Item = &AssetId> {
+        self.refused.difference(&self.taken)
     }
 
     /// Take everything the drivers have said since the last call.
@@ -748,6 +781,8 @@ pub struct Observed {
     pub assumed_available: BTreeSet<AssetId>,
     /// Devices that answered their last setpoint and did not act on it, and why.
     pub disobedient: BTreeMap<AssetId, String>,
+    /// Devices whose driver cannot express the commands they are given.
+    pub uncommandable: BTreeSet<AssetId>,
     /// Charge points that can say whether a car is on them, and what it said.
     pub vehicles: BTreeMap<AssetId, hems_drv::VehiclePresence>,
     /// Appliances that can announce what they could do, and what they announced.
@@ -783,6 +818,7 @@ impl Registry {
                 .iter()
                 .filter_map(|e| e.flex.clone().map(|f| (e.asset.clone(), f)))
                 .collect(),
+            uncommandable: self.uncommandable().cloned().collect(),
             disobedient: self
                 .disobedient()
                 .map(|(asset, outcome)| {
@@ -1415,6 +1451,32 @@ mod tests {
             "a driver that has said it no longer knows contributes nothing"
         );
         assert!(observed.silent.contains(&id("pv")));
+    }
+
+    #[test]
+    fn a_command_a_driver_cannot_express_is_a_fault_once_and_a_fact_after() {
+        // A SunSpec device handed a power setpoint: the standard's storage model
+        // carries rate limits and no setpoint, so the driver refuses. That is
+        // worth one loud line and a place on the status surface, not a line a
+        // second for as long as the box runs.
+        let s = site();
+        let mut r = Registry::new();
+        r.register(Box::new(SunSpec::new(id("pv"), 1, Cadence::default())), &s)
+            .expect("an inverter driver");
+        let setpoint = Setpoint::new(
+            id("pv"),
+            hems_core::setpoint::Command::ActivePower(Power::from_kw(1.0)),
+            hems_core::setpoint::Reason::Fallback(hems_core::setpoint::FallbackCause::NoPlan),
+            NOW,
+        )
+        .expect("a valid setpoint");
+
+        let first = r.command(&setpoint, NOW).expect_err("it cannot say that");
+        assert!(matches!(first, DriverError::Unsupported(_)), "{first}");
+        let again = r.command(&setpoint, NOW).expect_err("and still cannot");
+        assert!(matches!(again, DriverError::NoDriver(_)), "{again}");
+        assert_eq!(r.uncommandable().collect::<Vec<_>>(), [&id("pv")]);
+        assert!(r.observe(None, NOW).uncommandable.contains(&id("pv")));
     }
 
     #[test]

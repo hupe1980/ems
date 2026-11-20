@@ -50,11 +50,10 @@ because of it.
 
   The unusual part is that the evaluation which can *falsify* it ships too: a
   single simulated day pays a hedge's premium every time and makes its claim
-  never. `hemsd risk`, over twenty seeded weathers on each of two days, says scenarios
-  are worth about €0,15 a day where a service is at risk — and take the
-  undelivered charge from €0,07 to €0,01 — cost about €1,04 a day where nothing
-  is, and that **no** policy improves the worst day. So the default is one
-  median.
+  never. `hemsd risk`, over twenty seeded weathers on each of two days, says three
+  futures are worth €0,29 a day where a service is at risk and take its worst
+  day from −€1,01 to −€0,04, cost €0,18 where nothing is, and that a CVaR tail
+  beats the single median on both days, on the mean and on the worst day.
 - ❄️ **A compressor's minimum runtime remembers the compressor.** The rows that
   state it constrain a *transition*, so each needs the slot before it — and none
   of them says anything about slot 0, which is the only slot a receding horizon

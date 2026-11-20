@@ -283,6 +283,8 @@ pub struct Planner {
     /// The car as this planner last saw it, published for the page to judge a
     /// new goal against without a solve.
     pub car: crate::home::CarFacts,
+    /// The tank as this planner last saw it, for the same reason.
+    pub tank: crate::home::TankFacts,
 }
 
 /// The charging settings with the household's goal, where it set one, in place
@@ -648,6 +650,18 @@ async fn attempt(
     // See the module note on why naming an asset the problem does not model is
     // an instruction rather than an omission.
     let dhw = dhw_model(site, &observed, &planner.household);
+    *planner.tank.lock().await = dhw;
+    let goals = planner.goal.get().await;
+    // The household's hot-water goal, in the tank's own heat. Asked of the
+    // installation's arithmetic, like the fill level, so a degree is worth the
+    // same in the goal as in the reading.
+    let dhw_target =
+        goals
+            .tank
+            .and_then(|goal| match site.asset(planner.household.dhw.as_ref()?)? {
+                Asset::Dhw(tank) => Some(crate::home::tank_target(tank, goal, now)),
+                _ => None,
+            });
     // The house itself. Built here rather than inside the blocking task because
     // it reads the learned building, and the lock is not something to carry
     // across a ten-second solve.
@@ -658,8 +672,7 @@ async fn attempt(
     // demand (`Rc2::free_heat_kw`).
     let window: Vec<f64> =
         series.window_w_per_m2_over(horizon, site.location, planner.facade_azimuth_deg);
-    let goal = *planner.goal.lock().await;
-    let charging = with_goal(planner.charging.as_ref(), goal);
+    let charging = with_goal(planner.charging.as_ref(), goals.car);
     let ev = ev_session(
         site,
         &observed,
@@ -724,6 +737,9 @@ async fn attempt(
         }
         if let Some(model) = dhw {
             problem = problem.with_dhw(model, &draw);
+        }
+        if let Some(target) = dhw_target {
+            problem = problem.with_dhw_target(target);
         }
         if let Some(session) = ev {
             problem = problem.with_ev(session);

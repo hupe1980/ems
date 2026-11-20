@@ -133,17 +133,18 @@ pub enum SeriesError {
 }
 
 /// One reading, as it comes back out.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub struct Reading {
     /// When it was taken.
     #[serde(with = "time::serde::rfc3339")]
+    #[schemars(with = "String")]
     pub at: OffsetDateTime,
     /// What was measured, watts, load convention.
     pub watts: f64,
 }
 
 /// How closely spaced the readings in a window are.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Resolution {
     /// Every control tick, as the box measured it.
@@ -154,7 +155,8 @@ pub enum Resolution {
 }
 
 /// A window of history, and the grain it is in.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+#[schemars(rename = "SeriesWindow")]
 pub struct Window {
     /// How closely spaced the readings are.
     pub resolution: Resolution,

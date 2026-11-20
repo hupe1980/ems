@@ -933,7 +933,9 @@ pub fn tariff_for(site: &Site, prices_ct: &[i64], horizon: Horizon) -> Tariff {
             arbeitspreis: Decimal::new(1000, 2),
             reduction_eur_per_year: Decimal::new(120, 0),
         },
-        levies: Levies::household_2026(),
+        // The published figures, each quarter hour on its own year's.
+        levies: Levies::latest_published(horizon.first.local_date().year()).1,
+        levies_by_year: Levies::published(),
         // 7,86 ct/kWh, and nothing at all in a quarter hour with a negative
         // day-ahead price **once § 51 EEG reaches this plant** — which for a
         // household roof is the first of January after its intelligent metering

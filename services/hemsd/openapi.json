@@ -1,0 +1,3772 @@
+{
+  "components": {
+    "schemas": {
+      "Ahead": {
+        "description": "What the plan in force expects the hours ahead to put on the bill.\n\nOne figure, and deliberately not two. The plan also prices the same horizon\nwithout an energy manager, and since 0.4 that baseline is sound — but the\n*difference* between the two over a rolling horizon is not a saving a\nhousehold can be shown. A plan hedges against the dull day and pays the\npremium in the median future this figure describes; it values what it\nleaves in the battery and the walls, which no bill credits; and its horizon\nopens and closes with the stores in different states on the two sides. On\nthe January reference day 42 of 96 plans cost more than their own baseline\non paper while the closed day saved €1,07. The saving is the receipt's,\nwhere the day is over and the ledger is closed.",
+        "properties": {
+          "bill_eur": {
+            "description": "What the plan expects the window to put on the electricity bill, €:\nimports less what feeding in earns. Negative on a day that earns.",
+            "format": "double",
+            "type": "number"
+          },
+          "from": {
+            "description": "The first instant covered, RFC 3339.",
+            "type": "string"
+          },
+          "until": {
+            "description": "The instant the window ends, RFC 3339.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "until",
+          "bill_eur"
+        ],
+        "type": "object"
+      },
+      "Approval": {
+        "description": "A SKI an installer has read off a Steuerbox.",
+        "properties": {
+          "ski": {
+            "description": "Forty hexadecimal characters, as printed on the peer.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ski"
+        ],
+        "type": "object"
+      },
+      "CarGoal": {
+        "additionalProperties": false,
+        "description": "A car goal as the household set it.",
+        "properties": {
+          "by_minute": {
+            "description": "By when, local wall-clock minutes after midnight (`420` is 07:00).",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target_soc": {
+            "description": "The state of charge wanted, in `[0, 1]`.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "target_soc",
+          "by_minute"
+        ],
+        "type": "object"
+      },
+      "Cause": {
+        "description": "Who is responsible for what a device is doing — the colour the page gives it.",
+        "oneOf": [
+          {
+            "const": "operator",
+            "description": "The network operator: a § 14a reduction, a § 9 EEG feed-in limit, the\nfailsafe that stands in for one.",
+            "type": "string"
+          },
+          {
+            "const": "safety",
+            "description": "A physical or legal limit of the installation itself.",
+            "type": "string"
+          },
+          {
+            "const": "household",
+            "description": "The household asked for it.",
+            "type": "string"
+          },
+          {
+            "const": "plan",
+            "description": "The box's own plan.",
+            "type": "string"
+          },
+          {
+            "const": "manager",
+            "description": "An energy manager the household connected.",
+            "type": "string"
+          },
+          {
+            "const": "live",
+            "description": "The second-by-second controller, following what the house is doing now.",
+            "type": "string"
+          },
+          {
+            "const": "fallback",
+            "description": "The box has no plan it trusts and is being conservative.",
+            "type": "string"
+          }
+        ]
+      },
+      "CemStatus": {
+        "description": "What the local API says about the managers connected to this box.",
+        "properties": {
+          "connected": {
+            "description": "Assets a manager has opened a session on and chosen a control type for.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "instructing": {
+            "description": "Assets a manager currently has an unexpired instruction on.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "overridden": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Assets where the guard is overriding what the manager asked for, and the\nrule doing it.\n\nOn the household's own screen as well as on the wire, because it is the\nsentence that explains a bill: *your manager asked for this and your\nnetwork operator would not allow it.*",
+            "type": "object"
+          },
+          "refused": {
+            "description": "Instructions refused since the box started.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unactioned": {
+            "description": "Instructions accepted that the arbiter does not act on.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connected",
+          "instructing",
+          "overridden",
+          "refused",
+          "unactioned"
+        ],
+        "type": "object"
+      },
+      "ClosedDay": {
+        "description": "One closed day, as the box keeps it.",
+        "properties": {
+          "day": {
+            "description": "The local day, `YYYY-MM-DD`.",
+            "type": "string"
+          },
+          "feed_in_respected": {
+            "description": "Whether the feed-in ceiling was respected.",
+            "type": "boolean"
+          },
+          "imported_wh": {
+            "description": "Bought from the grid, Wh.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "money": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the day cost and saved, where it was priced."
+          },
+          "produced_wh": {
+            "description": "Made by the roof, Wh.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "reduced_minutes": {
+            "description": "Minutes under a § 14a reduction, where the day measured them.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reduction_respected": {
+            "description": "Whether every reduction was respected.",
+            "type": "boolean"
+          },
+          "reductions": {
+            "description": "How many reductions the network operator sent.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "imported_wh",
+          "produced_wh",
+          "reductions",
+          "reduction_respected",
+          "feed_in_respected"
+        ],
+        "type": "object"
+      },
+      "Connected": {
+        "description": "A manager that has just been connected, and the credential it presents.",
+        "properties": {
+          "name": {
+            "description": "What the household called it.",
+            "type": "string"
+          },
+          "token": {
+            "description": "The bearer token it presents. Shown once and never again.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "token"
+        ],
+        "type": "object"
+      },
+      "ControlBox": {
+        "description": "The network operator's control box, as this box sees it now.",
+        "properties": {
+          "state": {
+            "description": "`none`: nothing here speaks to one. `unpaired`: no SKI is trusted yet.\n`silent`: one is trusted and no session is up. `failsafe`: its heartbeat\nstopped and the stored failsafe value applies. `heard`: in session and\nheartbeating.",
+            "type": "string"
+          },
+          "trusted": {
+            "description": "How many SKIs this box trusts.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "waiting": {
+            "description": "How many peers are waiting to be approved right now.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state",
+          "trusted",
+          "waiting"
+        ],
+        "type": "object"
+      },
+      "Days": {
+        "description": "The document `GET /v1/days` answers with.",
+        "properties": {
+          "days": {
+            "description": "The closed days in the window, oldest first; a missing date is a day\nthe box did not close.",
+            "items": {
+              "$ref": "#/components/schemas/ClosedDay"
+            },
+            "type": "array"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Total",
+            "description": "Their sum."
+          }
+        },
+        "required": [
+          "days",
+          "total"
+        ],
+        "type": "object"
+      },
+      "Device": {
+        "description": "One device, as the page shows it.",
+        "properties": {
+          "id": {
+            "description": "The asset.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "`car`, `heat_pump`, `battery`, `hot_water`, `roof`, `appliance` — the\npage names and draws it from this.",
+            "type": "string"
+          },
+          "kw": {
+            "description": "What it draws (positive) or delivers (negative), kW, where measured or\ncommanded.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "The household's own name for it, where the configuration gives one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notice": {
+            "description": "Something the household should know about the device itself: `silent`\n(nothing heard), `assumed` (a nameplate stands in for a reading),\n`disobedient` (acknowledged a setpoint and did not act), `undriven` (no\ndriver speaks for it).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "soc": {
+            "description": "State of charge in `[0, 1]`, where the device has one and reports it.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "why": {
+            "$ref": "#/components/schemas/Explanation",
+            "description": "Why it is doing it."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "why"
+        ],
+        "type": "object"
+      },
+      "DiscoverAsk": {
+        "additionalProperties": false,
+        "description": "Which hosts to ask.",
+        "properties": {
+          "hosts": {
+            "default": [],
+            "description": "Literal addresses on the household's network, e.g. `192.168.1.40`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "port": {
+            "default": null,
+            "description": "The port to ask on: 502 where absent, or 1502.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "unit": {
+            "default": null,
+            "description": "The Modbus unit identifier to ask for. 1 where absent.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Discovered": {
+        "description": "What a discovery found.",
+        "properties": {
+          "modbus": {
+            "description": "Modbus: every configured device, then every host that was asked.",
+            "items": {
+              "$ref": "#/components/schemas/ModbusDevice"
+            },
+            "type": "array"
+          },
+          "ship": {
+            "description": "SHIP: every node announcing itself, then every configured one not seen.",
+            "items": {
+              "$ref": "#/components/schemas/ShipNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "modbus",
+          "ship"
+        ],
+        "type": "object"
+      },
+      "Explanation": {
+        "description": "Why a device is doing what it is doing, as a template key and its parameters.",
+        "properties": {
+          "cause": {
+            "$ref": "#/components/schemas/Cause",
+            "description": "Who is responsible."
+          },
+          "citation": {
+            "description": "The regulation, where a rule is the reason.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "description": "The sentence to render, e.g. `plan.charge`. One of [`ALL_KEYS`].",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The values the sentence names, already formatted.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "cause",
+          "key",
+          "params"
+        ],
+        "type": "object"
+      },
+      "ExposureBody": {
+        "description": "How often the operator reduces *this* household, and when.\n\nThe question `[A1 8.4]` cannot answer. What the operator publishes is a\nmonthly aggregate over a whole Netzbereich with no timestamps in it, so the\nonly record of when this connection was reduced is the one the box keeps for\n`[A1 7.2]` anyway. Reported, and deliberately not planned against (D129).",
+        "properties": {
+          "busiest_frequency": {
+            "description": "How often a reduction is in force in that quarter hour, in `[0, 1]`.",
+            "format": "double",
+            "type": "number"
+          },
+          "busiest_quarter_hour": {
+            "description": "The quarter hour of the local day it happens in most often, as `HH:MM` —\n`null` where it has never happened.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "days_of_record": {
+            "description": "How many days of record the figures are drawn from.\n\nThe denominator, on the page. A share whose denominator is invisible\ncannot be checked, which is R28.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "hours_reduced": {
+            "description": "Hours the household was reduced for, over that record.",
+            "format": "double",
+            "type": "number"
+          },
+          "typical_ceiling_kw": {
+            "description": "The ceiling typically commanded there, kW.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "days_of_record",
+          "hours_reduced",
+          "busiest_frequency"
+        ],
+        "type": "object"
+      },
+      "GoalAnswer": {
+        "description": "The answer a household gets the moment it sets a goal.",
+        "properties": {
+          "needed_kwh": {
+            "description": "What still has to go in, kWh.",
+            "format": "double",
+            "type": "number"
+          },
+          "reachable_soc": {
+            "description": "Where the goal is impossible: the state of charge the car can reach by\nthen, in `[0, 1]`.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "tightness": {
+            "description": "The share of the time left the goal would use: `0` nothing, `1` all of it.",
+            "format": "double",
+            "type": "number"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict",
+            "description": "The verdict."
+          }
+        },
+        "required": [
+          "verdict",
+          "needed_kwh",
+          "tightness"
+        ],
+        "type": "object"
+      },
+      "Handover": {
+        "description": "Everything the A4 sheet prints.",
+        "properties": {
+          "control": {
+            "description": "How the network operator addresses this household, `[A1 4.4]`: always\n`ems` here — a box that manages the devices is what an EMS is.",
+            "type": "string"
+          },
+          "devices": {
+            "description": "Each steuerbare Verbrauchseinrichtung, as the network operator's\nregistration asks for it.",
+            "items": {
+              "$ref": "#/components/schemas/SheetDevice"
+            },
+            "type": "array"
+          },
+          "fingerprint": {
+            "description": "The SHA-256 fingerprint of its SHIP certificate.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generated_at": {
+            "description": "When the sheet was made, RFC 3339.",
+            "type": "string"
+          },
+          "https_fingerprint": {
+            "description": "The SHA-256 fingerprint of the certificate the page is served with —\nwhat a browser's warning shows on first visit.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "minimum_w": {
+            "description": "The power a reduction may not go below, watts, `[A1 4.5.2]`.",
+            "format": "double",
+            "type": "number"
+          },
+          "module": {
+            "description": "The § 14a module the household is billed under, as configured.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ship_id": {
+            "description": "The SHIP ID it announces itself under.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site": {
+            "description": "The household this box is.",
+            "type": "string"
+          },
+          "ski": {
+            "description": "The box's SKI — what the metering point operator has to be given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "site",
+          "generated_at",
+          "control",
+          "minimum_w",
+          "devices"
+        ],
+        "type": "object"
+      },
+      "Home": {
+        "description": "Everything the household page shows, in one document.",
+        "properties": {
+          "ahead": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ahead"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the plan expects its horizon to put on the bill. Absent where the\nplan carries no price."
+          },
+          "at": {
+            "description": "The instant this view describes, RFC 3339.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at_minute": {
+            "description": "In a demo, the minute of the day being shown, so the page's slider can\nstart where the replay is.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "demo": {
+            "description": "`true` when this is `hemsd demo` replaying a reference day.",
+            "type": "boolean"
+          },
+          "devices": {
+            "description": "Every device the household would recognise.",
+            "items": {
+              "$ref": "#/components/schemas/Device"
+            },
+            "type": "array"
+          },
+          "fingerprint": {
+            "description": "The SHA-256 fingerprint of the box's SHIP certificate.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "goal": {
+            "description": "The car goal in force, and what it comes to.",
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "$ref": "#/components/schemas/CarGoal"
+              },
+              {
+                "$ref": "#/components/schemas/GoalAnswer"
+              }
+            ],
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "grid_kw": {
+            "description": "From the grid right now, kW (negative: feeding in).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "https_fingerprint": {
+            "description": "The SHA-256 fingerprint of the certificate it serves HTTPS with — what\na browser or an S2 manager pins.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "levies_year": {
+            "description": "The year whose published levies the box is pricing on, **only** while\nthat is not the current year: the new year's figures are not in this\nversion of the box, and every price it shows is on last year's.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "plan": {
+            "description": "The plan, from now to the end of its horizon.",
+            "items": {
+              "$ref": "#/components/schemas/PlanSlot"
+            },
+            "type": "array"
+          },
+          "price_ct": {
+            "description": "The all-in import price right now, ct/kWh.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Receipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The day so far."
+          },
+          "reduction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Reduction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The network operator's reduction, while one is in force."
+          },
+          "roof": {
+            "description": "Whether the roof still delivers what it used to: `healthy`, `degraded`,\n`learning`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site": {
+            "description": "Which household.",
+            "type": "string"
+          },
+          "ski": {
+            "description": "What an installer gives the metering point operator.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tank_goal": {
+            "description": "The hot-water goal in force, and what it comes to.",
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "$ref": "#/components/schemas/TankGoal"
+              },
+              {
+                "$ref": "#/components/schemas/TankAnswer"
+              }
+            ],
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "site",
+          "demo",
+          "devices",
+          "plan"
+        ],
+        "type": "object"
+      },
+      "Manager": {
+        "description": "An energy manager this household has connected.",
+        "properties": {
+          "name": {
+            "description": "What the household calls it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "ModbusDevice": {
+        "description": "One Modbus address.",
+        "properties": {
+          "asset": {
+            "description": "The asset it is configured as.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "description": "Where: an address for a host that was asked, `host:port` as configured\nfor a device the box already manages.",
+            "type": "string"
+          },
+          "identity": {
+            "description": "What it says it is — a claim from the device, shown and not acted on.",
+            "properties": {
+              "base": {
+                "type": "integer"
+              },
+              "manufacturer": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "serial": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "base",
+              "manufacturer",
+              "model",
+              "version",
+              "serial"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "state": {
+            "description": "`configured`: the box manages it and hears it. `missing`: the box is\nconfigured for it and does not hear it. `found`: a SunSpec device\nanswered and nothing is configured for it. `silent`: nothing SunSpec\nanswered there.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "state",
+          "identity"
+        ],
+        "type": "object"
+      },
+      "Money": {
+        "description": "The priced half of a closed day, in whole cents.",
+        "properties": {
+          "bill_ct": {
+            "description": "What the household paid for electricity.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "comfort_ct": {
+            "description": "Comfort given up, priced.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "cost_ct": {
+            "description": "Everything the day cost: bill, wear and comfort among it.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "on_bill_ct": {
+            "description": "The part of the saving that reached the bill.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "saved_ct": {
+            "description": "`without_ct − cost_ct`, exactly.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "wear_ct": {
+            "description": "Battery wear, priced.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "without_ct": {
+            "description": "The same house with the same hardware and no energy manager.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bill_ct",
+          "wear_ct",
+          "comfort_ct",
+          "cost_ct",
+          "without_ct",
+          "saved_ct",
+          "on_bill_ct"
+        ],
+        "type": "object"
+      },
+      "NewToken": {
+        "description": "The household's new token, once.",
+        "properties": {
+          "token": {
+            "description": "What the household now signs in with. The old one is dead.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
+      "OverrideBody": {
+        "description": "What the household is asking for, and until when.",
+        "properties": {
+          "minutes": {
+            "default": null,
+            "description": "How long, in minutes. Absent takes the default; anything over a day is\nclamped, because longer than that is a statement about the house rather\nthan about this afternoon.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "what": {
+            "description": "`boost`, `pause` or `away`.",
+            "enum": [
+              "boost",
+              "pause",
+              "away"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "what"
+        ],
+        "type": "object"
+      },
+      "OverrideView": {
+        "description": "One override in force.",
+        "properties": {
+          "asset": {
+            "description": "Which asset.",
+            "type": "string"
+          },
+          "until": {
+            "description": "When it stops applying, RFC 3339.",
+            "type": "string"
+          },
+          "what": {
+            "description": "What was asked for.",
+            "enum": [
+              "boost",
+              "pause",
+              "away"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset",
+          "what",
+          "until"
+        ],
+        "type": "object"
+      },
+      "PairingBody": {
+        "description": "Who this box is, who it will talk to, and who is asking.",
+        "properties": {
+          "ski": {
+            "description": "This box's own SKI — what the metering point operator has to be given.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trusted": {
+            "description": "The SKIs this box will exchange data with.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "waiting": {
+            "description": "The peers whose handshake is **waiting on a decision right now**.\n\nThe third side of the commissioning exchange and the one that used to be\nmissing. An unapproved peer completes TLS — so its SKI is *proved* rather\nthan claimed — and SHIP holds it pending precisely so a person can compare\nit with the label on the device in front of them. Without it the SKI had\nto be read off the Steuerbox instead, which is the step field reports name\nas the most common § 14a commissioning failure.",
+            "items": {
+              "$ref": "#/components/schemas/Waiting"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "trusted",
+          "waiting"
+        ],
+        "type": "object"
+      },
+      "PlanSlot": {
+        "description": "One quarter hour of the plan.",
+        "properties": {
+          "kw": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "What the plan has each device do, kW.",
+            "type": "object"
+          },
+          "price_ct": {
+            "description": "The all-in import price, ct/kWh, where known.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "reduced": {
+            "description": "`true` while a § 14a reduction is expected or in force in this slot.",
+            "type": "boolean"
+          },
+          "start": {
+            "description": "Its start, RFC 3339.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "kw",
+          "reduced"
+        ],
+        "type": "object"
+      },
+      "PushEndpoint": {
+        "description": "Which browser a push request is about.",
+        "properties": {
+          "endpoint": {
+            "description": "Its push endpoint, as `GET /v1/push` lists it.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint"
+        ],
+        "type": "object"
+      },
+      "PushEvent": {
+        "description": "The four things a browser can ask to be told about.",
+        "oneOf": [
+          {
+            "const": "reduction",
+            "description": "A § 14a reduction begins or ends.",
+            "type": "string"
+          },
+          {
+            "const": "goal",
+            "description": "A goal turns tight or impossible.",
+            "type": "string"
+          },
+          {
+            "const": "device",
+            "description": "A device stops following.",
+            "type": "string"
+          },
+          {
+            "const": "failsafe",
+            "description": "The box enters failsafe.",
+            "type": "string"
+          }
+        ]
+      },
+      "PushKeys": {
+        "description": "A subscription's keys, as a browser spells them.",
+        "properties": {
+          "auth": {
+            "description": "The authentication secret, base64url.",
+            "type": "string"
+          },
+          "p256dh": {
+            "description": "The public key, base64url.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "p256dh",
+          "auth"
+        ],
+        "type": "object"
+      },
+      "PushLang": {
+        "description": "The language a browser reads.",
+        "oneOf": [
+          {
+            "const": "de",
+            "description": "German.",
+            "type": "string"
+          },
+          {
+            "const": "en",
+            "description": "English.",
+            "type": "string"
+          }
+        ]
+      },
+      "PushOverview": {
+        "description": "What `GET /v1/push` answers.",
+        "properties": {
+          "at_most": {
+            "description": "How many there may be.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "key": {
+            "description": "The box's public key: the `applicationServerKey` a browser subscribes\nwith, base64url.",
+            "type": "string"
+          },
+          "subscriptions": {
+            "description": "Every browser subscribed.",
+            "items": {
+              "$ref": "#/components/schemas/PushSubscription"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "subscriptions",
+          "at_most"
+        ],
+        "type": "object"
+      },
+      "PushSubscribe": {
+        "description": "What `POST /v1/push` takes: a browser's `PushSubscription.toJSON()` and the\nhousehold's choices.",
+        "properties": {
+          "endpoint": {
+            "description": "The push service's address for this browser.",
+            "type": "string"
+          },
+          "events": {
+            "default": null,
+            "description": "Which kinds. All four where absent.",
+            "items": {
+              "$ref": "#/components/schemas/PushEvent"
+            },
+            "type": [
+              "array",
+              "null"
+            ],
+            "uniqueItems": true
+          },
+          "keys": {
+            "$ref": "#/components/schemas/PushKeys",
+            "description": "The browser's keys."
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PushLang"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "`de` or `en`. German where absent."
+          },
+          "quiet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuietHours"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Quiet hours, where wanted."
+          }
+        },
+        "required": [
+          "endpoint",
+          "keys"
+        ],
+        "type": "object"
+      },
+      "PushSubscription": {
+        "description": "A subscription, as the page is shown it: everything but the keys.",
+        "properties": {
+          "created": {
+            "description": "When it subscribed.",
+            "type": "string"
+          },
+          "endpoint": {
+            "description": "The endpoint — how the page finds its own browser in the list.",
+            "type": "string"
+          },
+          "events": {
+            "description": "The kinds asked for.",
+            "items": {
+              "$ref": "#/components/schemas/PushEvent"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "lang": {
+            "$ref": "#/components/schemas/PushLang",
+            "description": "The language."
+          },
+          "quiet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuietHours"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Quiet hours."
+          }
+        },
+        "required": [
+          "endpoint",
+          "lang",
+          "events",
+          "created"
+        ],
+        "type": "object"
+      },
+      "QuietHours": {
+        "description": "The hours a browser does not want to hear from the box, local wall clock.",
+        "properties": {
+          "from_minute": {
+            "description": "From this minute after midnight…",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "to_minute": {
+            "description": "…until this one. Smaller than `from_minute` when it spans midnight.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_minute",
+          "to_minute"
+        ],
+        "type": "object"
+      },
+      "Reading": {
+        "description": "One reading, as it comes back out.",
+        "properties": {
+          "at": {
+            "description": "When it was taken.",
+            "type": "string"
+          },
+          "watts": {
+            "description": "What was measured, watts, load convention.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "at",
+          "watts"
+        ],
+        "type": "object"
+      },
+      "Receipt": {
+        "description": "The day so far, as a receipt.",
+        "properties": {
+          "bill_eur": {
+            "description": "What the household paid for electricity, €.",
+            "format": "double",
+            "type": "number"
+          },
+          "comfort_eur": {
+            "description": "Comfort given up, priced, €.",
+            "format": "double",
+            "type": "number"
+          },
+          "cost_eur": {
+            "description": "Bill + wear + comfort, €.",
+            "format": "double",
+            "type": "number"
+          },
+          "day": {
+            "description": "The local day, `YYYY-MM-DD`.",
+            "type": "string"
+          },
+          "feed_in_respected": {
+            "description": "Whether the feed-in ceiling was respected.",
+            "type": "boolean"
+          },
+          "imported_kwh": {
+            "description": "Bought from the grid, kWh.",
+            "format": "double",
+            "type": "number"
+          },
+          "on_bill_eur": {
+            "description": "The part of the saving that reached the bill, €.",
+            "format": "double",
+            "type": "number"
+          },
+          "priced": {
+            "description": "Whether the day was priced. A running box measures energy but has no\nsecond house to compare with; the page then prints no euros rather\nthan zeros.",
+            "type": "boolean"
+          },
+          "produced_kwh": {
+            "description": "Made by the roof, kWh.",
+            "format": "double",
+            "type": "number"
+          },
+          "reduced_minutes": {
+            "description": "Minutes under a § 14a reduction, where the day measured them.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reduction_respected": {
+            "description": "Whether every reduction was respected.",
+            "type": "boolean"
+          },
+          "reductions": {
+            "description": "How many reductions the network operator sent.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "saved_eur": {
+            "description": "`without − cost`, €.",
+            "format": "double",
+            "type": "number"
+          },
+          "wear_eur": {
+            "description": "Battery wear priced, €.",
+            "format": "double",
+            "type": "number"
+          },
+          "without_eur": {
+            "description": "The same house with the same hardware and no energy manager, €.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "priced",
+          "bill_eur",
+          "wear_eur",
+          "comfort_eur",
+          "cost_eur",
+          "without_eur",
+          "saved_eur",
+          "on_bill_eur",
+          "imported_kwh",
+          "produced_kwh",
+          "reductions",
+          "reduction_respected",
+          "feed_in_respected"
+        ],
+        "type": "object"
+      },
+      "Record": {
+        "description": "What the box says about its own commissioning: who it is, whether the\nnetwork operator's control box is paired and heard, and the devices a\nreduction may address.\n\nWhole watts, so the same record is the same bytes wherever it is rebuilt.",
+        "properties": {
+          "box": {
+            "$ref": "#/components/schemas/RecordBox",
+            "description": "The box."
+          },
+          "control_box": {
+            "$ref": "#/components/schemas/RecordControlBox",
+            "description": "The network operator's control box, as the box sees it now."
+          },
+          "devices": {
+            "description": "Each steuerbare Verbrauchseinrichtung.",
+            "items": {
+              "$ref": "#/components/schemas/RecordDevice"
+            },
+            "type": "array"
+          },
+          "identity": {
+            "description": "`kept` where a restart restores this identity, `ephemeral` where the\nnext start presents a new one.",
+            "type": "string"
+          },
+          "issued_at": {
+            "description": "When the box signed this, RFC 3339 UTC.",
+            "type": "string"
+          },
+          "minimum_w": {
+            "description": "The power a reduction may not go below, watts.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "module": {
+            "description": "The § 14a module the household is billed under, as configured.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference": {
+            "description": "The caller's own identifier for the work, echoed byte for byte.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "v": {
+            "description": "The version of this document: `1`.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "v",
+          "issued_at",
+          "box",
+          "control_box",
+          "identity",
+          "minimum_w",
+          "devices"
+        ],
+        "type": "object"
+      },
+      "RecordBox": {
+        "description": "The box's own identity in a [`Record`].",
+        "properties": {
+          "ship_id": {
+            "description": "The SHIP ID it announces itself under.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ski": {
+            "description": "Its SKI, forty hexadecimal characters.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ski"
+        ],
+        "type": "object"
+      },
+      "RecordControlBox": {
+        "description": "The control box in a [`Record`].",
+        "properties": {
+          "ski": {
+            "description": "Its SKI, where exactly one is trusted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "description": "`none`, `unpaired`, `silent`, `failsafe` or `heard` — see [`ControlBox`].",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      },
+      "RecordDevice": {
+        "description": "One steuerbare Verbrauchseinrichtung in a [`Record`].",
+        "properties": {
+          "assets": {
+            "description": "The assets that make it up, as the box names them. Left out of the\nrecord a QR code carries, where every octet is a module.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "commissioned": {
+            "description": "The date of technical commissioning, where the configuration states it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fallgruppe": {
+            "description": "`ladepunkt`, `waermepumpe`, `raumkuehlung` or `stromspeicher`.",
+            "type": "string"
+          },
+          "letter": {
+            "description": "The letter `[A1 2.4.1]` lists it under.",
+            "type": "string"
+          },
+          "minimum_direct_w": {
+            "description": "What it alone would be owed under direct control, watts.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "power_w": {
+            "description": "Its Netzanschlussleistung, watts.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fallgruppe",
+          "letter",
+          "power_w",
+          "minimum_direct_w"
+        ],
+        "type": "object"
+      },
+      "Reduction": {
+        "description": "What the network operator has asked of the house right now — `None` when it\nhas asked nothing.",
+        "properties": {
+          "ceiling_kw": {
+            "description": "The ceiling on the controllable devices, kW.",
+            "format": "double",
+            "type": "number"
+          },
+          "drawing_kw": {
+            "description": "What the controllable devices are drawing against it, kW.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "failsafe": {
+            "description": "`true` while the box is in failsafe: no heartbeat from the Steuerbox, so\nthe stored failsafe value stands in for an instruction.",
+            "type": "boolean"
+          },
+          "minimum_kw": {
+            "description": "What the household is guaranteed whatever the ceiling, kW — `[A1 4.5]`.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "shares": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "How each device's share of the allowance is being spent, kW.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "ceiling_kw",
+          "failsafe",
+          "shares"
+        ],
+        "type": "object"
+      },
+      "Resolution": {
+        "description": "How closely spaced the readings in a window are.",
+        "oneOf": [
+          {
+            "const": "seconds",
+            "description": "Every control tick, as the box measured it.",
+            "type": "string"
+          },
+          {
+            "const": "quarter_hours",
+            "description": "The mean over a quarter hour — the grain everything in this workspace\nsettles on, and the only one that survives past the raw retention.",
+            "type": "string"
+          }
+        ]
+      },
+      "SeriesWindow": {
+        "description": "A window of history, and the grain it is in.",
+        "properties": {
+          "readings": {
+            "description": "The readings themselves, in order.",
+            "items": {
+              "$ref": "#/components/schemas/Reading"
+            },
+            "type": "array"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/Resolution",
+            "description": "How closely spaced the readings are."
+          }
+        },
+        "required": [
+          "resolution",
+          "readings"
+        ],
+        "type": "object"
+      },
+      "SheetDevice": {
+        "description": "One steuerbare Verbrauchseinrichtung.",
+        "properties": {
+          "assets": {
+            "description": "The assets that make it up — one, or a whole Fallgruppe summed.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "commissioned": {
+            "description": "The date of technical commissioning, where the configuration states one\nfor every asset in it; the earliest.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fallgruppe": {
+            "description": "`ladepunkt`, `waermepumpe`, `raumkuehlung` or `stromspeicher`.",
+            "type": "string"
+          },
+          "labels": {
+            "description": "What the household calls them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "letter": {
+            "description": "The letter `[A1 2.4.1]` lists it under: `a`–`d`.",
+            "type": "string"
+          },
+          "minimum_direct_w": {
+            "description": "What it alone would be owed under direct control, watts, `[A1 4.5.1]`.",
+            "format": "double",
+            "type": "number"
+          },
+          "power_w": {
+            "description": "Its Netzanschlussleistung, watts.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "assets",
+          "labels",
+          "fallgruppe",
+          "letter",
+          "power_w",
+          "minimum_direct_w"
+        ],
+        "type": "object"
+      },
+      "ShipNode": {
+        "description": "One SHIP node.",
+        "properties": {
+          "addresses": {
+            "description": "Where it says it can be reached.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "asset": {
+            "description": "The asset it is configured as.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "brand": {
+            "description": "What it says its brand, type and model are.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_type": {
+            "description": "See `brand`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "See `brand`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "description": "The port SHIP listens on there.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ship_id": {
+            "description": "Its SHIP ID.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ski": {
+            "description": "Its SKI, as it announces it — proved only once TLS has.",
+            "type": "string"
+          },
+          "state": {
+            "description": "`configured`: the box is set up for it, or already trusts it.\n`missing`: configured, not announcing and not heard. `waiting`: its\nhandshake is held for approval. `found`: announcing, and unknown here.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ski",
+          "state",
+          "addresses"
+        ],
+        "type": "object"
+      },
+      "SignIn": {
+        "description": "What the page sends to sign in.",
+        "properties": {
+          "token": {
+            "description": "The household's token, from the handover sheet or the start-up log.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
+      "StatusBody": {
+        "description": "One tick, as JSON.",
+        "properties": {
+          "assumed_available": {
+            "description": "Devices whose available power is a nameplate rather than a reading.\n\nWorth a field of its own: a curtailed inverter that cannot say what it\n*could* produce is one whose curtailment lifts on an assumption, and a\nhousehold is entitled to know which of its devices are in that position.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "assumed_nominal": {
+            "description": "Controllable devices whose **consumption** the guard had to assume.\n\nThe consumption side of the same honesty: a silent controllable device is\ntaken to be drawing its nameplate power, which is the safe answer and an\nexpensive one — every watt of it is § 14a budget spent on a device that\nmay be doing nothing. `assumed_available` is the generation side (R20).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "at": {
+            "description": "When the last tick ran, RFC 3339.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "balance_residual_w": {
+            "description": "How far the grid meter is from the sum of the assets, W.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "cem": {
+            "$ref": "#/components/schemas/CemStatus",
+            "description": "What an external Customer Energy Manager is doing over S2, where one is\nconnected.\n\nA household that has delegated its optimising to somebody else is\nentitled to see that it has, and to see which of its devices that manager\nis actually driving — an S2 session that connected, chose a control type\nand then instructed nothing looks from every other screen exactly like\none that is working."
+          },
+          "commanded_w": {
+            "additionalProperties": {
+              "format": "double",
+              "type": "number"
+            },
+            "description": "What every asset was last told, in watts.",
+            "type": "object"
+          },
+          "disobedient": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Devices that answered their last setpoint and did not act on it, with\nwhat they said about it.\n\nThe one fault the box is otherwise blind to. A driver that reports a\nrefusal is easy to see; a device that acknowledges the write, stores the\nsetpoint and never switches it on answers exactly like one that obeyed,\nand the disagreement only surfaces as a meter that will not match the\nplan. Separate from `silent`, because a silent device is a network fault\nand this one is a device that has to be commanded some other way.",
+            "type": "object"
+          },
+          "exposure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExposureBody"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How exposed this connection is to § 14a control — `null` until the box\nhas any record to draw on."
+          },
+          "minutes_without_a_plan": {
+            "description": "How old the plan in force is, minutes — `null` where the box has never\npublished one.\n\nThe seam a box is most likely to be quietly broken at: one that never\nplans looks exactly like one that plans badly, and the difference is a\nwhole tariff's worth of money.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "netzwirksam_kw": {
+            "description": "The netzwirksamer Leistungsbezug right now, kW — `[A1 2.3]`.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "overriding": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Which rule is holding each asset's setpoint, where one is.\n\nThe answer to *why is my car charging slowly*, which is the commonest\nquestion a household has and the one a screen of watts cannot answer. It\nis the same reason chain a setpoint carries (P7), summarised per asset so\na page does not have to reconstruct it.",
+            "type": "object"
+          },
+          "overruns": {
+            "description": "How many control ticks took longer than a control period.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "plan_expected_eur": {
+            "description": "What the plan in force expects its horizon to cost, euros — wear,\ndiscomfort and undelivered service included.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "roof_health": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "Whether the roof is still delivering what it used to.\n\nThe performance ratio of IEC 61724-1 against this array's own seasonal\nbaseline, and a verdict. It is on the status page rather than in a log\nbecause it is the one fault a household can *act* on — the others here\nare for an installer — and because the box is otherwise the last thing\nthat would notice: its own forecast corrector is built to learn a lower\nroof and carry on planning well (D199).",
+            "properties": {
+              "verdict": {
+                "enum": [
+                  "learning",
+                  "healthy",
+                  "degraded"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "silent": {
+            "description": "The assets no driver has been heard from.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "site": {
+            "description": "Which household.",
+            "type": "string"
+          },
+          "ski": {
+            "description": "The box's EEBUS Subject Key Identifier, where it has one.\n\nWhat an installer gives the metering point operator so a Steuerbox can be\ntold to trust this box. Field reports make that exchange the single most\ncommon § 14a commissioning failure there is, which is why it is on the\nfirst page a box will show rather than in a log.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "steuve_budget_kw": {
+            "description": "What the controllable devices may draw in total, surplus included, kW.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "steuve_ceiling_kw": {
+            "description": "The § 14a ceiling in force, kW.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "undriven": {
+            "description": "Controllable devices no driver speaks for.\n\nThe first thing to look at when a device is not doing what this page says\nit was told to: the setpoint was decided and had nowhere to go.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "site",
+          "commanded_w",
+          "silent",
+          "assumed_available",
+          "assumed_nominal",
+          "disobedient",
+          "undriven",
+          "roof_health",
+          "overruns",
+          "overriding",
+          "cem"
+        ],
+        "type": "object"
+      },
+      "TankAnswer": {
+        "description": "The answer a household gets the moment it sets a hot-water goal.",
+        "properties": {
+          "needed_kwh": {
+            "description": "Electricity the heater still has to take, kWh.",
+            "format": "double",
+            "type": "number"
+          },
+          "reachable_c": {
+            "description": "Where the goal is impossible: the temperature the tank can reach by\nthen, °C.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "tightness": {
+            "description": "The share of the time left the goal would use: `0` nothing, `1` all of it.",
+            "format": "double",
+            "type": "number"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict",
+            "description": "The verdict."
+          }
+        },
+        "required": [
+          "verdict",
+          "needed_kwh",
+          "tightness"
+        ],
+        "type": "object"
+      },
+      "TankGoal": {
+        "additionalProperties": false,
+        "description": "A hot-water goal as the household set it: *50 °C by 18:00*.",
+        "properties": {
+          "by_minute": {
+            "description": "By when, local wall-clock minutes after midnight (`1080` is 18:00).",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target_c": {
+            "description": "The temperature wanted, °C.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "target_c",
+          "by_minute"
+        ],
+        "type": "object"
+      },
+      "Total": {
+        "description": "What a run of closed days adds up to.",
+        "properties": {
+          "days": {
+            "description": "How many closed days are in the sum.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "imported_wh": {
+            "description": "Bought from the grid, Wh.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "money": {
+            "$ref": "#/components/schemas/Money",
+            "description": "The priced days' euros, summed in cents."
+          },
+          "priced_days": {
+            "description": "How many of them were priced — the days [`Total::money`] is a sum of.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "produced_wh": {
+            "description": "Made by the roof, Wh.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "reduction_respected": {
+            "description": "Whether every reduction of every day was respected.",
+            "type": "boolean"
+          },
+          "reductions": {
+            "description": "How many reductions the network operator sent.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "days",
+          "priced_days",
+          "money",
+          "imported_wh",
+          "produced_wh",
+          "reductions",
+          "reduction_respected"
+        ],
+        "type": "object"
+      },
+      "TrustCheck": {
+        "description": "Whether the box is who it was, and whether its control box is still there.",
+        "properties": {
+          "control_box": {
+            "$ref": "#/components/schemas/ControlBox",
+            "description": "The network operator's control box."
+          },
+          "fingerprint": {
+            "description": "The SHA-256 fingerprint of its SHIP certificate.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "https_fingerprint": {
+            "description": "The SHA-256 fingerprint of the certificate the page is served with.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identity": {
+            "description": "`kept`: the store holds the certificate the box is presenting, so the\nSKI and fingerprint are the ones a restart restores. `ephemeral`: the box\nhas no store, or the store holds another, and the next start presents a\nnew identity. `none`: the box has no EEBUS identity.",
+            "type": "string"
+          },
+          "ski": {
+            "description": "The box's SKI.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "identity",
+          "control_box"
+        ],
+        "type": "object"
+      },
+      "Verdict": {
+        "description": "What a car goal comes to.",
+        "oneOf": [
+          {
+            "const": "met",
+            "description": "Already there.",
+            "type": "string"
+          },
+          {
+            "const": "feasible",
+            "description": "Comfortably possible.",
+            "type": "string"
+          },
+          {
+            "const": "tight",
+            "description": "Possible only if nothing else needs the connection.",
+            "type": "string"
+          },
+          {
+            "const": "impossible",
+            "description": "Not possible by then.",
+            "type": "string"
+          }
+        ]
+      },
+      "Waiting": {
+        "description": "A peer whose handshake is waiting for somebody to say yes.",
+        "properties": {
+          "fingerprint": {
+            "description": "The SHA-256 fingerprint of its whole certificate — what a QR code carries.",
+            "type": "string"
+          },
+          "ski": {
+            "description": "Forty hexadecimal characters, as printed on the peer.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ski",
+          "fingerprint"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "household": {
+        "description": "The household's token.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "manager": {
+        "description": "A token issued by `PUT /v1/managers/{name}`.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "session": {
+        "description": "Set by `POST /v1/session`; `HttpOnly`, `SameSite=Strict`.",
+        "in": "cookie",
+        "name": "hems_session",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "The local API of a hems box. A request authenticated by the session cookie that changes anything must carry `Content-Type: application/json`.",
+    "title": "hemsd",
+    "version": "0.4.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/livez": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Alive"
+          },
+          "503": {
+            "description": "Not alive"
+          }
+        },
+        "security": [],
+        "summary": "Whether the process is alive"
+      }
+    },
+    "/metrics": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The metrics, in the Prometheus text format"
+          }
+        },
+        "security": [],
+        "summary": "Prometheus metrics"
+      }
+    },
+    "/readyz": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "probes": {
+                      "description": "One entry per named dependency.",
+                      "type": "object"
+                    },
+                    "ready": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ready",
+                    "probes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Ready"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "probes": {
+                      "description": "One entry per named dependency.",
+                      "type": "object"
+                    },
+                    "ready": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ready",
+                    "probes"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Not ready, and why"
+          }
+        },
+        "security": [],
+        "summary": "Whether the box is ready to control"
+      }
+    },
+    "/s2/{asset}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching to the S2 WebSocket protocol"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "404": {
+            "description": "S2 is off, or no such device"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          },
+          {
+            "manager": []
+          }
+        ],
+        "summary": "S2 over WebSocket: a manager drives one device, narrowed by the guard"
+      }
+    },
+    "/v1/commissioning": {
+      "get": {
+        "parameters": [
+          {
+            "description": "the caller's own identifier for the work, echoed in the record: 1–64 printable ASCII characters, no space",
+            "in": "query",
+            "name": "reference",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/jose": {
+                "schema": {
+                  "contentMediaType": "application/json",
+                  "contentSchema": {
+                    "$ref": "#/components/schemas/Record"
+                  },
+                  "description": "A JWS in compact serialisation (RFC 7515), ES256. `contentSchema` is its payload.",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The record"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Not a reference"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The box has no EEBUS identity to sign with"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be signed"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The commissioning record, signed by the box: its identity, its control box, its § 14a devices"
+      }
+    },
+    "/v1/days": {
+      "get": {
+        "parameters": [
+          {
+            "description": "first day, `YYYY-MM-DD`",
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "last day, `YYYY-MM-DD`",
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Days"
+                }
+              }
+            },
+            "description": "The days, oldest first; a missing date is a day the box was off"
+          },
+          "400": {
+            "description": "Not a window"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "description": "This box keeps no store"
+          },
+          "500": {
+            "description": "They could not be read"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The closed days the box keeps, at most ninety, and their sum"
+      }
+    },
+    "/v1/days.csv": {
+      "get": {
+        "parameters": [
+          {
+            "description": "first day, `YYYY-MM-DD`",
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "last day, `YYYY-MM-DD`",
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "One row per day"
+          },
+          "400": {
+            "description": "Not a window"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "description": "This box keeps no store"
+          },
+          "500": {
+            "description": "They could not be read"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The same days as CSV"
+      }
+    },
+    "/v1/discover": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverAsk"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Discovered"
+                }
+              }
+            },
+            "description": "What was found, set against the configuration"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A host name, a public address, too many hosts, or another port"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Look for SHIP nodes, and for SunSpec devices at named private addresses"
+      }
+    },
+    "/v1/goals/{asset}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "No such device, or no goal set"
+          },
+          "422": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "This kind of device takes no goal"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Withdraw a goal"
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CarGoal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TankGoal"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/GoalAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TankAnswer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "The verdict, or null before the planner has seen the device"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Out of range"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "No such device"
+          },
+          "422": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The wrong goal for this kind of device"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Ask for a charge or a temperature by a time; answered with a verdict"
+      }
+    },
+    "/v1/handover": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Handover"
+                }
+              }
+            },
+            "description": "The sheet"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "description": "The box has no site to describe"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "What the handover sheet prints: identities and the § 14a devices"
+      }
+    },
+    "/v1/home": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Home"
+                }
+              }
+            },
+            "description": "The document"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "description": "The box has no site to describe"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The household page's document: now, the plan, goals, the last receipt"
+      }
+    },
+    "/v1/managers": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Manager"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Their names"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "500": {
+            "description": "They could not be read"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The energy managers connected to this box"
+      }
+    },
+    "/v1/managers/{name}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "description": "No such manager"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Withdraw a manager's credential"
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Connected"
+                }
+              }
+            },
+            "description": "The name and the token"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Not a name"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Connect a manager; answers its token once"
+      }
+    },
+    "/v1/overrides": {
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          },
+          {
+            "manager": []
+          }
+        ],
+        "summary": "Withdraw every override"
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OverrideView"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The overrides"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          },
+          {
+            "manager": []
+          }
+        ],
+        "summary": "The overrides in force"
+      }
+    },
+    "/v1/overrides/{asset}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "400": {
+            "description": "Not a device name"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "404": {
+            "description": "None was set"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          },
+          {
+            "manager": []
+          }
+        ],
+        "summary": "Withdraw one override"
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OverrideBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverrideView"
+                }
+              }
+            },
+            "description": "The override as held"
+          },
+          "400": {
+            "description": "Not a device name"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          },
+          {
+            "manager": []
+          }
+        ],
+        "summary": "Boost, pause or mark away; the guard still narrows it"
+      }
+    },
+    "/v1/pairing": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingBody"
+                }
+              }
+            },
+            "description": "Trusted and waiting"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The control boxes this box trusts, and those asking"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Approval"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingBody"
+                }
+              }
+            },
+            "description": "Trusted and waiting, afterwards"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Not an SKI, or it could not be kept"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The box has no EEBUS identity"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Trust a control box by its SKI"
+      }
+    },
+    "/v1/pairing/{ski}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ski",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingBody"
+                }
+              }
+            },
+            "description": "Trusted and waiting, afterwards"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Not an SKI, or it could not be kept"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The box has no EEBUS identity"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Stop trusting a control box"
+      }
+    },
+    "/v1/pairing/{ski}/refuse": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ski",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingBody"
+                }
+              }
+            },
+            "description": "Trusted and waiting, afterwards"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Not an SKI"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The box has no EEBUS identity"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Refuse a control box that is asking"
+      }
+    },
+    "/v1/push": {
+      "delete": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushEndpoint"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Forgotten"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "No such subscription, or no store"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Unsubscribe a browser"
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushOverview"
+                }
+              }
+            },
+            "description": "Key and subscriptions"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "This box keeps no store"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "They could not be read"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The box's push key and the browsers subscribed"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushSubscribe"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushSubscription"
+                }
+              }
+            },
+            "description": "The subscription as kept"
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Not a known push service, bad keys or quiet hours"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "This box keeps no store"
+          },
+          "409": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Too many subscriptions"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Subscribe a browser, or change what it is told"
+      }
+    },
+    "/v1/push/test": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushEndpoint"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted by the push service"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "No such subscription, or no store"
+          },
+          "410": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The subscription has ended and was forgotten"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The subscription could not be read"
+          },
+          "502": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The push service refused it or could not be reached"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Send one test notification"
+      }
+    },
+    "/v1/qr/{what}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "what",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "for `signin`: the address the code should open, `https://host[:port]`",
+            "in": "query",
+            "name": "origin",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "for `commissioning`: as on `/v1/commissioning`",
+            "in": "query",
+            "name": "reference",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The code"
+          },
+          "400": {
+            "description": "Not an origin, or not a reference"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "`signin` asked for with the cookie"
+          },
+          "404": {
+            "description": "No such code, or no identity"
+          },
+          "413": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "`commissioning`: the record is longer than a code is scanned at; fetch it"
+          },
+          "500": {
+            "description": "It could not be drawn"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "A QR code: `ski`, `fingerprint`, `commissioning`, or `signin` (token only, never the cookie)"
+      }
+    },
+    "/v1/series/{point}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "point",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "start, RFC 3339; an hour before `to` by default",
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "end, RFC 3339; now by default",
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesWindow"
+                }
+              }
+            },
+            "description": "The readings"
+          },
+          "400": {
+            "description": "The window ends before it starts"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "description": "This box keeps no series"
+          },
+          "500": {
+            "description": "It could not be read"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The box's own measurements of `grid` or a device"
+      }
+    },
+    "/v1/session": {
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "The cookie is cleared"
+          }
+        },
+        "security": [],
+        "summary": "Sign a browser out"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Signed in; the cookie is set"
+          },
+          "401": {
+            "description": "Not the household's token"
+          }
+        },
+        "security": [],
+        "summary": "Sign a browser in: exchange the household's token for a cookie"
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            },
+            "description": "The status"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          },
+          {
+            "manager": []
+          }
+        ],
+        "summary": "What the box is doing and what it cannot see"
+      }
+    },
+    "/v1/token": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewToken"
+                }
+              }
+            },
+            "description": "The new token"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "409": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The token is set in the configuration"
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          }
+        ],
+        "summary": "Replace the household's token; the old one and every sign-in stop working"
+      }
+    },
+    "/v1/trust": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustCheck"
+                }
+              }
+            },
+            "description": "The check"
+          },
+          "401": {
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "description": "A manager's credential, on a route that is the household's"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Whether the box kept its identity, and whether its control box is heard"
+      }
+    },
+    "/version": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "version"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The version"
+          }
+        },
+        "security": [],
+        "summary": "The daemon's name and version"
+      }
+    }
+  }
+}

@@ -23,6 +23,7 @@ fn main() -> Result<()> {
         Some("check-deps") => check_deps(&root),
         Some("check-deps-used") => check_deps_used(&root).map(drop),
         Some("check-actions") => check_actions(&root),
+        Some("check-api") => check_api(&root, std::env::args().any(|a| a == "--write")),
         Some("check-all") => {
             check_citations(&root)?;
             check_actions(&root)?;
@@ -34,6 +35,7 @@ fn main() -> Result<()> {
             check_deps(&root)?;
             check_deps_used(&root)?;
             check_notes(&root)?;
+            check_api(&root, false)?;
             check_stats(&root)
         }
         Some("help" | "--help" | "-h") | None => {
@@ -78,6 +80,9 @@ cargo xtask <task>
   check-actions     every GitHub Action a workflow uses is pinned to a commit
                     SHA, so a tag moved upstream cannot change what a release
                     is built with
+  check-api         the checked-in `services/hemsd/openapi.json` and the table
+                    on the site's API page are what `hemsd openapi` prints;
+                    `check-api --write` rewrites both
   check-all         all of the above
 "
     );
@@ -120,6 +125,65 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
             out.push(path);
         }
     }
+    Ok(())
+}
+
+// ── check-api ───────────────────────────────────────────────────────────────
+
+/// Hold the published contract to the code.
+///
+/// The document and the reference table are generated from the route table and
+/// the handlers' own types. Checked in, they are what an integrator reads and
+/// what a review sees change — so a response type cannot change without the
+/// contract changing in the same commit.
+fn check_api(root: &Path, write: bool) -> Result<()> {
+    const BEGIN: &str = "<!-- api:begin -->\n";
+    const END: &str = "<!-- api:end -->";
+    let print = |args: &[&str]| -> Result<String> {
+        let out = std::process::Command::new(env!("CARGO"))
+            .current_dir(root)
+            .args(["run", "--quiet", "-p", "hemsd", "--", "openapi"])
+            .args(args)
+            .output()
+            .context("running `hemsd openapi`")?;
+        if !out.status.success() {
+            bail!(
+                "`hemsd openapi` failed:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        String::from_utf8(out.stdout).context("the contract is UTF-8")
+    };
+    let (json, table) = (print(&[])?, print(&["--markdown"])?);
+
+    let json_path = root.join("services/hemsd/openapi.json");
+    let page_path = root.join("site/content/docs/api.md");
+    let page = std::fs::read_to_string(&page_path).context("reading the API page")?;
+    let (head, rest) = page
+        .split_once(BEGIN)
+        .context("the API page has no `<!-- api:begin -->` marker")?;
+    let (_, tail) = rest
+        .split_once(END)
+        .context("the API page has no `<!-- api:end -->` marker")?;
+    let page_now = format!("{head}{BEGIN}{table}{END}{tail}");
+
+    if write {
+        std::fs::write(&json_path, &json)?;
+        std::fs::write(&page_path, &page_now)?;
+        println!("check-api: wrote the contract and the API page's table");
+        return Ok(());
+    }
+    let kept = std::fs::read_to_string(&json_path).unwrap_or_default();
+    if kept != json || page != page_now {
+        bail!(
+            "check-api: the box's API changed and the published contract did not.\n  \
+             Run `cargo xtask check-api --write`, read the diff, and commit it."
+        );
+    }
+    println!(
+        "check-api: {} operations, the contract and the API page agree with the code",
+        table.lines().count().saturating_sub(2)
+    );
     Ok(())
 }
 

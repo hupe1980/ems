@@ -32,6 +32,8 @@ struct Inverter {
     clips_below: Option<u16>,
     /// Whether the device stores `WMaxLimPct` and leaves `WMaxLim_Ena` at zero.
     ignores_enable: bool,
+    /// Every read it was asked for, as `(address, count)`.
+    reads: Vec<(u16, u16)>,
 }
 
 impl Inverter {
@@ -78,7 +80,36 @@ impl Inverter {
             curtailed_to: None,
             clips_below: None,
             ignores_enable: false,
+            reads: Vec::new(),
         }
+    }
+
+    /// A device that stores `WMaxLimPct` with this `WMaxLimPct_SF`. The offset
+    /// is the model definition's, as the `sunspec` crate publishes it.
+    fn scaling_the_limit_by(mut self, scale: u16) -> Self {
+        let at = sunspec::models::model123::Model123::W_MAX_LIM_PCT_SF.offset;
+        self.map.insert(40_124 + at, scale);
+        self
+    }
+
+    /// A device that also publishes model 701 after model 123, producing
+    /// 3 000 W at half throttle. Its length and its points' offsets are the
+    /// model definition's.
+    fn with_der(mut self) -> Self {
+        use sunspec::Group as _;
+        use sunspec::models::model701::Model701;
+        let (header, body) = (40_148, 40_150);
+        self.map.insert(header, 701);
+        self.map.insert(header + 1, Model701::LEN);
+        for i in 0..Model701::LEN {
+            self.map.insert(body + i, 0);
+        }
+        self.map.insert(body + Model701::W.offset, 300);
+        self.map.insert(body + Model701::W_SF.offset, 1);
+        self.map.insert(body + Model701::THROT_PCT.offset, 50);
+        self.map.insert(body + Model701::LEN, 0xffff);
+        self.map.insert(body + Model701::LEN + 1, 0);
+        self
     }
 
     /// A device that will not go below `floor` per cent.
@@ -103,6 +134,12 @@ impl Inverter {
         let pdu = match function {
             0x03 => {
                 let count = u16::from_be_bytes([bytes[10], bytes[11]]);
+                self.reads.push((address, count));
+                // More than 125 registers cannot be described in one answer; a
+                // real device refuses the request.
+                if count > 125 {
+                    return self.framed(transaction, unit, &[0x83, 0x03]);
+                }
                 // An unmapped address is `0x02`, illegal data address — which is
                 // how a real device ends a model walk.
                 if self.map.contains_key(&address) {
@@ -132,7 +169,12 @@ impl Inverter {
                     }
                     self.map.insert(address + i, v);
                 }
-                self.curtailed_to = self.map.get(&address).copied();
+                // Read where model 123 keeps `WMaxLimPct` — body + 3, after the
+                // three `Conn` registers — and not wherever the write landed: a
+                // device takes a limit from that register and no other.
+                self.curtailed_to = (address == 40_124 + 3)
+                    .then(|| self.map.get(&address).copied())
+                    .flatten();
                 let mut pdu = vec![0x10];
                 pdu.extend_from_slice(&address.to_be_bytes());
                 pdu.extend_from_slice(&count.to_be_bytes());
@@ -141,12 +183,17 @@ impl Inverter {
             _ => vec![function | 0x80, 0x01],
         };
 
+        self.framed(transaction, unit, &pdu)
+    }
+
+    #[expect(clippy::unused_self, reason = "reads as the device framing its answer")]
+    fn framed(&self, transaction: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&transaction.to_be_bytes());
         out.extend_from_slice(&0u16.to_be_bytes());
         out.extend_from_slice(&(u16::try_from(pdu.len() + 1).unwrap()).to_be_bytes());
         out.push(unit);
-        out.extend_from_slice(&pdu);
+        out.extend_from_slice(pdu);
         out
     }
 }
@@ -353,6 +400,81 @@ fn a_curtailment_reaches_the_device_as_a_percentage_of_its_rating() {
 }
 
 /// The first `CommandOutcome` the driver has to offer.
+#[test]
+fn a_ceiling_is_written_in_the_devices_own_scale() {
+    // `WMaxLimPct_SF = −2` is what a Fronius or an SMA publishes: sixty per
+    // cent is 6000 in the register. Written as 60 it is 0,6 % — a roof turned
+    // off by a driver that believes it asked for a little less.
+    let mut d = driver().with_rating(Power::from_kw(10.0));
+    let mut device = Inverter::new().scaling_the_limit_by((-2i16).cast_unsigned());
+    d.on_timeout(T0);
+    exchange(&mut d, &mut device, T0, 60);
+    while d.poll_event().is_some() {}
+
+    d.command(&Command::ProductionCeiling(Power::from_kw(6.0)), T0)
+        .expect("a ceiling on a device with a rating and a model 123");
+    exchange(&mut d, &mut device, T0, 8);
+
+    assert_eq!(device.curtailed_to, Some(6000));
+    let outcome = command_outcome(&mut d).expect("the command is reported");
+    assert!(outcome.accepted);
+    assert_eq!(
+        outcome.confirmed,
+        Some(Power::from_kw(6.0)),
+        "and read back through the same scale"
+    );
+    assert_eq!(outcome.detail, None);
+}
+
+#[test]
+fn a_scale_factor_the_device_does_not_implement_is_no_scaling() {
+    let mut d = driver().with_rating(Power::from_kw(10.0));
+    let mut device = Inverter::new().scaling_the_limit_by(0x8000);
+    d.on_timeout(T0);
+    exchange(&mut d, &mut device, T0, 60);
+    while d.poll_event().is_some() {}
+
+    d.command(&Command::ProductionCeiling(Power::from_kw(6.0)), T0)
+        .expect("a ceiling on a device with a rating and a model 123");
+    exchange(&mut d, &mut device, T0, 8);
+    assert_eq!(device.curtailed_to, Some(60));
+}
+
+#[test]
+fn a_model_longer_than_one_read_is_fetched_in_pieces_and_decoded_whole() {
+    // Model 701 is 153 registers and one Modbus read carries 125. Asked for in
+    // one request it is refused or cut short, `ThrotPct` and `W_SF` never
+    // arrive, and the device that was said to report what it could produce
+    // reports nothing.
+    let mut d = driver();
+    let mut device = Inverter::new().with_der();
+    d.on_timeout(T0);
+    exchange(&mut d, &mut device, T0, 60);
+
+    assert!(
+        device.reads.iter().all(|&(_, count)| count <= 125),
+        "no read may ask for more than the protocol can answer: {:?}",
+        device.reads
+    );
+    assert!(
+        device.reads.contains(&(40_150, 125)) && device.reads.contains(&(40_275, 28)),
+        "125 registers, then the 28 that are left: {:?}",
+        device.reads
+    );
+    let measured = std::iter::from_fn(|| d.poll_event())
+        .filter_map(|e| match e {
+            DriverEvent::Measured(m) => Some(m),
+            _ => None,
+        })
+        .last()
+        .expect("a measurement");
+    assert_eq!(
+        measured.available_power,
+        Some(Power::new(6000.0)),
+        "3 000 W at half throttle is a roof that could give 6 000 W"
+    );
+}
+
 fn command_outcome(d: &mut SunSpec) -> Option<hems_drv::CommandOutcome> {
     std::iter::from_fn(|| d.poll_event()).find_map(|e| match e {
         DriverEvent::Command(o) => Some(o),

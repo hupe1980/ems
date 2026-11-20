@@ -213,7 +213,7 @@ pub async fn identity(
 }
 
 /// A peer whose handshake is waiting for somebody to say yes.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub struct Waiting {
     /// Forty hexadecimal characters, as printed on the peer.
     pub ski: String,
@@ -293,6 +293,44 @@ impl Trust {
             ship_id,
             kept,
         }
+    }
+
+    /// The certificate this box presents, DER.
+    #[must_use]
+    pub fn certificate_der(&self) -> Option<Vec<u8>> {
+        cert::der_from_pem(&self.kept.certificate).ok()
+    }
+
+    /// Sign a commissioning record's JWS signing input with the box's identity
+    /// key, ES256.
+    ///
+    /// The one thing besides a TLS handshake this key signs, and narrow on
+    /// purpose: the caller is [`crate::runtime::handover::jws`], whose input
+    /// always begins with its own fixed protected header. The key itself never
+    /// leaves this type.
+    #[must_use]
+    pub fn sign_record(&self, signing_input: &[u8]) -> Option<Vec<u8>> {
+        let key = cert::key_from_pem(&self.kept.key).ok()?;
+        crate::runtime::webpush::sign_es256(&key.serialize_der(), signing_input).ok()
+    }
+
+    /// Whether the store holds the certificate this box is presenting — which
+    /// is what makes its SKI and fingerprint the ones a restart restores.
+    ///
+    /// `false` on a box with no store, and on one whose store holds something
+    /// else: either way the next start presents an identity nobody has paired.
+    pub async fn identity_is_kept(&self) -> bool {
+        let Some(store) = &self.store else {
+            return false;
+        };
+        store
+            .lock()
+            .await
+            .eebus_identity()
+            .ok()
+            .flatten()
+            .and_then(|kept| kept.certificate_pem)
+            .is_some_and(|certificate| certificate == self.kept.certificate)
     }
 
     /// The peers whose handshake is **waiting on a decision right now**, with the
@@ -526,13 +564,28 @@ pub async fn run(
     let port = listener.local_addr().map_or(0, |a| a.port());
     let mut mdns = announce(&settings, &ski, port);
     loop {
-        let accepted = tokio::select! {
-            biased;
-            () = shutdown.clone().wait() => {
-                withdraw(&mut mdns);
-                return;
+        // The driver's clock runs between sessions too. A Steuerbox whose
+        // connection has closed is exactly the one whose heartbeat has stopped:
+        // left unticked here, the machine would sit in `Limited` for ever —
+        // never the failsafe of `[LPC-911]`, and never the end of the limit
+        // either.
+        let accepted = loop {
+            let now = time::OffsetDateTime::now_utc;
+            let deadline = registry.lock().await.deadline_of(driver);
+            let wait = deadline.map(|at| {
+                std::time::Duration::try_from(at - now()).unwrap_or(std::time::Duration::ZERO)
+            });
+            tokio::select! {
+                biased;
+                () = shutdown.clone().wait() => {
+                    withdraw(&mut mdns);
+                    return;
+                }
+                accepted = listener.accept() => break accepted,
+                () = sleep_for(wait) => {
+                    registry.lock().await.on_timeout_of(driver, now());
+                }
             }
-            accepted = listener.accept() => accepted,
         };
         let (stream, from) = match accepted {
             Ok(pair) => pair,

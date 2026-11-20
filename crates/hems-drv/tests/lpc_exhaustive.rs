@@ -35,6 +35,8 @@
 //! of *a broken Steuerbox must not block a heat pump for ever*, quantified over
 //! everything that can happen first.
 
+#![cfg(feature = "eebus")]
+
 use std::collections::{BTreeSet, VecDeque};
 
 use hems_core::prelude::{AssetId, Power};

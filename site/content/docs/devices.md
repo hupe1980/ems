@@ -339,7 +339,7 @@ So the driver reads the registers back and answers from what it finds there.
 `confirmed` is what the device actually holds, `accepted` is whether the limit is
 in force, and `detail` names which of the two happened. The difference between
 commanded and confirmed is where a plan and a house quietly stop agreeing, and
-it is now a number rather than a surprise.
+it is a number rather than a surprise.
 
 A command that is **never answered** — the device went quiet, the link dropped —
 is reported as a failure rather than left in flight. Silence here is the

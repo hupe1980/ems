@@ -27,7 +27,7 @@ storage accounting and § 42c energy sharing. New to those? Read
   <img src="site/static/screens/plan.png" width="240" alt="Plan: the next two days, cheap windows in green">
   <img src="site/static/screens/day.png" width="240" alt="Day: a receipt for the day, against the same house without hems">
 </p>
-<p align="center"><a href="site/static/media/walkthrough.mp4">▶ The 60-second walkthrough</a> · every image is the real page, rendering a simulated day through the real planner</p>
+<p align="center"><a href="site/static/media/walkthrough.mp4">▶ The walkthrough</a> · every image is the real page, rendering a simulated day through the real planner</p>
 
 > [!NOTE]
 > **Pre-alpha.** `hemsd run` drives real devices over SunSpec/Modbus TCP and
@@ -58,6 +58,15 @@ container runtime (Docker, Podman or Colima) for the PostgreSQL tests:
 $ just demo-all    # seven reference days and the comparisons worth seeing
 $ just ci          # fmt, clippy, purity, tests, guards, licences, docs
 $ just fleet-demo  # a box reporting its day into the fleet view
+```
+
+No hardware yet? A virtual house answers on the real protocols — a SunSpec
+inverter, meter and battery over Modbus TCP and a network operator's Steuerbox
+over EEBUS — and an ordinary box manages it:
+
+```console
+$ cargo run -p hemsd --features house -- house --at 16:58   # writes house.toml
+$ cargo run -p hemsd --features house -- run --config house.toml
 ```
 
 To manage a real house, describe it in a file and check it before anything
@@ -140,18 +149,18 @@ $ cargo run -p hemsd -- simulate --day winter
   produced                                  7.4 kWh
   household consumption                    11.0 kWh
   charged into the car                     21.7 kWh
-  heat pump                                22.1 kWh
+  heat pump                                21.8 kWh
   battery throughput                       15.6 kWh
-  imported                                 52.9 kWh
+  imported                                 52.5 kWh
   self-sufficiency                             12 %
 
-  electricity bill                          19.97 €
+  electricity bill                          20.64 €
   battery life spent                         0.63 €
   comfort given up                           0.22 €
-  cost of the day                           20.90 €
-  without optimisation                      21.96 €
-  saved                                      1.07 €
-  …of it on the bill                         0.63 €
+  cost of the day                           21.58 €
+  without optimisation                      22.69 €
+  saved                                      1.12 €
+  …of it on the bill                         0.66 €
 
   § 14a limit in force                       90 min
   …against a minimum of                     10.5 kW
@@ -211,7 +220,7 @@ credentials its REST routes use.
 | Control | The guard, the allocator, the one-second arbiter and the receding-horizon MILP, planning against three futures where a service is at risk |
 | Devices | SunSpec inverters, meters and batteries and vendor Modbus maps; EEBUS LPC/LPP with a Steuerbox over a real SHIP session, the heat pump, the hot-water tank and the car |
 | External energy managers | S2 Resource Manager at `/s2/{asset}`, clamped by the guard, with named, revocable credentials |
-| The household | A page served by the box over HTTPS — now, the plan, a receipt, pairing — in German and English; a car goal answered *feasible / tight / impossible* at once; local history at `/v1/series`; overrides; a factory reset that refuses while evidence is unforwarded |
+| The household | A page served by the box over HTTPS — now, the plan, a receipt and its month, pairing — in German and English; goals for the car and the hot water answered *feasible / tight / impossible* at once; notifications for the four occasions worth one; a wall display; a printed handover sheet with QR codes; local history at `/v1/series`; overrides; a factory reset that refuses while evidence is unforwarded |
 | The fleet | Prices, weather, evidence, enrolment, signed day reports, the fleet view, advisory findings |
 | Evaluation | Seven reference days and a cold first day, multi-day back-test and risk sweeps, forecasts scored in CRPS |
 
@@ -222,14 +231,14 @@ the household page; no OpenADR, § 41e, V2H/V2G or Matter.
 
 ## ✅ Quality
 
-1 215 tests. `just ci` runs formatting, Clippy with warnings as errors, a purity
+1 343 tests. `just ci` runs formatting, Clippy with warnings as errors, a purity
 check that keeps clocks and sockets out of the domain crates, the whole suite,
 the workspace guards, `cargo-deny` and the docs. The guards make the claims above
 checkable:
 
-- `check-citations` — 461 citations across five document families; all 461 of them against an index of primary sources resolve, or the build fails.
+- `check-citations` — 469 citations across five document families; all 469 of them against an index of primary sources resolve, or the build fails.
 - `check-wire` — the 138 quantities and instants, each of which becomes money or evidence, say how they travel.
-- `check-deps-used` — 259 declared dependencies, every one reached from source.
+- `check-deps-used` — 266 declared dependencies, every one reached from source.
 - `check-actions` — every GitHub Action pinned by commit.
 
 Regulatory documents are cited, never redistributed: `[BK6-22-300 A1 4.5.2]` is

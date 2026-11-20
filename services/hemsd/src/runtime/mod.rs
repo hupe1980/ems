@@ -36,13 +36,16 @@ pub mod api;
 pub mod control;
 pub mod day;
 pub mod fleet;
+pub mod handover;
 pub mod outbox;
 pub mod overrides;
 pub mod planner;
+pub mod push;
 pub mod s2;
 pub mod ship;
 pub mod tls;
 pub mod transport;
+pub mod webpush;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -87,6 +90,13 @@ pub enum StartError {
     /// would look exactly like a box that was working.
     #[error("the Modul 3 calendar is not one this household may be billed on: {0}")]
     Modul3(String),
+    /// A levy in `[tariff.levies]` is not one: negative, not a number, or a
+    /// value added tax written as a percentage.
+    #[error(
+        "`[tariff.levies] {0}` is not a levy: ct/kWh from 0 to 100, and `vat_rate` a fraction \
+         such as 0.19"
+    )]
+    Levies(&'static str),
     /// The building the planner would be given is not one it can integrate.
     ///
     /// A refusal, and the only one here that is about physics rather than
@@ -151,6 +161,8 @@ pub struct Running {
     pub goal: crate::home::Goals,
     /// The car as the planner last saw it.
     pub car: crate::home::CarFacts,
+    /// The tank as the planner last saw it.
+    pub tank: crate::home::TankFacts,
     /// The plan in force and the prices it was made against, for the page.
     pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
     /// The prices the plan in force was made against.
@@ -158,6 +170,9 @@ pub struct Running {
     /// The HTTPS configuration and its certificate's fingerprint, where the box
     /// serves HTTPS (`[api] tls`, on by default off loopback).
     pub tls: Option<(Arc<rustls::ServerConfig>, String)>,
+    /// The box's own store, where it keeps one — shared with the HTTP surface
+    /// for what the household reads back out of it.
+    pub store: Option<Arc<Mutex<crate::store::Store>>>,
 }
 
 /// Build the site, the drivers and the registry, and check that they agree.
@@ -186,6 +201,16 @@ pub fn assemble(
     }
     registry.validate(&household.site, now)?;
     check_modul3(settings, now)?;
+    if let Some(field) = settings.tariff.levies.refused() {
+        return Err(StartError::Levies(field));
+    }
+    if let Some(published) = crate::home::stale_levies_year(now) {
+        tracing::warn!(
+            published,
+            "this year's levies are not in this version of the box; it prices on the last \
+             published year's until it is updated or `[tariff.levies]` states them"
+        );
+    }
     check_the_physics(&settings.site, &config, &household)?;
     // The Berlin calendar date, through the same helper `classify_at` uses.
     // `[A1 3.1.b]`'s cutoff is 31.12.2023 and `[A1 10.1]`'s is 31.12.2028, and
@@ -207,9 +232,11 @@ pub fn assemble(
         fingerprint: None,
         goal: crate::home::Goals::default(),
         car: crate::home::CarFacts::default(),
+        tank: crate::home::TankFacts::default(),
         plan: Arc::default(),
         prices: Arc::default(),
         tls: None,
+        store: None,
         household,
         registry: Arc::new(Mutex::new(registry)),
         status: Arc::new(Mutex::new(Status::default())),
@@ -815,6 +842,12 @@ pub async fn run(
     // the EEBUS trust store is: a household that had to re-connect its
     // aggregator after a power cut is a household whose flexibility contract
     // depends on somebody being at home (D102, D188).
+    // What the household asked for on its page, kept for the reason the
+    // managers are: a goal set on Sunday still stands after Monday's power cut.
+    match crate::home::Goals::remembering(store.clone()).await {
+        Ok(goals) => running.goal = goals,
+        Err(error) => tracing::error!(%error, "the household's goals could not be read"),
+    }
     let access = access.remembering(store.clone());
     match access.restore().await {
         Ok(0) => {}
@@ -842,6 +875,7 @@ pub async fn run(
 
     let cem = announce_the_s2_surface(settings);
     running.cem = cem.clone();
+    running.store.clone_from(&store);
 
     let (plan, prices, published, learned) =
         start_planner(settings, &running, store.clone(), health, shutdown).await?;
@@ -1292,6 +1326,7 @@ async fn start_planner(
             household_kwh_per_year: settings.site.household_kwh_per_year,
             goal: running.goal.clone(),
             car: running.car.clone(),
+            tank: running.tank.clone(),
         },
         Arc::clone(&running.registry),
         fleet,

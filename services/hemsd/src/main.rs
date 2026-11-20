@@ -94,6 +94,48 @@ enum Command {
         /// Where to listen. Loopback only: the demo asks for no credential.
         #[arg(long, default_value = "127.0.0.1:8080")]
         listen: std::net::SocketAddr,
+        /// How many earlier days to simulate as well, so the month has closed
+        /// days to add up. At most ninety — what a box keeps.
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=90))]
+        days: u16,
+    },
+    /// Be a household on the wire: an inverter, a meter and a battery over
+    /// Modbus TCP and a Steuerbox over EEBUS, for `hemsd run` to manage.
+    ///
+    /// Writes the box's configuration, then lives a reference day in real time.
+    /// In a second terminal: `hemsd run --config house.toml`.
+    #[cfg(feature = "house")]
+    House {
+        /// Which day the house lives.
+        #[arg(long, value_enum, default_value_t = Day::Winter)]
+        day: Day,
+        /// Where in that day to start, `HH:MM`; the wall clock's time otherwise.
+        /// `--at 16:58` puts the winter day's § 14a reduction two minutes away.
+        #[arg(long, value_parser = time_of_day)]
+        at: Option<time::Duration>,
+        /// Where the devices answer Modbus TCP.
+        #[arg(long, default_value = "127.0.0.1:1502")]
+        listen: std::net::SocketAddr,
+        /// Where the box will listen for the Steuerbox (SHIP).
+        #[arg(long, default_value = "127.0.0.1:4712")]
+        ship: std::net::SocketAddr,
+        /// Where the box will serve its page and API.
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        api: std::net::SocketAddr,
+        /// The box's configuration, written here. The Steuerbox's certificate
+        /// is kept beside it so the SKI in the file stays true.
+        #[arg(long, default_value = "house.toml")]
+        out: PathBuf,
+        /// Allow `--listen` on an address other machines can reach. The house
+        /// asks nobody for a credential.
+        #[arg(long)]
+        exposed: bool,
+    },
+    /// Print the box's HTTP API as an OpenAPI 3.1 document.
+    Openapi {
+        /// Print the reference page's table of operations instead.
+        #[arg(long)]
+        markdown: bool,
     },
     /// Run one simulated day through the whole control stack and report on it.
     Simulate {
@@ -400,25 +442,54 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
     if let Some((_, fingerprint)) = &https {
         println!("  HTTPS certificate (SHA-256): {fingerprint}");
     }
+    // Web Push needs somewhere to keep a signing key and the subscriptions, so
+    // a box with no store has none — and answers `/v1/push` with `404`.
+    let push = match &running.store {
+        Some(store) => Some(hemsd::runtime::push::Push::open(store.clone()).await?),
+        None => None,
+    };
+    let local = hemsd::runtime::api::Local::new(
+        running.status,
+        site,
+        running.ski,
+        running.overrides,
+        running.trust,
+        running.access.clone(),
+        running.series,
+    )
+    .with_days(running.store.clone())
+    .with_home(hemsd::runtime::api::HomeSources {
+        site: Some(std::sync::Arc::new(running.household.site.clone())),
+        plan: running.plan.clone(),
+        prices: running.prices.clone(),
+        goal: running.goal.clone(),
+        car: running.car.clone(),
+        tank: running.tank.clone(),
+        fingerprint: running.fingerprint.clone(),
+        https_fingerprint: https.as_ref().map(|(_, f)| f.clone()),
+    })
+    .with_commissioning(hemsd::runtime::handover::Commissioning::of(&settings))
+    .with_push(push.clone());
+    if let Some(push) = push {
+        let watched = local.clone();
+        health.vital(
+            "push",
+            signal.clone(),
+            hemsd::runtime::push::run(
+                push,
+                move || {
+                    let watched = watched.clone();
+                    async move {
+                        let home = watched.document().await?;
+                        serde_json::to_value(home).ok()
+                    }
+                },
+                signal.clone(),
+            ),
+        );
+    }
     let router = hemsd::runtime::surfaces_over(
-        hemsd::runtime::api::Local::new(
-            running.status,
-            site,
-            running.ski,
-            running.overrides,
-            running.trust,
-            running.access.clone(),
-            running.series,
-        )
-        .with_home(hemsd::runtime::api::HomeSources {
-            site: Some(std::sync::Arc::new(running.household.site.clone())),
-            plan: running.plan.clone(),
-            prices: running.prices.clone(),
-            goal: running.goal.clone(),
-            car: running.car.clone(),
-            fingerprint: running.fingerprint.clone(),
-            https_fingerprint: https.as_ref().map(|(_, f)| f.clone()),
-        }),
+        local,
         settings.s2.enabled.then(|| {
             hemsd::runtime::s2::Surface::new(
                 std::sync::Arc::new(running.household.site.clone()),
@@ -462,16 +533,40 @@ async fn main() -> anyhow::Result<()> {
 
     match command {
         Command::Run { config, check } => return manage(config.as_deref(), check).await,
-        Command::Demo { day, listen } => {
+        Command::Openapi { markdown } => {
+            print!(
+                "{}",
+                if markdown {
+                    hemsd::openapi::markdown()
+                } else {
+                    hemsd::openapi::json()
+                }
+            );
+        }
+        Command::Demo { day, listen, days } => {
+            hemsd::demo::loopback_only(listen)?;
             let scenario = scenario_for(day, HouseholdConfig::default());
             println!(
                 "  simulating {} through the guard, the arbiter and the planner…",
                 scenario.date
             );
-            let demo = hemsd::demo::Demo::record(&scenario)?;
+            if days > 0 {
+                println!("  …and the {days} days before it, for the month");
+            }
+            let demo = hemsd::demo::Demo::record_with_history(&scenario, usize::from(days))?;
             println!("  open http://{listen}  — the household page, replaying the day");
             return hemsd::demo::serve(demo, listen).await;
         }
+        #[cfg(feature = "house")]
+        Command::House {
+            day,
+            at,
+            listen,
+            ship,
+            api,
+            out,
+            exposed,
+        } => return house(day, at, listen, ship, api, &out, exposed).await,
         Command::Simulate {
             day,
             json,
@@ -781,6 +876,100 @@ async fn report_day(
 }
 
 /// The scenario for one named day.
+/// `HH:MM` as a duration since midnight.
+#[cfg(feature = "house")]
+fn time_of_day(text: &str) -> Result<time::Duration, String> {
+    let parsed = text.split_once(':').and_then(|(h, m)| {
+        let (h, m) = (h.parse::<i64>().ok()?, m.parse::<i64>().ok()?);
+        ((0..24).contains(&h) && (0..60).contains(&m)).then(|| time::Duration::minutes(h * 60 + m))
+    });
+    parsed.ok_or_else(|| format!("`{text}` is not a time of day like 16:58"))
+}
+
+/// The virtual house: start it, write the box's configuration, and report what
+/// the devices are doing until interrupted.
+#[cfg(feature = "house")]
+async fn house(
+    day: Day,
+    at: Option<time::Duration>,
+    listen: std::net::SocketAddr,
+    ship: std::net::SocketAddr,
+    api: std::net::SocketAddr,
+    out: &std::path::Path,
+    exposed: bool,
+) -> anyhow::Result<()> {
+    use hemsd::house;
+
+    let scenario = scenario_for(day, HouseholdConfig::default());
+    let house = house::start(house::Options {
+        scenario: scenario.clone(),
+        listen,
+        household: Some(ship),
+        at,
+        identity: Some(out.with_extension("steuerbox.pem")),
+        exposed,
+    })
+    .await?;
+    std::fs::write(
+        out,
+        house::configuration(&house, &scenario, Some(ship), api)?,
+    )?;
+
+    let minutes = house.clock.since_midnight().whole_minutes();
+    println!(
+        "  a virtual house on {} at {:02}:{:02}",
+        scenario.date,
+        minutes / 60,
+        minutes % 60
+    );
+    println!(
+        "  modbus     {}  — inverter (unit 1), meter (2), battery (3)",
+        house.modbus
+    );
+    if let Some(ski) = &house.steuerbox_ski {
+        println!("  steuerbox  SKI {ski}, dialling {ship}");
+    }
+    if let Some((from, until, limit)) = scenario.grid_event {
+        println!(
+            "  § 14a      {:.1} kW from {:02}:{:02} to {:02}:{:02}",
+            limit.kw(),
+            from.whole_hours(),
+            from.whole_minutes() % 60,
+            until.whole_hours(),
+            until.whole_minutes() % 60,
+        );
+    }
+    println!("\n  now, in a second terminal:\n");
+    println!("      hemsd run --config {}\n", out.display());
+    println!("  and open http://{api}\n");
+
+    let mut every = tokio::time::interval(std::time::Duration::from_secs(10));
+    loop {
+        tokio::select! {
+            _ = every.tick() => {}
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+        }
+        let r = house.reading();
+        let seen = *house.steuerbox.borrow();
+        let minutes = house.clock.since_midnight().whole_minutes();
+        println!(
+            "  {:02}:{:02}  roof {:>5.0} W  house {:>5.0} W  battery {:>+6.0} W ({:>3.0} %)  grid {:>+6.0} W  steuerbox {}",
+            (minutes / 60) % 24,
+            minutes % 60,
+            r.pv_w,
+            r.load_w,
+            r.battery_w,
+            r.soc * 100.0,
+            r.grid_w,
+            match (seen.connected, seen.accepted_w) {
+                (false, _) => "waiting for the box".to_owned(),
+                (true, None) => "connected, no limit".to_owned(),
+                (true, Some(w)) => format!("limit {:.1} kW accepted", w / 1000.0),
+            },
+        );
+    }
+}
+
 fn scenario_for(day: Day, config: HouseholdConfig) -> Scenario {
     match day {
         Day::Winter => Scenario::winter_with_grid_event(config),

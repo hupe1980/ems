@@ -26,6 +26,10 @@ pub mod demo;
 pub mod drivers;
 pub mod forecasting;
 pub mod home;
+#[cfg(feature = "house")]
+pub mod house;
+pub mod month;
+pub mod openapi;
 pub mod render;
 pub mod report;
 pub mod runtime;

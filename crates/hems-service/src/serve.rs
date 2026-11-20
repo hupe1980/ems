@@ -138,12 +138,22 @@ impl Server {
             tracing::info!(%bound, "serving HTTPS");
             return serve_tls(listener, app, config, signal, grace).await;
         }
+        let stopping = signal.clone();
         let served = axum::serve(listener, app)
             .with_graceful_shutdown(async move {
                 signal.wait().await;
                 tracing::info!(grace_s = settings.shutdown_grace_s, "draining");
             })
             .into_future();
+        tokio::pin!(served);
+
+        // Serve until asked to stop; only then does the grace period start. A
+        // timeout around the whole future is a server that stops answering
+        // `shutdown_grace_s` after it started.
+        tokio::select! {
+            result = &mut served => return result.map_err(ServerError::Serve),
+            () = stopping.wait() => {}
+        }
 
         // The grace period is bounded on purpose: an unbounded one is not a
         // graceful shutdown, it is a hang that ends in the `SIGKILL` the
@@ -426,5 +436,183 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         panic!("the server did not stop");
+    }
+}
+
+#[cfg(all(test, feature = "tls"))]
+mod tls_tests {
+    use super::*;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A self-signed certificate for `localhost`, a server configuration over
+    /// it, and a client that trusts exactly that certificate.
+    fn a_certificate() -> (Arc<rustls::ServerConfig>, tokio_rustls::TlsConnector) {
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let key = rcgen::KeyPair::generate().unwrap();
+        let certificate = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        let der = CertificateDer::from(certificate.der().to_vec());
+        let key = PrivateKeyDer::from_pem_slice(key.serialize_pem().as_bytes()).unwrap();
+        let server = rustls::ServerConfig::builder_with_provider(Arc::clone(&provider))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![der.clone()], key)
+            .unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(der).unwrap();
+        let client = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        (
+            Arc::new(server),
+            tokio_rustls::TlsConnector::from(Arc::new(client)),
+        )
+    }
+
+    /// Serve the shared routes over TLS on an ephemeral port.
+    async fn start(
+        config: Arc<rustls::ServerConfig>,
+    ) -> (
+        SocketAddr,
+        crate::shutdown::ShutdownTrigger,
+        tokio::task::JoinHandle<Result<(), ServerError>>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bound = listener.local_addr().unwrap();
+        let app = shared_routes(crate::identity!(), Health::new());
+        let (signal, trigger) = Shutdown::channel();
+        let served = tokio::spawn(serve_tls(
+            listener,
+            app,
+            config,
+            signal,
+            std::time::Duration::from_secs(2),
+        ));
+        (bound, trigger, served)
+    }
+
+    /// One HTTP/1.1 request over a fresh TLS connection; the status line.
+    async fn get(connector: &tokio_rustls::TlsConnector, at: SocketAddr, path: &str) -> String {
+        let tcp = tokio::net::TcpStream::connect(at).await.unwrap();
+        let mut tls = connector
+            .connect(ServerName::try_from("localhost").unwrap(), tcp)
+            .await
+            .expect("the handshake to complete against the pinned certificate");
+        tls.write_all(
+            format!("GET {path} HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut answer = Vec::new();
+        let _ = tls.read_to_end(&mut answer).await;
+        String::from_utf8_lossy(&answer)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[tokio::test]
+    async fn the_router_answers_over_tls() {
+        let (config, connector) = a_certificate();
+        let (at, _trigger, _served) = start(config).await;
+        assert_eq!(get(&connector, at, "/livez").await, "HTTP/1.1 200 OK");
+    }
+
+    /// A failed handshake is one client's problem. A port scanner, a browser
+    /// that typed `http://`, a client that rejects the certificate: none of
+    /// them may stop the listener for the next one.
+    #[tokio::test]
+    async fn a_client_that_speaks_clear_does_not_stop_the_listener() {
+        let (config, connector) = a_certificate();
+        let (at, _trigger, _served) = start(config).await;
+
+        let mut clear = tokio::net::TcpStream::connect(at).await.unwrap();
+        clear
+            .write_all(b"GET /livez HTTP/1.1\r\nhost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut answer = Vec::new();
+        let _ = clear.read_to_end(&mut answer).await;
+        assert!(
+            !String::from_utf8_lossy(&answer).starts_with("HTTP/1.1 200"),
+            "the TLS port answered a request in clear"
+        );
+
+        // And one that does not trust the certificate.
+        let (_, stranger) = a_certificate();
+        let tcp = tokio::net::TcpStream::connect(at).await.unwrap();
+        assert!(
+            stranger
+                .connect(ServerName::try_from("localhost").unwrap(), tcp)
+                .await
+                .is_err(),
+            "a client that trusts another certificate completed the handshake"
+        );
+
+        assert_eq!(get(&connector, at, "/livez").await, "HTTP/1.1 200 OK");
+    }
+
+    #[tokio::test]
+    async fn a_signal_stops_the_listener_within_the_grace_period() {
+        let (config, connector) = a_certificate();
+        let (at, trigger, served) = start(config).await;
+        assert_eq!(get(&connector, at, "/livez").await, "HTTP/1.1 200 OK");
+        trigger.trigger();
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), served)
+            .await
+            .expect("the server to stop inside its grace period");
+        assert!(matches!(stopped, Ok(Ok(()))));
+        assert!(
+            tokio::net::TcpStream::connect(at).await.is_err(),
+            "the port is still open after shutdown"
+        );
+    }
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_server_outlives_its_grace_period_and_stops_when_asked() {
+        // The grace period bounds the *drain*. Wrapped around the whole serving
+        // future it bounded the server instead: every plain-HTTP daemon stopped
+        // answering `shutdown_grace_s` after it started.
+        let free = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("a free port");
+        let settings = Settings {
+            listen: free,
+            shutdown_grace_s: 1,
+            ..Settings::default()
+        };
+        let server = Server::new(crate::identity!(), settings, Health::new(), Router::new());
+        let (signal, trigger) = Shutdown::channel();
+        let running = tokio::spawn(server.run_until(signal));
+
+        tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+        assert!(
+            !running.is_finished(),
+            "still serving after the grace period"
+        );
+        tokio::net::TcpStream::connect(free)
+            .await
+            .expect("and still accepting");
+
+        trigger.trigger();
+        tokio::time::timeout(std::time::Duration::from_secs(5), running)
+            .await
+            .expect("it stops when asked")
+            .expect("the task")
+            .expect("cleanly");
     }
 }

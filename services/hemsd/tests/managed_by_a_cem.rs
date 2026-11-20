@@ -892,6 +892,24 @@ async fn a_manager_cannot_decide_who_else_may_act_on_the_box() {
                 .put(format!("http://{address}/v1/goals/car"))
                 .json(&serde_json::json!({ "target_soc": 1.0, "by_minute": 420 })),
         ),
+        (
+            "set the tank's goal",
+            client
+                .put(format!("http://{address}/v1/goals/warmwasser"))
+                .json(&serde_json::json!({ "target_c": 50.0, "by_minute": 1080 })),
+        ),
+        (
+            "read the household's page, its goals and its receipt",
+            client.get(format!("http://{address}/v1/home")),
+        ),
+        (
+            "read the household's closed days",
+            client.get(format!("http://{address}/v1/days")),
+        ),
+        (
+            "take the household's closed days away as CSV",
+            client.get(format!("http://{address}/v1/days.csv")),
+        ),
     ] {
         let status = request
             .bearer_auth(&manager)

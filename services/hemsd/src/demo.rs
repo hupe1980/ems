@@ -15,11 +15,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 
-use crate::home::{self, CarGoal, GoalAnswer, Home};
+use crate::home::{self, Home};
+use crate::month::ClosedDay;
 use crate::scenario::{DayResult, Recording, Scenario};
 
 /// The SKI the demo shows. Not any device's: a demo pairs with nothing.
@@ -32,7 +33,9 @@ const DEMO_FINGERPRINT: &str = "8e41c3a90b7d2f6614e8a0c5d2b97f31a4e6c0d58b2f19e7
 pub struct Demo {
     recording: Arc<Recording>,
     receipt: home::Receipt,
-    goal: Arc<tokio::sync::Mutex<Option<CarGoal>>>,
+    goal: Arc<tokio::sync::Mutex<home::GoalSet>>,
+    /// The closed days before the replayed one, oldest first.
+    history: Arc<Vec<ClosedDay>>,
 }
 
 impl Demo {
@@ -46,12 +49,59 @@ impl Demo {
             receipt: receipt_of_day(&day, scenario.date),
             recording: Arc::new(recording),
             goal: Arc::default(),
+            history: Arc::default(),
         })
+    }
+
+    /// The same, with the `days` days before it simulated too, so the month
+    /// view has closed days to add up.
+    ///
+    /// Each is a whole day through the same guard, arbiter and planner — the
+    /// same household on the dates before the replayed one, under weather that
+    /// strays from the reference day's by a fixed, repeatable amount, with the
+    /// network operator's reduction on one day a week. Nothing is drawn from a
+    /// distribution at start-up: the same command shows the same month.
+    ///
+    /// # Errors
+    /// Where a day cannot be simulated.
+    pub fn record_with_history(scenario: &Scenario, days: usize) -> anyhow::Result<Self> {
+        let mut demo = Self::record(scenario)?;
+        let days = days.min(crate::month::KEPT_DAYS);
+        let earlier: Vec<Scenario> = (1..=days).rev().map(|ago| earlier(scenario, ago)).collect();
+        // Independent days, so one thread each up to what the machine has.
+        let workers = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        let mut history = Vec::with_capacity(days);
+        for batch in earlier.chunks(workers) {
+            let results: Vec<anyhow::Result<ClosedDay>> = std::thread::scope(|scope| {
+                let running: Vec<_> = batch
+                    .iter()
+                    .map(|day| {
+                        scope.spawn(move || {
+                            let result = crate::scenario::run(day)?;
+                            Ok(ClosedDay::of(&receipt_of_day(&result, day.date), true))
+                        })
+                    })
+                    .collect();
+                running
+                    .into_iter()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("a simulated day panicked")))
+                    })
+                    .collect()
+            });
+            for day in results {
+                history.push(day?);
+            }
+        }
+        demo.history = Arc::new(history);
+        Ok(demo)
     }
 
     /// The page's document at `minute` of the day.
     #[must_use]
-    pub fn home_at(&self, minute: usize, goal: Option<CarGoal>) -> Home {
+    pub fn home_at(&self, minute: usize, goals: home::GoalSet) -> Home {
         let frames = &self.recording.frames;
         let index = minute.min(frames.len().saturating_sub(1));
         let frame = &frames[index];
@@ -62,8 +112,9 @@ impl Demo {
                 status: &frame.status,
                 plan: frame.plan.map(|i| &self.recording.plans[i]),
                 prices: Some(&self.recording.prices),
-                goal,
+                goals,
                 car: frame.car,
+                tank: frame.tank,
                 ski: Some(DEMO_SKI.into()),
                 fingerprint: Some(DEMO_FINGERPRINT.into()),
                 https_fingerprint: None,
@@ -80,7 +131,9 @@ impl Demo {
     pub fn router(self) -> axum::Router {
         axum::Router::new()
             .route("/v1/home", get(home_route))
-            .route("/v1/goals/car", put(set_goal).delete(clear_goal))
+            .route("/v1/days", get(days))
+            .route("/v1/days.csv", get(days_csv))
+            .route("/v1/goals/{asset}", put(set_goal).delete(clear_goal))
             .route("/v1/pairing", get(pairing))
             .route(
                 "/v1/session",
@@ -92,10 +145,30 @@ impl Demo {
     }
 }
 
+/// `scenario` as it would have been `ago` days earlier.
+///
+/// The weather strays from the reference day's by a repeatable amount — up to
+/// ±4 °C and ±0,2 of cloud, on periods that do not divide a week — and the
+/// network operator's reduction stays on every seventh day only, which is
+/// nearer a household's year than one every evening.
+fn earlier(scenario: &Scenario, ago: usize) -> Scenario {
+    #[allow(clippy::cast_precision_loss)]
+    let n = ago as f64;
+    let mut day = scenario.clone();
+    day.date = scenario.date - time::Duration::days(i64::try_from(ago).unwrap_or(0));
+    day.outdoor_c += 4.0 * (n * 0.7).sin();
+    day.cloudiness = (day.cloudiness + 0.2 * (n * 1.3).cos()).clamp(0.0, 0.95);
+    if !ago.is_multiple_of(7) {
+        day.grid_event = None;
+    }
+    day
+}
+
 /// A finished simulated day, as the receipt the page prints.
 #[must_use]
 pub fn receipt_of_day(day: &DayResult, date: time::Date) -> home::Receipt {
     home::Receipt {
+        priced: true,
         day: date.to_string(),
         bill_eur: day.cost.energy_eur,
         wear_eur: day.cost.wear_eur,
@@ -123,19 +196,52 @@ async fn home_route(State(demo): State<Demo>, Query(at): Query<At>) -> Json<Home
     Json(demo.home_at(at.at.unwrap_or(0), goal))
 }
 
-async fn set_goal(
+async fn days(
     State(demo): State<Demo>,
-    Json(goal): Json<CarGoal>,
-) -> Result<Json<Option<GoalAnswer>>, StatusCode> {
-    if !(0.0..=1.0).contains(&goal.target_soc) || goal.by_minute >= 1440 {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    *demo.goal.lock().await = Some(goal);
-    Ok(Json(None))
+    Query(window): Query<crate::month::Window>,
+) -> Result<Json<crate::month::Days>, StatusCode> {
+    window
+        .of(demo.history.as_ref().clone())
+        .map(Json)
+        .ok_or(StatusCode::BAD_REQUEST)
 }
 
-async fn clear_goal(State(demo): State<Demo>) -> StatusCode {
-    *demo.goal.lock().await = None;
+async fn days_csv(
+    State(demo): State<Demo>,
+    Query(window): Query<crate::month::Window>,
+) -> Result<axum::response::Response, StatusCode> {
+    let found = window
+        .of(demo.history.as_ref().clone())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    Ok(crate::month::csv_response(&found.days))
+}
+
+async fn set_goal(
+    State(demo): State<Demo>,
+    Path(asset): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let goal = home::parse_goal(&demo.recording.site, &asset, body).map_err(|why| match why {
+        home::GoalRefused::UnknownAsset => StatusCode::NOT_FOUND,
+        home::GoalRefused::OutOfRange => StatusCode::BAD_REQUEST,
+        _ => StatusCode::UNPROCESSABLE_ENTITY,
+    })?;
+    let mut set = demo.goal.lock().await;
+    match goal {
+        home::NewGoal::Car(g) => set.car = Some(g),
+        home::NewGoal::Tank(g) => set.tank = Some(g),
+    }
+    // The verdict is in the next `/v1/home`, judged at the minute it shows.
+    Ok(Json(serde_json::Value::Null))
+}
+
+async fn clear_goal(State(demo): State<Demo>, Path(asset): Path<String>) -> StatusCode {
+    let mut set = demo.goal.lock().await;
+    match home::goal_kind(&demo.recording.site, &asset) {
+        Ok("car") => set.car = None,
+        Ok(_) => set.tank = None,
+        Err(_) => return StatusCode::NOT_FOUND,
+    }
     StatusCode::NO_CONTENT
 }
 
@@ -145,15 +251,28 @@ async fn pairing() -> Json<serde_json::Value> {
     )
 }
 
+/// Refuse an address that is not this machine's own.
+///
+/// Its own function so the command can ask **before** it simulates a day: a
+/// refusal that arrives after a minute of simulation is one nobody waits for
+/// twice.
+///
+/// # Errors
+/// Where `listen` is not a loopback address.
+pub fn loopback_only(listen: SocketAddr) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        listen.ip().is_loopback(),
+        "the demo asks for no credential, so it listens only on this machine — not {listen}"
+    );
+    Ok(())
+}
+
 /// Serve the demo on `listen` until interrupted.
 ///
 /// # Errors
 /// Where `listen` is not a loopback address, or the port cannot be bound.
 pub async fn serve(demo: Demo, listen: SocketAddr) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        listen.ip().is_loopback(),
-        "the demo asks for no credential, so it listens only on this machine — not {listen}"
-    );
+    loopback_only(listen)?;
     let listener = tokio::net::TcpListener::bind(listen).await?;
     axum::serve(listener, demo.router()).await?;
     Ok(())
@@ -171,10 +290,64 @@ mod tests {
         let scenario = Scenario::winter_with_grid_event(crate::HouseholdConfig::default());
         let demo = Demo::record(&scenario).expect("the winter day");
         let day = crate::scenario::run(&scenario).expect("the winter day");
-        let r = demo.home_at(0, None).receipt.expect("a receipt");
+        let r = demo
+            .home_at(0, home::GoalSet::default())
+            .receipt
+            .expect("a receipt");
         assert!((r.cost_eur - day.cost.total()).abs() < 1e-9);
         assert!((r.saved_eur - day.saving_eur()).abs() < 1e-9);
         assert_eq!(r.reduced_minutes, Some(day.limited_minutes));
+    }
+
+    #[test]
+    fn the_demo_month_is_closed_days_before_the_replayed_one() {
+        let scenario = Scenario::winter_with_grid_event(crate::HouseholdConfig::default());
+        let demo = Demo::record_with_history(&scenario, 2).expect("three winter days");
+        let history = demo.history.as_ref();
+        // Oldest first, consecutive, priced, and the replayed day itself is
+        // not among them — it has not closed.
+        let dates: Vec<Option<time::Date>> = history.iter().map(ClosedDay::date).collect();
+        assert_eq!(
+            dates,
+            [
+                Some(scenario.date - time::Duration::days(2)),
+                scenario.date.previous_day()
+            ]
+        );
+        assert!(history.iter().all(|d| d.money.is_some()));
+        // Different weather is a different day: a month of one bar thirty
+        // times would be a picture of nothing.
+        assert_ne!(history[0].money, history[1].money);
+        // No reduction on either; `the_earlier_days_…` says where it is.
+        assert!(history.iter().all(|d| d.reductions == 0));
+    }
+
+    #[test]
+    fn the_earlier_days_vary_the_weather_and_keep_one_reduction_a_week() {
+        let scenario = Scenario::winter_with_grid_event(crate::HouseholdConfig::default());
+        let days: Vec<Scenario> = (1..=14).map(|ago| earlier(&scenario, ago)).collect();
+        let reduced: Vec<usize> = (1..=14)
+            .filter(|ago| days[ago - 1].grid_event.is_some())
+            .collect();
+        assert_eq!(reduced, [7, 14]);
+        for day in &days {
+            assert!((day.outdoor_c - scenario.outdoor_c).abs() <= 4.0);
+            assert!((0.0..=0.95).contains(&day.cloudiness));
+        }
+        let distinct: std::collections::BTreeSet<i64> = days
+            .iter()
+            .map(|d| {
+                #[allow(clippy::cast_possible_truncation)]
+                let tenths = (d.outdoor_c * 10.0).round() as i64;
+                tenths
+            })
+            .collect();
+        assert!(distinct.len() > 10, "{distinct:?}");
+        // Nothing is drawn at start-up: the same day back is the same day.
+        let again = earlier(&scenario, 5);
+        assert_eq!(again.date, days[4].date);
+        assert!((again.outdoor_c - days[4].outdoor_c).abs() < f64::EPSILON);
+        assert!((again.cloudiness - days[4].cloudiness).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -182,7 +355,7 @@ mod tests {
         let scenario = Scenario::winter_with_grid_event(crate::HouseholdConfig::default());
         let demo = Demo::record(&scenario).expect("the winter day");
         for minute in (0..1440).step_by(15) {
-            let view = demo.home_at(minute, None);
+            let view = demo.home_at(minute, home::GoalSet::default());
             assert_ne!(view.devices, []);
             for d in &view.devices {
                 assert!(
@@ -193,7 +366,7 @@ mod tests {
             }
         }
         // The § 14a reduction of the winter day, 17:00–18:30 local, is visible.
-        let reduced = demo.home_at(17 * 60 + 30, None);
+        let reduced = demo.home_at(17 * 60 + 30, home::GoalSet::default());
         assert!(
             reduced.reduction.is_some(),
             "the reduction at 17:30 is on the page"

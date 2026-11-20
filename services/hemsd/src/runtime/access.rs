@@ -123,7 +123,8 @@ impl ApiSettings {
 
 /// The credentials this box answers to, and the household it answers about.
 ///
-/// Two kinds. The household's own token, fixed for the life of the box, and one
+/// Two kinds. The household's own token — the box's until the household
+/// replaces it ([`LocalAccess::replace_token`]) — and one
 /// per **energy manager** it has connected — issued, listed and withdrawn while
 /// the box runs, which is why the set is behind a lock rather than built once.
 #[derive(Clone)]
@@ -132,12 +133,19 @@ pub struct LocalAccess {
     site: String,
     /// The household's own token, kept so the set can be **rebuilt** when a
     /// manager is withdrawn. `Credentials` is deliberately append-only.
-    own: String,
+    ///
+    /// Shared and replaceable: the household can issue itself a new one
+    /// ([`LocalAccess::replace_token`]), and every clone of this set has to
+    /// answer to the new one at once.
+    own: Arc<std::sync::RwLock<String>>,
+    /// Whether the box issued the token itself. One a deployment configured is
+    /// that deployment's to rotate, and is not replaced from here.
+    issued_here: bool,
     store: Option<Arc<tokio::sync::Mutex<Store>>>,
 }
 
 /// An energy manager this household has connected.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct Manager {
     /// What the household calls it.
     pub name: String,
@@ -176,7 +184,9 @@ impl LocalAccess {
         // One token, used for both: the box has to answer to exactly what it
         // prints, and building the credential and the announcement from separate
         // values is a box nobody can log in to.
-        Ok((Self::new(site, &token), Issued { token, how: issued }))
+        let mut access = Self::new(site, &token);
+        access.issued_here = issued != How::Configured;
+        Ok((access, Issued { token, how: issued }))
     }
 
     /// A credential set built in code, for a test.
@@ -189,7 +199,8 @@ impl LocalAccess {
         Self {
             credentials: Arc::new(RwLock::new(Credentials::default().with_site(site, token))),
             site: site.to_owned(),
-            own: token.to_owned(),
+            own: Arc::new(std::sync::RwLock::new(token.to_owned())),
+            issued_here: true,
             store: None,
         }
     }
@@ -271,7 +282,7 @@ impl LocalAccess {
         // `Credentials` is deliberately append-only: it is a set of things that
         // are allowed, and a type that could quietly drop one is a type where a
         // revocation can go missing.
-        let rebuilt = Credentials::default().with_site(&self.site, &self.own);
+        let rebuilt = Credentials::default().with_site(&self.site, self.household_token());
         let mut credentials = self.credentials.write().await;
         *credentials = rebuilt;
         drop(credentials);
@@ -310,6 +321,51 @@ impl LocalAccess {
     /// cookie carries the token itself.
     pub async fn authority_of_token(&self, token: &str) -> Option<Authority> {
         self.credentials.read().await.authority_of(token)
+    }
+
+    /// The household's own token, for the sign-in code on the handover sheet.
+    ///
+    /// Crate-private, and read by exactly one handler, which answers only a
+    /// caller that has just presented this same token — so it tells nobody
+    /// anything they did not already hold (`api::qr`).
+    pub(crate) fn household_token(&self) -> String {
+        self.own
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Issue the household a new token and stop answering to the old one.
+    ///
+    /// What makes a printed handover sheet safe to lose: the sheet carries the
+    /// token, and until this existed the only way to make a lost one worthless
+    /// was a factory reset. Every session cookie and every sign-in code made
+    /// before stops working on the next request. The managers the household
+    /// connected keep their own credentials — they never held this one.
+    ///
+    /// # Errors
+    /// [`ReplaceError::Configured`] where `[api] token` provisions the
+    /// credential — that deployment rotates it where it keeps it — and
+    /// [`ReplaceError::Store`] where the new one could not be written down, in
+    /// which case the old one still stands.
+    pub async fn replace_token(&self) -> Result<String, ReplaceError> {
+        if !self.issued_here {
+            return Err(ReplaceError::Configured);
+        }
+        let token = generate();
+        // Written down first: a token the box answers to and has not kept is
+        // one a power cut turns into a lock-out.
+        if let Some(store) = &self.store {
+            store.lock().await.put_api_token(&token)?;
+        }
+        self.own
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone_from(&token);
+        let rebuilt = Credentials::default().with_site(&self.site, &token);
+        *self.credentials.write().await = rebuilt;
+        self.restore().await?;
+        Ok(token)
     }
 
     /// The household this box is.
@@ -390,7 +446,7 @@ pub async fn require_token(
     // forget the household's could stop the box following § 14a; one that could
     // connect managers could mint credentials. A manager drives over S2.
     let path = request.uri().path();
-    if HOUSEHOLD_ONLY.iter().any(|p| path.starts_with(p)) && !authority.may_read_everything(&site) {
+    if is_household_only(path) && !authority.may_read_everything(&site) {
         return Err(axum::http::StatusCode::FORBIDDEN);
     }
     // Handed on, so whatever the request then does can say **who** did it: a
@@ -419,6 +475,17 @@ pub fn is_manager_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
+/// Why the household's token could not be replaced.
+#[derive(Debug, thiserror::Error)]
+pub enum ReplaceError {
+    /// `[api] token` provisions it, so it is not this box's to replace.
+    #[error("this box's token is set by `[api] token`; replace it where that is kept and restart")]
+    Configured,
+    /// The store refused the write.
+    #[error(transparent)]
+    Store(#[from] crate::store::StoreError),
+}
+
 /// Why a manager could not be connected.
 #[derive(Debug, thiserror::Error)]
 pub enum ManagerError {
@@ -434,7 +501,38 @@ pub enum ManagerError {
 
 /// Routes only the household's own credential reaches — its data, and its
 /// decisions about who may act on the box.
-const HOUSEHOLD_ONLY: [&str; 4] = ["/v1/series", "/v1/pairing", "/v1/managers", "/v1/goals"];
+/// Whether `path` is one only the household's own credential reaches.
+#[must_use]
+pub fn is_household_only(path: &str) -> bool {
+    HOUSEHOLD_ONLY.iter().any(|p| path.starts_with(p))
+}
+
+const HOUSEHOLD_ONLY: &[&str] = &[
+    "/v1/series",
+    "/v1/pairing",
+    "/v1/managers",
+    "/v1/goals",
+    // The page's own document carries the goals — when the car leaves, when
+    // the water is wanted — and the day's receipt. A manager reads `/v1/status`.
+    "/v1/home",
+    "/v1/days",
+    // Commissioning: the codes and the sheet carry the box's identities and one
+    // of them the household's own credential, discovery opens sockets from the
+    // box's place on the network, and the trust check says who the box obeys.
+    "/v1/qr",
+    "/v1/handover",
+    // The signed record names the control box and every device; it is the
+    // household's to hand to whoever it ordered the work from.
+    "/v1/commissioning",
+    "/v1/discover",
+    "/v1/trust",
+    // Replacing the household's token is the household's, and nobody else's.
+    "/v1/token",
+    // Notifications: who is told what this house's network operator is doing,
+    // and where the box sends it, is the household's to decide. A manager that
+    // could subscribe would be told when the household's car will not be ready.
+    "/v1/push",
+];
 
 /// The cookie the household page signs in with.
 pub const SESSION_COOKIE: &str = "hems_session";
@@ -451,7 +549,7 @@ fn session_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 }
 
 /// What the page sends to sign in.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SignIn {
     /// The household's token, from the handover sheet or the start-up log.
     pub token: String,
@@ -677,6 +775,35 @@ mod tests {
         );
         drop(store);
         let _ = std::fs::remove_file(&temporary);
+    }
+
+    // Evidence for SR-069.
+    #[tokio::test]
+    async fn a_replaced_token_is_kept_and_the_old_one_is_dead() {
+        let store = Arc::new(tokio::sync::Mutex::new(
+            Store::in_memory().expect("a store"),
+        ));
+        let access =
+            LocalAccess::for_testing("site-1", "the-old-one").remembering(Some(Arc::clone(&store)));
+        let new = access.replace_token().await.expect("a new token");
+        assert!(access.authority_of_token("the-old-one").await.is_none());
+        assert!(access.authority_of_token(&new).await.is_some());
+        assert_eq!(
+            store.lock().await.api_token().expect("a read"),
+            Some(new),
+            "a restart has to answer to the new one, not the one on the lost sheet"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_the_deployment_provisions_is_not_replaced_from_the_box() {
+        let mut access = LocalAccess::for_testing("site-1", "provisioned");
+        access.issued_here = false;
+        assert!(matches!(
+            access.replace_token().await,
+            Err(ReplaceError::Configured)
+        ));
+        assert!(access.authority_of_token("provisioned").await.is_some());
     }
 
     #[test]

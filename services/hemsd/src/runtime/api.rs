@@ -57,6 +57,13 @@ pub struct Local {
     series: Option<Arc<crate::series::Series>>,
     /// What only the household page reads: the site, the plan, the goal.
     home: HomeSources,
+    /// What the configuration says about this box's devices, for the handover
+    /// sheet and discovery.
+    commissioning: crate::runtime::handover::Commissioning,
+    /// The store the closed days are read from, where the box keeps one.
+    days: Option<Arc<Mutex<crate::store::Store>>>,
+    /// The Web Push sender, where the box has a store to keep subscriptions in.
+    push: Option<crate::runtime::push::Push>,
 }
 
 /// What the household page needs beyond `/v1/status`.
@@ -68,10 +75,12 @@ pub struct HomeSources {
     pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
     /// The prices it was made against.
     pub prices: Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
-    /// The household's car goal, shared with the planner.
+    /// The household's goals, shared with the planner.
     pub goal: crate::home::Goals,
     /// The car as the planner last saw it.
     pub car: crate::home::CarFacts,
+    /// The tank as the planner last saw it.
+    pub tank: crate::home::TankFacts,
     /// The SHA-256 fingerprint of the box's SHIP certificate.
     pub fingerprint: Option<String>,
     /// The SHA-256 fingerprint of the certificate it serves HTTPS with.
@@ -83,6 +92,61 @@ impl Local {
     #[must_use]
     pub fn with_home(mut self, home: HomeSources) -> Self {
         self.home = home;
+        self
+    }
+
+    /// Say what the configuration names, so the handover sheet and discovery
+    /// can set what they find against it.
+    #[must_use]
+    pub fn with_commissioning(
+        mut self,
+        commissioning: crate::runtime::handover::Commissioning,
+    ) -> Self {
+        self.commissioning = commissioning;
+        self
+    }
+
+    /// Answer `/v1/push` with this sender.
+    #[must_use]
+    pub fn with_push(mut self, push: Option<crate::runtime::push::Push>) -> Self {
+        self.push = push;
+        self
+    }
+
+    /// The household page's document as of now — `None` on a box that has not
+    /// been given a site to describe.
+    ///
+    /// What `GET /v1/home` answers, and what the push watcher reads: one
+    /// function, so a notification cannot say what the page does not.
+    pub async fn document(&self) -> Option<crate::home::Home> {
+        let site = self.home.site.as_ref()?;
+        let status = self.status.lock().await;
+        let plan = self.home.plan.read().await;
+        let prices = self.home.prices.read().await;
+        let goals = self.home.goal.get().await;
+        let car = *self.home.car.lock().await;
+        let tank = *self.home.tank.lock().await;
+        Some(crate::home::live(
+            &crate::home::Live {
+                site,
+                status: &status,
+                plan: plan.as_ref(),
+                prices: prices.as_ref(),
+                goals,
+                car,
+                tank,
+                ski: self.ski.clone(),
+                fingerprint: self.home.fingerprint.clone(),
+                https_fingerprint: self.home.https_fingerprint.clone(),
+            },
+            OffsetDateTime::now_utc(),
+        ))
+    }
+
+    /// Answer `/v1/days` from the closed days `store` keeps.
+    #[must_use]
+    pub fn with_days(mut self, store: Option<Arc<Mutex<crate::store::Store>>>) -> Self {
+        self.days = store;
         self
     }
 
@@ -106,12 +170,15 @@ impl Local {
             access,
             series,
             home: HomeSources::default(),
+            commissioning: crate::runtime::handover::Commissioning::default(),
+            days: None,
+            push: None,
         }
     }
 }
 
 /// One tick, as JSON.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct StatusBody {
     /// Which household.
     pub site: String,
@@ -164,6 +231,7 @@ pub struct StatusBody {
     /// are for an installer — and because the box is otherwise the last thing
     /// that would notice: its own forecast corrector is built to learn a lower
     /// roof and carry on planning well (D199).
+    #[schemars(schema_with = "crate::openapi::roof_health")]
     pub roof_health: Option<hems_forecast::Health>,
     /// The § 14a ceiling in force, kW.
     pub steuve_ceiling_kw: Option<f64>,
@@ -183,13 +251,6 @@ pub struct StatusBody {
     /// What the plan in force expects its horizon to cost, euros — wear,
     /// discomfort and undelivered service included.
     pub plan_expected_eur: Option<f64>,
-    /// What the same horizon would cost with no energy manager, euros.
-    ///
-    /// The comparison delivers the **same service**: the car still reaches its
-    /// target and the house is still warm, and the baseline household lives
-    /// under the same § 14a and § 9 EEG limits. A saving measured against a
-    /// household nobody is allowed to be is an advertisement.
-    pub plan_baseline_eur: Option<f64>,
     /// How many control ticks took longer than a control period.
     pub overruns: u64,
     /// How exposed this connection is to § 14a control — `null` until the box
@@ -219,7 +280,7 @@ pub struct StatusBody {
 /// monthly aggregate over a whole Netzbereich with no timestamps in it, so the
 /// only record of when this connection was reduced is the one the box keeps for
 /// `[A1 7.2]` anyway. Reported, and deliberately not planned against (D129).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ExposureBody {
     /// How many days of record the figures are drawn from.
     ///
@@ -256,7 +317,20 @@ pub fn router(local: Local) -> axum::Router {
             put(set_override).delete(clear_override),
         )
         .route("/v1/home", get(home))
-        .route("/v1/goals/car", put(set_goal).delete(clear_goal))
+        .route("/v1/qr/{what}", get(qr))
+        .route("/v1/handover", get(handover))
+        .route("/v1/commissioning", get(commissioning))
+        .route("/v1/discover", axum::routing::post(discover))
+        .route("/v1/trust", get(trust_check))
+        .route("/v1/token", axum::routing::post(replace_token))
+        .route("/v1/days", get(days))
+        .route("/v1/days.csv", get(days_csv))
+        .route("/v1/goals/{asset}", put(set_goal).delete(clear_goal))
+        .route(
+            "/v1/push",
+            get(push_overview).post(push_subscribe).delete(push_forget),
+        )
+        .route("/v1/push/test", axum::routing::post(push_test))
         .with_state(local)
 }
 
@@ -326,7 +400,7 @@ async fn forget_manager(
 }
 
 /// A manager that has just been connected, and the credential it presents.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Connected {
     /// What the household called it.
     pub name: String,
@@ -385,9 +459,10 @@ async fn series(
 }
 
 /// What the household is asking for, and until when.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct OverrideBody {
     /// `boost`, `pause` or `away`.
+    #[schemars(schema_with = "crate::openapi::user_override")]
     pub what: hems_core::setpoint::UserOverride,
     /// How long, in minutes. Absent takes the default; anything over a day is
     /// clamped, because longer than that is a statement about the house rather
@@ -397,11 +472,12 @@ pub struct OverrideBody {
 }
 
 /// One override in force.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub struct OverrideView {
     /// Which asset.
     pub asset: String,
     /// What was asked for.
+    #[schemars(schema_with = "crate::openapi::user_override")]
     pub what: hems_core::setpoint::UserOverride,
     /// When it stops applying, RFC 3339.
     pub until: String,
@@ -497,66 +573,276 @@ fn subject(who: Option<&hems_service::auth::Authority>) -> String {
 /// Built by [`crate::home::live`] from the same status, plan and prices every
 /// other route reads, so the page cannot say something `/v1/status` does not.
 async fn home(State(local): State<Local>) -> Result<Json<crate::home::Home>, StatusCode> {
-    let Some(site) = local.home.site.as_ref() else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    let status = local.status.lock().await;
-    let plan = local.home.plan.read().await;
-    let prices = local.home.prices.read().await;
-    let goal = *local.home.goal.lock().await;
-    let car = *local.home.car.lock().await;
-    Ok(Json(crate::home::live(
-        &crate::home::Live {
-            site,
-            status: &status,
-            plan: plan.as_ref(),
-            prices: prices.as_ref(),
-            goal,
-            car,
-            ski: local.ski.clone(),
-            fingerprint: local.home.fingerprint.clone(),
-            https_fingerprint: local.home.https_fingerprint.clone(),
-        },
-        OffsetDateTime::now_utc(),
-    )))
+    local
+        .document()
+        .await
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
 }
 
-/// Set the car goal, and answer at once whether it can be met.
+/// The sender, or `404` on a box with no store: a subscription that would not
+/// survive a restart is not one worth taking.
+fn push_of(local: &Local) -> Result<&crate::runtime::push::Push, (StatusCode, String)> {
+    local.push.as_ref().ok_or((
+        StatusCode::NOT_FOUND,
+        "this box keeps no store, so it cannot keep a subscription".into(),
+    ))
+}
+
+/// A store failure, as an answer.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the shape `map_err` hands an error over in"
+)]
+fn push_store(error: crate::store::StoreError) -> (StatusCode, String) {
+    tracing::error!(%error, "the push subscriptions could not be read or written");
+    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+}
+
+/// The key a browser subscribes with, and the browsers subscribed.
+async fn push_overview(
+    State(local): State<Local>,
+) -> Result<Json<crate::runtime::push::Overview>, (StatusCode, String)> {
+    push_of(&local)?
+        .overview()
+        .await
+        .map(Json)
+        .map_err(push_store)
+}
+
+/// Subscribe this browser, or change what it asked for.
+///
+/// The body is the browser's own `PushSubscription.toJSON()` with the
+/// household's choices beside it. Where a tap on a notification lands is the
+/// address this request came to — the `Origin` a browser states — so it opens
+/// the box the way this browser reaches it.
+async fn push_subscribe(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    headers: axum::http::HeaderMap,
+    Json(asked): Json<crate::runtime::push::Asked>,
+) -> Result<Json<crate::runtime::push::View>, (StatusCode, String)> {
+    use crate::runtime::push::Refused;
+    let header = |name| {
+        headers
+            .get(name)
+            .and_then(|v: &axum::http::HeaderValue| v.to_str().ok())
+    };
+    let origin = header(axum::http::header::ORIGIN)
+        .filter(|o| o.starts_with("https://") || o.starts_with("http://"))
+        .map(str::to_owned)
+        .or_else(|| header(axum::http::header::HOST).map(|host| format!("https://{host}")))
+        .unwrap_or_default();
+    let view = push_of(&local)?
+        .subscribe(asked, origin, OffsetDateTime::now_utc())
+        .await
+        .map_err(|refused| match refused {
+            Refused::Store(error) => push_store(error),
+            Refused::Full => (StatusCode::CONFLICT, refused.to_string()),
+            Refused::Endpoint(_) | Refused::Keys(_) | Refused::Quiet => {
+                (StatusCode::BAD_REQUEST, refused.to_string())
+            }
+        })?;
+    tracing::info!(
+        events = ?view.events,
+        subject = %subject(who.as_deref()),
+        "a browser subscribed to notifications"
+    );
+    Ok(Json(view))
+}
+
+/// Which browser a push request is about.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PushEndpoint {
+    /// Its push endpoint, as `GET /v1/push` lists it.
+    pub endpoint: String,
+}
+
+/// Unsubscribe a browser.
+async fn push_forget(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    Json(which): Json<PushEndpoint>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let existed = push_of(&local)?
+        .forget(&which.endpoint)
+        .await
+        .map_err(push_store)?;
+    if existed {
+        tracing::info!(subject = %subject(who.as_deref()), "a browser unsubscribed from notifications");
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "no such subscription".into()))
+    }
+}
+
+/// Send the test notification to one subscribed browser.
+///
+/// `204` once the push service has taken it; `410` where the push service says
+/// the subscription has ended (it is then forgotten); `502` where the push
+/// service refused or could not be reached.
+async fn push_test(
+    State(local): State<Local>,
+    Json(which): Json<PushEndpoint>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    use crate::runtime::push::Outcome;
+    let outcome = push_of(&local)?
+        .test(&which.endpoint, OffsetDateTime::now_utc())
+        .await
+        .map_err(push_store)?;
+    match outcome {
+        None => Err((StatusCode::NOT_FOUND, "no such subscription".into())),
+        Some(Outcome::Accepted) => Ok(StatusCode::NO_CONTENT),
+        Some(Outcome::Gone) => Err((
+            StatusCode::GONE,
+            "the browser's subscription has ended; subscribe again".into(),
+        )),
+        Some(Outcome::Refused(status)) => Err((
+            StatusCode::BAD_GATEWAY,
+            format!("the push service refused the notification ({status})"),
+        )),
+        Some(Outcome::Unreachable) => Err((
+            StatusCode::BAD_GATEWAY,
+            "the push service could not be reached from this box".into(),
+        )),
+    }
+}
+
+/// The closed days in the window asked for, read from the store.
+///
+/// `404` on a box with no store, `400` for a window that is not two dates in
+/// order. The day in progress is never among them: a day is kept when it
+/// closes.
+async fn closed_days(
+    local: &Local,
+    window: &crate::month::Window,
+) -> Result<crate::month::Days, StatusCode> {
+    let Some(store) = local.days.as_ref() else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let kept = store.lock().await.closed_days().map_err(|error| {
+        tracing::warn!(%error, "the closed days could not be read");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    window.of(kept).ok_or(StatusCode::BAD_REQUEST)
+}
+
+/// The closed days and their sum — what the month view draws.
+async fn days(
+    State(local): State<Local>,
+    Query(window): Query<crate::month::Window>,
+) -> Result<Json<crate::month::Days>, StatusCode> {
+    closed_days(&local, &window).await.map(Json)
+}
+
+/// The same days as CSV, for the household to take with it.
+async fn days_csv(
+    State(local): State<Local>,
+    Query(window): Query<crate::month::Window>,
+) -> Result<axum::response::Response, StatusCode> {
+    let found = closed_days(&local, &window).await?;
+    Ok(crate::month::csv_response(&found.days))
+}
+
+/// The status a refused goal is answered with.
+fn refused(why: crate::home::GoalRefused) -> (StatusCode, String) {
+    use crate::home::GoalRefused as R;
+    let status = match why {
+        R::UnknownAsset => StatusCode::NOT_FOUND,
+        R::NoGoalForThisKind | R::WrongShape => StatusCode::UNPROCESSABLE_ENTITY,
+        R::OutOfRange => StatusCode::BAD_REQUEST,
+    };
+    (status, why.message().into())
+}
+
+/// A store that would not keep a goal.
+fn not_kept(error: &crate::store::StoreError) -> (StatusCode, String) {
+    tracing::error!(%error, "a goal could not be kept");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "the goal could not be kept".into(),
+    )
+}
+
+/// Set a goal for a charge point or a hot-water tank, and answer at once
+/// whether it can be met.
+///
+/// The body follows the asset: `target_soc` and `by_minute` for a car,
+/// `target_c` and `by_minute` for a tank. The answer is the verdict, or `null`
+/// where the planner has not seen the device yet.
 async fn set_goal(
     State(local): State<Local>,
     who: Option<axum::Extension<hems_service::auth::Authority>>,
-    Json(goal): Json<crate::home::CarGoal>,
-) -> Result<Json<Option<crate::home::GoalAnswer>>, (StatusCode, String)> {
-    if !(0.0..=1.0).contains(&goal.target_soc) || goal.by_minute >= 1440 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "a goal is a state of charge in [0, 1] and a time of day in minutes below 1440".into(),
-        ));
-    }
-    *local.home.goal.lock().await = Some(goal);
-    tracing::info!(
-        target = goal.target_soc,
-        by_minute = goal.by_minute,
-        subject = %subject(who.as_deref()),
-        "a car goal"
-    );
+    Path(asset): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    use crate::home::NewGoal;
+    let site = local
+        .home
+        .site
+        .as_ref()
+        .ok_or_else(|| refused(crate::home::GoalRefused::UnknownAsset))?;
+    let goal = crate::home::parse_goal(site, &asset, body).map_err(refused)?;
+    local
+        .home
+        .goal
+        .change(|set| match goal {
+            NewGoal::Car(g) => set.car = Some(g),
+            NewGoal::Tank(g) => set.tank = Some(g),
+        })
+        .await
+        .map_err(|e| not_kept(&e))?;
+    tracing::info!(%asset, ?goal, subject = %subject(who.as_deref()), "a goal");
     let now = OffsetDateTime::now_utc();
-    let answer = local.home.car.lock().await.map(|facts| {
-        crate::home::judge_goal(
-            &crate::home::session_for(&facts, goal, now),
-            hems_core::prelude::Slot::containing(now),
-        )
-    });
-    Ok(Json(answer))
+    let answer = match goal {
+        NewGoal::Car(g) => local.home.car.lock().await.map(|facts| {
+            serde_json::json!(crate::home::judge_goal(
+                &crate::home::session_for(&facts, g, now),
+                hems_core::prelude::Slot::containing(now),
+            ))
+        }),
+        NewGoal::Tank(g) => {
+            let tank = site.assets.iter().find_map(|a| match a {
+                hems_core::prelude::Asset::Dhw(tank) => Some(tank),
+                _ => None,
+            });
+            let facts = *local.home.tank.lock().await;
+            tank.zip(facts).map(|(tank, facts)| {
+                serde_json::json!(crate::home::judge_tank(tank, &facts, g, now))
+            })
+        }
+    };
+    Ok(Json(answer.unwrap_or(serde_json::Value::Null)))
 }
 
-/// Withdraw the car goal; the configured departure applies again.
-async fn clear_goal(State(local): State<Local>) -> StatusCode {
-    if local.home.goal.lock().await.take().is_some() {
+/// Withdraw a goal; for the car, the configured departure applies again.
+async fn clear_goal(
+    State(local): State<Local>,
+    Path(asset): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let site = local
+        .home
+        .site
+        .as_ref()
+        .ok_or_else(|| refused(crate::home::GoalRefused::UnknownAsset))?;
+    let kind = crate::home::goal_kind(site, &asset).map_err(refused)?;
+    let changed = local
+        .home
+        .goal
+        .change(|set| {
+            if kind == "car" {
+                set.car = None;
+            } else {
+                set.tank = None;
+            }
+        })
+        .await
+        .map_err(|e| not_kept(&e))?;
+    Ok(if changed {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
-    }
+    })
 }
 
 /// RFC 3339, or an empty string for an instant that cannot be formatted.
@@ -606,7 +892,6 @@ async fn status(State(local): State<Local>) -> Json<StatusBody> {
         minutes_without_a_plan: (held.minutes_without_a_plan != i64::MAX)
             .then_some(held.minutes_without_a_plan),
         plan_expected_eur: held.plan_expected_eur,
-        plan_baseline_eur: held.plan_baseline_eur,
         overruns: held.overruns,
         cem: held.cem.clone(),
         overriding: held
@@ -701,7 +986,7 @@ mod exposure_tests {
 }
 
 /// Who this box is, who it will talk to, and who is asking.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct PairingBody {
     /// This box's own SKI — what the metering point operator has to be given.
     pub ski: Option<String>,
@@ -719,7 +1004,7 @@ pub struct PairingBody {
 }
 
 /// A SKI an installer has read off a Steuerbox.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct Approval {
     /// Forty hexadecimal characters, as printed on the peer.
     pub ski: String,
@@ -747,6 +1032,7 @@ async fn list_trusted(State(local): State<Local>) -> Json<PairingBody> {
 /// live, with no restart and no edited file.
 async fn approve_peer(
     State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
     Json(approval): Json<Approval>,
 ) -> Result<Json<PairingBody>, (axum::http::StatusCode, String)> {
     let Some(trust) = local.trust.as_ref() else {
@@ -759,6 +1045,9 @@ async fn approve_peer(
         .approve(&approval.ski, OffsetDateTime::now_utc())
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+    // Who the box obeys is a decision somebody made, and the log says who.
+    // `?ski`, not `%`: it is the caller's text, and `Debug` escapes it.
+    tracing::info!(ski = ?approval.ski, subject = %subject(who.as_deref()), "a control box was approved");
     Ok(list_trusted(State(local)).await)
 }
 
@@ -770,6 +1059,7 @@ async fn approve_peer(
 /// ask again — and nothing at all about a peer that is not currently waiting.
 async fn refuse_peer(
     State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
     axum::extract::Path(ski): axum::extract::Path<String>,
 ) -> Result<Json<PairingBody>, (axum::http::StatusCode, String)> {
     let Some(trust) = local.trust.as_ref() else {
@@ -781,6 +1071,7 @@ async fn refuse_peer(
     trust
         .refuse(&ski)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+    tracing::info!(?ski, subject = %subject(who.as_deref()), "a waiting control box was refused");
     Ok(list_trusted(State(local)).await)
 }
 
@@ -792,6 +1083,7 @@ async fn refuse_peer(
 /// reconnect, which is what revocation means.
 async fn forget_peer(
     State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
     axum::extract::Path(ski): axum::extract::Path<String>,
 ) -> Result<Json<PairingBody>, (axum::http::StatusCode, String)> {
     let Some(trust) = local.trust.as_ref() else {
@@ -804,7 +1096,335 @@ async fn forget_peer(
         .forget(&ski, OffsetDateTime::now_utc())
         .await
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+    tracing::info!(?ski, subject = %subject(who.as_deref()), "a control box was forgotten");
     Ok(list_trusted(State(local)).await)
+}
+
+// ── Commissioning: the codes, the sheet, discovery and the trust check ──────
+
+/// What a QR code may be asked to carry.
+#[derive(Debug, serde::Deserialize)]
+struct QrQuery {
+    /// For `signin`: the origin the page is open at, `https://host[:port]`.
+    /// The request's own `Host` where absent.
+    origin: Option<String>,
+    /// For `commissioning`: the caller's own identifier, echoed in the record.
+    reference: Option<String>,
+}
+
+/// A QR code, as SVG: `ski` (the SHIP pairing payload — SKI, SHIP ID and
+/// certificate fingerprint), `fingerprint` (the fingerprint alone) or `signin`
+/// (a link that signs the page in).
+///
+/// **`signin` answers only a request that presented the household's token
+/// itself**, not one riding on the session cookie. The cookie is `HttpOnly` so
+/// that nothing running in the page can read the credential; a route that
+/// handed the token to any signed-in request would undo exactly that. Whoever
+/// asks for this code already holds what it encodes.
+async fn qr(
+    State(local): State<Local>,
+    Path(what): Path<String>,
+    Query(query): Query<QrQuery>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, StatusCode> {
+    use crate::runtime::handover;
+    let text = match what.as_str() {
+        "ski" => {
+            let ski = local.ski.as_deref().ok_or(StatusCode::NOT_FOUND)?;
+            let ship_id = local
+                .commissioning
+                .ship_id
+                .as_deref()
+                .ok_or(StatusCode::NOT_FOUND)?;
+            handover::ship_payload(ski, ship_id, local.home.fingerprint.as_deref())
+                .ok_or(StatusCode::NOT_FOUND)?
+        }
+        "fingerprint" => local
+            .home
+            .fingerprint
+            .clone()
+            .ok_or(StatusCode::NOT_FOUND)?,
+        "signin" => {
+            if !headers.contains_key(axum::http::header::AUTHORIZATION) {
+                return Err(StatusCode::FORBIDDEN);
+            }
+            let origin = if let Some(origin) = query.origin {
+                origin
+            } else {
+                let host = headers
+                    .get(axum::http::header::HOST)
+                    .and_then(|h| h.to_str().ok())
+                    .filter(|h| handover::is_host(h))
+                    .ok_or(StatusCode::BAD_REQUEST)?;
+                let scheme = if local.home.https_fingerprint.is_some() {
+                    "https"
+                } else {
+                    "http"
+                };
+                format!("{scheme}://{host}")
+            };
+            if !handover::is_origin(&origin) {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            handover::sign_in_link(&origin, &local.access.household_token())
+        }
+        "commissioning" => {
+            let jws = record_jws(&local, query.reference, false)
+                .await
+                .map_err(|(status, _)| status)?;
+            return Ok(match handover::qr_svg_dense(&jws) {
+                Ok(svg) => svg_response(svg),
+                // Not an error of the box: a large installation's record is
+                // fetched, and the page offers that instead.
+                Err(handover::TooDense { octets }) => {
+                    use axum::response::IntoResponse;
+                    (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        format!(
+                            "this record is {octets} octets, more than the {} a code is \
+                             scanned at reliably; fetch /v1/commissioning instead",
+                            handover::MAX_CODE_OCTETS
+                        ),
+                    )
+                        .into_response()
+                }
+            });
+        }
+        _ => return Err(StatusCode::NOT_FOUND),
+    };
+    let svg = handover::qr_svg(&text).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(svg_response(svg))
+}
+
+/// A QR code's answer: never cached, never sniffed.
+fn svg_response(svg: String) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            // One of these is a credential, and none of them is worth a cache
+            // entry on a shared tablet.
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        svg,
+    )
+        .into_response()
+}
+
+/// Which commissioning record to sign.
+#[derive(Debug, serde::Deserialize)]
+struct RecordQuery {
+    /// The caller's own identifier for the work, echoed byte for byte.
+    reference: Option<String>,
+}
+
+/// The signed commissioning record: what a field-service tool takes away as
+/// proof of what the box said about itself. See [`crate::runtime::handover`].
+async fn commissioning(
+    State(local): State<Local>,
+    Query(query): Query<RecordQuery>,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    use axum::response::IntoResponse;
+    let jws = record_jws(&local, query.reference, true).await?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "application/jose"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        jws,
+    )
+        .into_response())
+}
+
+/// The commissioning record as a JWS, signed with the box's identity key.
+async fn record_jws(
+    local: &Local,
+    reference: Option<String>,
+    carry_certificate: bool,
+) -> Result<String, (StatusCode, String)> {
+    use crate::runtime::handover;
+    let none = || {
+        (
+            StatusCode::NOT_FOUND,
+            "this box has no EEBUS identity to sign with".to_owned(),
+        )
+    };
+    if reference
+        .as_deref()
+        .is_some_and(|r| !handover::is_reference(r))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "a reference is 1 to 64 printable ASCII characters without a space".into(),
+        ));
+    }
+    let trust = local.trust.as_ref().ok_or_else(none)?;
+    let site = local.home.site.as_ref().ok_or_else(none)?;
+    let certificate = trust.certificate_der().ok_or_else(none)?;
+    let sheet = handover::sheet(
+        site,
+        OffsetDateTime::now_utc(),
+        local.ski.as_deref(),
+        local.home.fingerprint.as_deref(),
+        local.home.https_fingerprint.as_deref(),
+        &local.commissioning,
+    );
+    let peers = trust.peers();
+    let control_box = match peers.as_slice() {
+        [one] => Some(one.as_str()),
+        _ => None,
+    };
+    let record = handover::record(&sheet, &trust_of(local).await, control_box, reference)
+        .ok_or_else(none)?;
+    // A code carries the record without its certificate and without the box's
+    // own device names: with them it is too dense to scan off a phone, and
+    // whoever verifies it already holds the certificate or the SKI.
+    let record = if carry_certificate {
+        record
+    } else {
+        record.for_a_code()
+    };
+    handover::jws(&record, &certificate, carry_certificate, |input| {
+        trust.sign_record(input)
+    })
+    .ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "the record could not be signed".into(),
+    ))
+}
+
+/// The handover sheet's one document.
+async fn handover(
+    State(local): State<Local>,
+) -> Result<Json<crate::runtime::handover::Handover>, StatusCode> {
+    let site = local.home.site.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(crate::runtime::handover::sheet(
+        site,
+        OffsetDateTime::now_utc(),
+        local.ski.as_deref(),
+        local.home.fingerprint.as_deref(),
+        local.home.https_fingerprint.as_deref(),
+        &local.commissioning,
+    )))
+}
+
+/// Look for devices: the configured ones from what the box hears, the named
+/// hosts by a SunSpec probe, SHIP nodes by their announcements.
+///
+/// Narrow by construction — see [`crate::runtime::handover`].
+async fn discover(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    Json(ask): Json<crate::runtime::handover::Ask>,
+) -> Result<Json<crate::runtime::handover::Discovered>, (StatusCode, String)> {
+    use crate::runtime::handover;
+    let hosts = handover::hosts(&ask).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    // Logged with who asked: this is the box opening sockets on request.
+    tracing::info!(hosts = ?hosts, subject = %subject(who.as_deref()), "a discovery was asked for");
+    let known = handover::Known {
+        own_ski: local.ski.clone(),
+        trusted: local.trust.as_ref().map(Trust::peers).unwrap_or_default(),
+        waiting: local
+            .trust
+            .as_ref()
+            .map(Trust::waiting)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|w| w.ski)
+            .collect(),
+        silent: local.status.lock().await.silent.iter().cloned().collect(),
+    };
+    Ok(Json(
+        handover::discover(
+            &local.commissioning,
+            &known,
+            &hosts,
+            ask.unit.unwrap_or(1),
+            ask.port.unwrap_or(handover::MODBUS_PORTS[0]),
+        )
+        .await,
+    ))
+}
+
+/// The household's new token, once.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct NewToken {
+    /// What the household now signs in with. The old one is dead.
+    pub token: String,
+}
+
+/// Replace the household's token: every session, every sign-in code and every
+/// printed handover sheet made before stops working.
+///
+/// Like the sign-in code, it answers only a request that **presented the
+/// token**, not one riding on the cookie: the answer is a credential, and the
+/// cookie is `HttpOnly` precisely so the page's scripts never hold one.
+async fn replace_token(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    use crate::runtime::access::ReplaceError;
+    use axum::response::IntoResponse;
+    if !headers.contains_key(axum::http::header::AUTHORIZATION) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "present the current token itself to replace it".into(),
+        ));
+    }
+    let token = local.access.replace_token().await.map_err(|error| {
+        let status = match error {
+            ReplaceError::Configured => StatusCode::CONFLICT,
+            ReplaceError::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (status, error.to_string())
+    })?;
+    tracing::warn!(subject = %subject(who.as_deref()), "the household's token was replaced");
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(NewToken { token }),
+    )
+        .into_response())
+}
+
+/// Whether the box is who it was, and whether its control box is still there.
+async fn trust_check(State(local): State<Local>) -> Json<crate::runtime::handover::TrustCheck> {
+    Json(trust_of(&local).await)
+}
+
+/// The trust check, for the route and for the commissioning record.
+async fn trust_of(local: &Local) -> crate::runtime::handover::TrustCheck {
+    use crate::runtime::handover;
+    let identity = match &local.trust {
+        None => "none",
+        Some(trust) if trust.identity_is_kept().await => "kept",
+        Some(_) => "ephemeral",
+    };
+    let (ticked, silent, in_failsafe) = {
+        let status = local.status.lock().await;
+        let silent = local
+            .commissioning
+            .control_box
+            .as_ref()
+            .is_some_and(|asset| status.silent.contains(asset));
+        (status.at.is_some(), silent, status.in_failsafe)
+    };
+    handover::TrustCheck {
+        identity,
+        ski: local.ski.clone(),
+        fingerprint: local.home.fingerprint.clone(),
+        https_fingerprint: local.home.https_fingerprint.clone(),
+        control_box: handover::control_box(handover::ControlBoxFacts {
+            configured: local.trust.is_some() && local.commissioning.control_box.is_some(),
+            trusted: local.trust.as_ref().map_or(0, |t| t.peers().len()),
+            waiting: local.trust.as_ref().map_or(0, |t| t.waiting().len()),
+            // Before the first tick nothing has been heard *or* missed.
+            silent: !ticked || silent,
+            in_failsafe,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -881,5 +1501,147 @@ mod series_tests {
         assert_eq!(window.readings.len(), 1, "{window:?}");
         assert!((window.readings[0].watts - 2_500.0).abs() < 1e-6);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// A box that knows the reference household, for the goal routes.
+    fn with_the_reference_house() -> (Local, String, String) {
+        let site = crate::site::Household::build(&crate::HouseholdConfig::default())
+            .expect("the reference household")
+            .site;
+        let id = |kind: &str| {
+            crate::home::devices_of(&site)
+                .into_iter()
+                .find(|(_, k)| *k == kind)
+                .map(|(id, _)| id.to_string())
+                .expect("the reference household has one")
+        };
+        let (car, tank) = (id("car"), id("hot_water"));
+        let local = Local::new(
+            Arc::new(Mutex::new(Status::default())),
+            "haus".into(),
+            None,
+            crate::runtime::overrides::Overrides::default(),
+            None,
+            crate::runtime::access::LocalAccess::for_testing("haus", "t"),
+            None,
+        )
+        .with_home(HomeSources {
+            site: Some(Arc::new(site)),
+            ..HomeSources::default()
+        });
+        (local, car, tank)
+    }
+
+    #[tokio::test]
+    async fn a_goal_is_refused_when_it_is_out_of_range_or_for_the_wrong_device() {
+        let (local, car, tank) = with_the_reference_house();
+        let put = |asset: &str, body: serde_json::Value| {
+            set_goal(
+                State(local.clone()),
+                None,
+                Path(asset.to_owned()),
+                Json(body),
+            )
+        };
+        let status = |outcome: Result<_, (StatusCode, String)>| outcome.err().map(|(s, _)| s);
+
+        assert_eq!(
+            status(
+                put(
+                    &car,
+                    serde_json::json!({ "target_soc": 1.5, "by_minute": 420 })
+                )
+                .await
+            ),
+            Some(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            status(
+                put(
+                    &tank,
+                    serde_json::json!({ "target_c": 50.0, "by_minute": 1440 })
+                )
+                .await
+            ),
+            Some(StatusCode::BAD_REQUEST)
+        );
+        // A temperature is not a goal for a car, nor a state of charge for a tank.
+        assert_eq!(
+            status(
+                put(
+                    &car,
+                    serde_json::json!({ "target_c": 50.0, "by_minute": 420 })
+                )
+                .await
+            ),
+            Some(StatusCode::UNPROCESSABLE_ENTITY)
+        );
+        assert_eq!(
+            status(
+                put(
+                    &tank,
+                    serde_json::json!({ "target_soc": 0.8, "by_minute": 420 })
+                )
+                .await
+            ),
+            Some(StatusCode::UNPROCESSABLE_ENTITY)
+        );
+        assert_eq!(
+            status(
+                put(
+                    "nothing",
+                    serde_json::json!({ "target_soc": 0.8, "by_minute": 420 })
+                )
+                .await
+            ),
+            Some(StatusCode::NOT_FOUND)
+        );
+        assert_eq!(
+            local.home.goal.get().await,
+            crate::home::GoalSet::default(),
+            "a refused goal changes nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tank_goal_is_kept_beside_the_cars_and_withdrawn_alone() {
+        let (local, car, tank) = with_the_reference_house();
+        let water = crate::home::TankGoal {
+            target_c: 50.0,
+            by_minute: 1080,
+        };
+        let Json(answer) = set_goal(
+            State(local.clone()),
+            None,
+            Path(tank.clone()),
+            Json(serde_json::json!(water)),
+        )
+        .await
+        .expect("a tank takes a temperature");
+        assert!(
+            answer.is_null(),
+            "no verdict before the planner has seen the tank: {answer}"
+        );
+        let Json(_) = set_goal(
+            State(local.clone()),
+            None,
+            Path(car.clone()),
+            Json(serde_json::json!({ "target_soc": 0.8, "by_minute": 420 })),
+        )
+        .await
+        .expect("a car takes a state of charge");
+        let set = local.home.goal.get().await;
+        assert_eq!(set.tank, Some(water));
+        assert!(set.car.is_some());
+
+        assert_eq!(
+            clear_goal(State(local.clone()), Path(car.clone())).await,
+            Ok(StatusCode::NO_CONTENT)
+        );
+        assert_eq!(
+            clear_goal(State(local.clone()), Path(car)).await,
+            Ok(StatusCode::NOT_FOUND),
+            "there is no car goal left to withdraw"
+        );
+        assert_eq!(local.home.goal.get().await.tank, Some(water));
     }
 }

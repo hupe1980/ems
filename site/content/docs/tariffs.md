@@ -63,6 +63,35 @@ but anything a household is shown or billed comes back through `Decimal`, and th
 conversion happens **once**, at `SlotPrice::import_f64`. A settlement that went
 through a `double` is one nobody can reproduce.
 
+## Levies change on 1 January, and a plan runs across it
+
+Three of the levies are set nationally and published every October for the
+year that follows. They are a dated table in `hems_tariff::levies`, held to
+the publication by a test:
+
+| ct/kWh, net | 2025 | 2026 | 2027 |
+|---|---|---|---|
+| KWKG-Umlage | 0,277 | 0,446 | 0,451 |
+| Aufschlag für besondere Netznutzung (§ 19 StromNEV), up to 1 GWh a year | 1,558 | 1,559 | 2,027 |
+| Offshore-Netzumlage | 0,816 | 0,941 | 1,143 |
+| Stromsteuer | 2,05 | 2,05 | 2,05 |
+
+Each quarter hour is priced on the figures of **its own year**, so a plan made
+on New Year's Eve prices 23:45 and 00:00 on two tables — 0,80 ct/kWh apart,
+gross, from 2026 to 2027. In a year nobody has published yet, the box prices on
+the last one that was and says so on the household page; it does not invent a
+figure.
+
+The Konzessionsabgabe is the municipality's: 1,32, 1,59, 1,99 or 2,39 ct/kWh
+by its size (§ 2 KAV), 1,59 where nothing is configured. A supplier's price
+sheet is the authority for one customer, and `[tariff.levies]` takes any of
+the figures from it:
+
+```toml
+[tariff.levies]
+konzessionsabgabe = 1.32
+```
+
 ## The five sources, and what is a decision in each
 
 `hems-tariff::source` parses what ENTSO-E, SMARD, aWATTar, Tibber and
@@ -171,8 +200,8 @@ the community's energy price substituted, so the two are directly comparable.
 
 The result is less dramatic than the phrase “free solar from the neighbours”
 suggests, and the arithmetic is the point: a community selling at **12 ct/kWh
-net** still delivers a **32,5 ct** kilowatt-hour against the supplier's
-**47,9** — a third off. Network charges, the Stromsteuer, the Konzessionsabgabe
+net** still delivers a **34,0 ct** kilowatt-hour against the supplier's
+**49,5** — a third off. Network charges, the Stromsteuer, the Konzessionsabgabe
 and 19 % VAT do not care where the electron came from, because it crossed the
 public grid to get here.
 

@@ -629,10 +629,10 @@ round-trip efficiency. The plant-charged quantity falls by one, the renewable
 storage output by `η` — so the *grey* share of what the store fed back rises by
 `η`, the levy-reducing quantity rises by `η`, and the levied grid draw therefore
 rises by only **`1 − η`**. Grid charging costs the levies on the **round-trip
-loss**, about 0,8 ct/kWh, not the levies on the whole kilowatt-hour: the
+loss**, about 1,0 ct/kWh on 2026's figures, not the levies on the whole kilowatt-hour: the
 Saldierung is exactly what stops a battery being levied twice on one electron.
 The support side is the larger half — the anzulegender Wert is lost on `η` of it,
-about 6,7 ct/kWh — so together roughly **7,5 ct/kWh**, which is the size of the
+about 6,7 ct/kWh — so together roughly **7,7 ct/kWh**, which is the size of the
 whole day-ahead spread an arbitrage is chasing.
 
 It applies only to the share of the store's output that **leaves the house**, and
@@ -747,8 +747,8 @@ inventing one.
 The price lives in the tariff, because a price is: § 42c replaces the supplier's
 **energy component** and nothing else, since the electricity reaches the member
 over the public grid. On the reference winter day a community selling at
-12 ct/kWh net still delivers a **32,5 ct** kilowatt-hour against the supplier's
-**47,9** — a third off, and not the ninety per cent that "free solar from the
+12 ct/kWh net still delivers a **34,0 ct** kilowatt-hour against the supplier's
+**49,5** — a third off, and not the ninety per cent that "free solar from the
 neighbours" suggests. Network charges, the Stromsteuer, the Konzessionsabgabe and
 19 % value added tax do not care where the electron came from.
 

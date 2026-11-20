@@ -85,8 +85,15 @@ hex          = { workspace = true }
 # The box's own HTTPS (runtime::tls): the server configuration and the
 # certificate it issues itself, on the provider the rest of the box names.
 rustls       = { workspace = true }
+# Web Push (runtime::webpush): message encryption [RFC 8291] and the VAPID
+# signature [RFC 8292], on the provider above; base64url is their one spelling.
+aws-lc-rs    = { workspace = true }
+base64       = { workspace = true }
 rcgen        = { workspace = true }
+# The handover sheet's QR codes, as SVG (runtime::handover).
+qrcode       = { workspace = true }
 serde        = { workspace = true }
+schemars     = { workspace = true }
 serde_json   = { workspace = true }
 thiserror    = { workspace = true }
 toml         = { workspace = true }
@@ -94,6 +101,15 @@ tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "net
 time         = { workspace = true }
 tracing      = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# The virtual house's Modbus far end, kept out of the box's own build.
+tokio-modbus = { workspace = true, optional = true }
+sunspec      = { workspace = true, optional = true }
+
+[features]
+# `hemsd house`: a simulated household on the wire — SunSpec devices over Modbus
+# TCP and a Steuerbox over SHIP — for a real `hemsd run` to manage.
+house = ["dep:tokio-modbus", "dep:sunspec"]
 
 [dev-dependencies]
 # The **CEM's** half of S2, for the one test that needs a real one. The client

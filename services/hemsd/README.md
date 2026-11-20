@@ -45,10 +45,27 @@ $ hemsd run --config /etc/hems/hemsd.toml
 starting point is [`hemsd.example.toml`](hemsd.example.toml) — and opens one task
 per driver: SunSpec and vendor maps over Modbus TCP, EEBUS over SHIP for the
 Steuerbox, the heat pump, the hot-water tank and the car. It plans against
-`tariffd` and `forecastd`, serves the household's API on loopback behind a bearer
-token it issues itself, and accepts an external energy manager over S2 at
-`/s2/{asset}`. It prints the box's SKI and API token at start-up; those are what a
-commissioning visit carries away.
+`tariffd` and `forecastd`, serves the household's page and API — over HTTPS
+whenever it listens off loopback, behind a token it issues itself — and accepts
+an external energy manager over S2 at `/s2/{asset}`. It prints the box's SKI and
+access code at start-up; the Setup view prints both as a handover sheet.
+
+The API is a contract: [`openapi.json`](openapi.json) (OpenAPI 3.1) is generated
+from the handlers' types, `hemsd openapi` prints it, and `cargo xtask check-api`
+fails when the two differ.
+
+## Without hardware
+
+```console
+$ cargo run -p hemsd -- demo                                   # a replayed day on the household page
+$ cargo run -p hemsd --features house -- house --at 16:58      # a house on the real protocols
+$ cargo run -p hemsd --features house -- run --config house.toml
+```
+
+`demo` serves a simulated day minute by minute (`--days 30` adds a month
+before it). `house` serves a SunSpec inverter, meter and battery over Modbus
+TCP and dials the box as a Steuerbox over EEBUS, and writes the configuration
+an ordinary `run` manages it with.
 
 ## Simulating a day
 

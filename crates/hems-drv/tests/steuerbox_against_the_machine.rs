@@ -10,6 +10,8 @@
 //! per command, which is the whole of what a simulator owes a state machine it
 //! is not a copy of (D186).
 
+#![cfg(feature = "eebus")]
+
 use hems_core::prelude::{AssetId, Power};
 use hems_drv::eebus::{LimitWrite, Lpc, Use};
 use hems_grid::LpcState;

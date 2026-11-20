@@ -42,12 +42,12 @@ $ just demo-all
 
 | Day | What it shows | Saved |
 |---|---|---|
-| `winter` | a reduction from 17:00 to 18:30, a car that must be full by seven, and a dishwasher the plan holds back 75 minutes | €1,07 |
-| `summer` | more production than the house can use, and **twelve** quarter hours of negative prices — three whole hours of § 51 EEG | €4,36 |
-| `deadline` | a car that arrives *as the reduction starts* with three hours to take 13 kWh under the household's own 10,5 kW minimum, shared with a heat pump | €1,54 |
-| `shared` | the same evening on a household with **no store**, owed 7,56 kW rather than 10,5, and a reduction that arrives at 17:07 rather than on the re-planning grid | €0,89 |
-| `offline` | **the planner switched off** — what the box does on its own | €5,78 |
-| `autumn` | a September day, planner off, the surplus in the band only one conductor can use | €0,22 |
+| `winter` | a reduction from 17:00 to 18:30, a car that must be full by seven, and a dishwasher the plan holds back 75 minutes | €1,12 |
+| `summer` | more production than the house can use, and **twelve** quarter hours of negative prices — three whole hours of § 51 EEG | €4,17 |
+| `deadline` | a car that arrives *as the reduction starts* with three hours to take 13 kWh under the household's own 10,5 kW minimum, shared with a heat pump | €1,45 |
+| `shared` | the same evening on a household with **no store**, owed 7,56 kW rather than 10,5, and a reduction that arrives at 17:07 rather than on the re-planning grid | €0,88 |
+| `offline` | **the planner switched off** — what the box does on its own | €6,12 |
+| `autumn` | a September day, planner off, the surplus in the band only one conductor can use | €0,25 |
 | `capped` | a clear May day on a 20 kWp roof, the § 9 EEG cap binding at 12,01 of 12,00 kW | €0,70 |
 
 Only the winter day's full transcript is held to the binary by a test; the
@@ -76,10 +76,10 @@ because each costs minutes rather than seconds.
 
 | Flag | What it isolates |
 |---|---|
-| `--perfect-foresight` | the **same** January day with the weather known: €0,28 more on a €0,57 bill saving, and an unmanaged household identical to the cent |
-| `--wear-eur-per-kwh 0` | a cost-only optimiser: 18,7 kWh of battery throughput instead of 15,8, and a saving that *falls* to €1,02 — both households pay their own wear |
-| `--no-phase-switching` | on the autumn day, 0,1 kWh into the car against 6,5 — and a saving of −€23,48 against €0,22 |
-| `--imsys` | the § 9 EEG cap lifted: seventeen cents to the managed household, twelve to the unmanaged one |
+| `--perfect-foresight` | the **same** January day with the weather known: €0,16 more on a €0,66 bill saving, and an unmanaged household identical to the cent |
+| `--wear-eur-per-kwh 0` | a cost-only optimiser: 17,9 kWh of battery throughput instead of 15,6, and a bill saving that *falls* from €0,66 to €0,49 — both households pay their own wear |
+| `--no-phase-switching` | on the autumn day, 0,1 kWh into the car against 6,5 — and a saving of −€23,44 against €0,25 |
+| `--imsys` | the § 9 EEG cap lifted: seven cents to the managed household, eleven to the unmanaged one |
 | `--uniform-weights` | every asset given the same allocation weight, which is what one marginal value per slot amounts to |
 | `--sharing` | inside a § 42c community: 12,9 kWh allocated against the 3,9 a member who does nothing about it gets, and the baseline joins the same community. It runs a year on from the winter day's own date — a network operator's duty to allocate begins on 1 June 2026, and both sides of the comparison move together in whole weeks so the weekday survives |
 | `--heat-pump-on-off` | a single-speed compressor — the only unit a minimum runtime constrains |
@@ -197,19 +197,18 @@ so measured once, insurance is always a pure loss.
 $ just risk deadline 20
 
   policy                mean     worst      best    unserved     solve
-  one median           1.09€    -0.58€     1.75€       0.10€       81s
-  three futures        1.22€     0.54€     1.60€       0.00€      651s
-  …and the tail        1.20€     0.62€     1.69€       0.00€      567s
-  only when at risk     1.18€     0.61€     1.69€       0.00€      480s
+  one median           0.61€    -1.01€     1.45€       0.05€      227s
+  three futures        0.90€    -0.04€     1.48€       0.02€      700s
+  …and the tail        0.81€    -0.21€     1.46€       0.03€      688s
+  only when at risk     0.75€    -0.23€     1.45€       0.03€      814s
 ```
 
-Scenarios **pay where a service is at risk**, **cost about ninety cents a day
-where nothing is**, and — since the baseline was given the battery it owns — the
-hedge **does** buy a better bad day: on this evening it takes the worst weather
-from −€0,58 to €0,62, where the median plan costs the household money. That last
-finding read the opposite way until the counterfactual was corrected, which is
-the sharpest argument here for owning the sweep rather than footnoting it: a
-handicapped baseline did not merely flatter a figure, it reversed a conclusion.
+Scenarios **pay where a service is at risk**, **cost eighteen cents a day where
+nothing is**, and the hedge **does** buy a better bad day: on this evening it
+takes the worst weather from −€1,01 to −€0,04. That finding read the opposite
+way until the baseline was given the battery it owns — a handicapped
+counterfactual did not merely flatter a figure, it reversed a conclusion. The
+[optimizer](@/docs/optimizer.md) has the ordinary day beside it.
 
 ## What the reference days are not
 
@@ -232,14 +231,13 @@ respects the § 14a reduction and the § 9 EEG ceiling, that the car is charged 
 nobody is cold, and that it is **honest about knowing nothing**, with a roof
 correction of exactly 1,0 and a forecast score strictly worse than the warm box's.
 
-The saving is the finding rather than the assertion, and it is negative: a box on
-its first evening is **€1,64 worse than no box**. A household with no profile
-falls back to persistence from one meter reading, and that reading is usually the
-night trough, so the plan is made for a house that uses a third of what it will.
-The published answer is BDEW's H0 standard load profile hung on the measured
-level, and writing a plausible curve instead would be worse than the defect —
-this simulator's own household is two-peaked, so a hand-fitted prior would score
-well here and say nothing about a real one.
+The saving is the finding as well as an assertion: a box on its first evening
+**saves €0,40**, where the warm one saves €1,12. Without a profile it would plan
+from one meter reading — usually the night trough, a third of what the house
+will use. It starts instead from BDEW's H25 standard load profile hung on the
+household's stated or first-day consumption. A hand-fitted curve would score
+better here and say nothing about a real house: this simulator's household is
+two-peaked by construction.
 
 **A reference day is calibrated.** Each one is tuned to isolate one mechanism, so
 adding a device to a tuned scenario makes it measure two things at once and

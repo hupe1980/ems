@@ -162,6 +162,20 @@ jobs:
       # invokes is not a feature, and no property test catches one.
       - run: cargo run -p hemsd -- simulate --day winter --sharing
 
+  house:
+    name: Virtual house
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # The box against far ends it did not write: a third-party Modbus server
+      # and an EEBUS Energy Guard, over real sockets, in real time. Its own job
+      # so a protocol failure is not one line among a thousand tests.
+      - run: cargo test -p hemsd --features house --test virtual_house
+      # And the box's ordinary build does not carry the simulator's server.
+      - run: "! cargo tree -p hemsd -e normal | grep -q tokio-modbus"
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest

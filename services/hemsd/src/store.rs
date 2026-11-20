@@ -121,6 +121,10 @@ const IDENTITY: TableDefinition<&str, &[u8]> = TableDefinition::new("identity");
 /// point of naming them.
 const MANAGERS: TableDefinition<&str, &[u8]> = TableDefinition::new("managers");
 
+/// The closed days the household page adds up: Julian day → a
+/// `crate::month::ClosedDay`. At most [`crate::month::KEPT_DAYS`] rows.
+const DAYS: TableDefinition<i32, &[u8]> = TableDefinition::new("days");
+
 /// The key the box's own API token sits under in [`IDENTITY`].
 ///
 /// A named constant rather than a literal at two call sites: a reader and a
@@ -130,8 +134,22 @@ const API_TOKEN: &str = "api-token";
 /// The certificate and key the box serves HTTPS with, PEM, in one record.
 const API_TLS: &str = "api-tls";
 
+/// The key the box's Web Push signing key sits under in [`IDENTITY`], PKCS#8.
+const PUSH_VAPID: &str = "push-vapid";
+
+/// The browsers this household has let the box notify, by push endpoint.
+///
+/// A table of its own for the reason [`MANAGERS`] is: several, added and
+/// withdrawn one at a time. Each row holds what lets the box reach one browser
+/// through its vendor's push service.
+const PUSH: TableDefinition<&str, &[u8]> = TableDefinition::new("push");
+
 /// The failsafe a network operator wrote, per direction.
 const FAILSAFE: TableDefinition<&str, &[u8]> = TableDefinition::new("failsafe");
+
+/// What the household asked for on its page — the car by seven, the water by
+/// six — as one document under one key.
+const GOALS: TableDefinition<&str, &[u8]> = TableDefinition::new("goals");
 
 /// The CloudEvents queued for the fleet.
 const OUTBOUND: TableDefinition<u64, &[u8]> = TableDefinition::new("outbound");
@@ -438,6 +456,9 @@ impl Store {
             sql!(write.open_table(OUTBOUND_OWED))?;
             sql!(write.open_table(OUTBOUND_BY_EVENT))?;
             sql!(write.open_table(MANAGERS))?;
+            sql!(write.open_table(GOALS))?;
+            sql!(write.open_table(PUSH))?;
+            sql!(write.open_table(DAYS))?;
 
             let mut meta = sql!(write.open_table(META))?;
             let found = sql!(meta.get("schema"))?.map(|v| v.value());
@@ -605,6 +626,133 @@ impl Store {
         Ok(existed)
     }
 
+    /// Keep a closed day, and let go of any older than the window.
+    ///
+    /// One transaction, bounded by construction: the table never holds more
+    /// than [`crate::month::KEPT_DAYS`] rows, so the most this can delete — on
+    /// a box switched on again after a year — is ninety small documents. A day
+    /// closed twice replaces itself.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails, or
+    /// [`StoreError::NotSerialisable`] for a day whose date is not one.
+    pub fn put_closed_day(&self, day: &crate::month::ClosedDay) -> Result<(), StoreError> {
+        let Some(date) = day.date() else {
+            return Err(StoreError::NotSerialisable {
+                detail: format!("`{}` is not a calendar day", day.day),
+            });
+        };
+        let key = date.to_julian_day();
+        let bytes = encode(day)?;
+        let write = sql!(self.db.begin_write())?;
+        {
+            let mut days = sql!(write.open_table(DAYS))?;
+            sql!(days.insert(key, bytes.as_slice()))?;
+            let kept = i32::try_from(crate::month::KEPT_DAYS).unwrap_or(i32::MAX);
+            sql!(days.retain_in(..=key.saturating_sub(kept), |_, _| false))?;
+        }
+        sql!(write.commit())
+    }
+
+    /// The closed days the box holds, oldest first.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the read fails or a stored day cannot be parsed.
+    pub fn closed_days(&self) -> Result<Vec<crate::month::ClosedDay>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let days = sql!(read.open_table(DAYS))?;
+        let mut out = Vec::new();
+        for row in sql!(days.iter())? {
+            let (key, value) = sql!(row)?;
+            out.push(decode(i64::from(key.value()), value.value())?);
+        }
+        Ok(out)
+    }
+
+    /// The box's Web Push signing key, PKCS#8, if it has made one.
+    ///
+    /// Kept: a browser's subscription is bound to this key, so a box that made a
+    /// new one on every start would lose every subscription with it.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the read fails.
+    pub fn push_vapid(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let table = sql!(read.open_table(IDENTITY))?;
+        Ok(sql!(table.get(PUSH_VAPID))?.map(|bytes| bytes.value().to_vec()))
+    }
+
+    /// Keep the Web Push signing key.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails.
+    pub fn put_push_vapid(&self, pkcs8: &[u8]) -> Result<(), StoreError> {
+        let write = sql!(self.db.begin_write())?;
+        {
+            let mut table = sql!(write.open_table(IDENTITY))?;
+            sql!(table.insert(PUSH_VAPID, pkcs8))?;
+        }
+        sql!(write.commit())
+    }
+
+    /// Every browser the box may notify.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the read fails or a row cannot be read.
+    pub fn push_subscriptions<T: serde::de::DeserializeOwned>(&self) -> Result<Vec<T>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let table = sql!(read.open_table(PUSH))?;
+        let mut out = Vec::new();
+        for row in sql!(table.iter())? {
+            let (_, subscription) = sql!(row)?;
+            out.push(decode(0, subscription.value())?);
+        }
+        Ok(out)
+    }
+
+    /// Keep one, or replace the one already kept for `endpoint` — unless that
+    /// would make more than `at_most`.
+    ///
+    /// Counted inside the write transaction, so two browsers subscribing at once
+    /// cannot both be the last one allowed. Returns whether it was kept.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails.
+    pub fn put_push_subscription<T: serde::Serialize>(
+        &self,
+        endpoint: &str,
+        subscription: &T,
+        at_most: u64,
+    ) -> Result<bool, StoreError> {
+        let bytes = encode(subscription)?;
+        let write = sql!(self.db.begin_write())?;
+        let kept = {
+            let mut table = sql!(write.open_table(PUSH))?;
+            let known = sql!(table.get(endpoint))?.is_some();
+            let room = known || sql!(table.len())? < at_most;
+            if room {
+                sql!(table.insert(endpoint, bytes.as_slice()))?;
+            }
+            room
+        };
+        sql!(write.commit())?;
+        Ok(kept)
+    }
+
+    /// Forget one. Returns whether it was known.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails.
+    pub fn forget_push_subscription(&self, endpoint: &str) -> Result<bool, StoreError> {
+        let write = sql!(self.db.begin_write())?;
+        let existed = {
+            let mut table = sql!(write.open_table(PUSH))?;
+            sql!(table.remove(endpoint))?.is_some()
+        };
+        sql!(write.commit())?;
+        Ok(existed)
+    }
+
     /// The failsafe a network operator last wrote, for `direction`.
     ///
     /// `None` where no operator has ever written one, which is the ordinary
@@ -664,6 +812,33 @@ impl Store {
             sql!(table.insert(name, bytes.as_slice()))?;
         }
         sql!(write.commit())
+    }
+
+    /// Keep the household's goals.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails.
+    pub fn put_goals<T: serde::Serialize>(&self, goals: &T) -> Result<(), StoreError> {
+        let bytes = encode(goals)?;
+        let write = sql!(self.db.begin_write())?;
+        {
+            let mut table = sql!(write.open_table(GOALS))?;
+            sql!(table.insert("household", bytes.as_slice()))?;
+        }
+        sql!(write.commit())
+    }
+
+    /// The household's goals, where it has set any.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the read fails or the document has moved on.
+    pub fn goals<T: serde::de::DeserializeOwned>(&self) -> Result<Option<T>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let table = sql!(read.open_table(GOALS))?;
+        match sql!(table.get("household"))? {
+            Some(bytes) => Ok(Some(decode(0, bytes.value())?)),
+            None => Ok(None),
+        }
     }
 
     /// Read one back.
@@ -1221,6 +1396,16 @@ impl Store {
             // identity, which is what RED/EN 18031 asks a factory reset to
             // prevent (D188).
             sql!(sql!(write.open_table(MANAGERS))?.retain(|_, _| false))?;
+            // The next household did not ask for this one's car by seven.
+            sql!(sql!(write.open_table(GOALS))?.retain(|_, _| false))?;
+            // And the browsers it may notify: a resold box that kept them would
+            // go on telling the previous household's phones what the new one's
+            // network operator is doing. The signing key went with `IDENTITY`.
+            sql!(sql!(write.open_table(PUSH))?.retain(|_, _| false))?;
+            // And the closed days: ninety days of when a household was home,
+            // away and charging are the last thing a box should carry to its
+            // next owner.
+            sql!(sql!(write.open_table(DAYS))?.retain(|_, _| false))?;
             // The counters go with it — a reset box hands out identifiers from
             // one again, like the box it now is — and the schema row stays, so
             // the next open runs no migration.
@@ -1440,6 +1625,109 @@ mod tests {
         assert_eq!(read[0].registers.storage_generation, None);
     }
 
+    /// A closed day `offset` days after 1 January 2026.
+    fn closed(offset: i64) -> crate::month::ClosedDay {
+        let date = time::macros::date!(2026 - 01 - 01) + time::Duration::days(offset);
+        crate::month::ClosedDay {
+            day: date.to_string(),
+            money: Some(crate::month::Money {
+                saved_ct: offset,
+                ..crate::month::Money::default()
+            }),
+            imported_wh: 12_345,
+            produced_wh: 3_200,
+            reduced_minutes: None,
+            reductions: 0,
+            reduction_respected: true,
+            feed_in_respected: true,
+        }
+    }
+
+    #[test]
+    fn a_closed_day_survives_the_round_trip_whole() {
+        let store = Store::in_memory().unwrap();
+        let written = crate::month::ClosedDay {
+            money: Some(crate::month::Money {
+                bill_ct: 380,
+                wear_ct: 15,
+                comfort_ct: 5,
+                cost_ct: 400,
+                without_ct: 507,
+                saved_ct: 107,
+                on_bill_ct: 127,
+            }),
+            reduced_minutes: Some(90),
+            reductions: 1,
+            reduction_respected: false,
+            feed_in_respected: false,
+            ..closed(3)
+        };
+        store.put_closed_day(&written).unwrap();
+        assert_eq!(store.closed_days().unwrap(), vec![written]);
+    }
+
+    #[test]
+    fn the_box_keeps_ninety_closed_days_and_no_more() {
+        let store = Store::in_memory().unwrap();
+        for offset in 0..120 {
+            store.put_closed_day(&closed(offset)).unwrap();
+        }
+        let kept = store.closed_days().unwrap();
+        assert_eq!(kept.len(), crate::month::KEPT_DAYS);
+        assert_eq!(kept.first().unwrap().day, closed(30).day);
+        assert_eq!(kept.last().unwrap().day, closed(119).day);
+        // A day closed twice corrects itself rather than appearing twice.
+        store.put_closed_day(&closed(119)).unwrap();
+        assert_eq!(store.closed_days().unwrap().len(), crate::month::KEPT_DAYS);
+    }
+
+    #[test]
+    fn a_box_back_after_a_year_keeps_only_the_new_window() {
+        // The window is by date, not by count: ninety days from a year ago are
+        // not "the last ninety days", and they go in the one close that finds
+        // them — ninety small rows, which is the whole bound.
+        let store = Store::in_memory().unwrap();
+        for offset in 0..90 {
+            store.put_closed_day(&closed(offset)).unwrap();
+        }
+        store.put_closed_day(&closed(500)).unwrap();
+        let kept = store.closed_days().unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].day, closed(500).day);
+    }
+
+    #[test]
+    fn push_subscriptions_are_capped_kept_and_gone_after_a_reset() {
+        let mut store = Store::in_memory().unwrap();
+        assert_eq!(store.push_vapid().unwrap(), None);
+        store.put_push_vapid(b"a signing key").unwrap();
+        assert!(store.put_push_subscription("a", &"first", 2).unwrap());
+        assert!(store.put_push_subscription("b", &"second", 2).unwrap());
+        assert!(
+            !store.put_push_subscription("c", &"third", 2).unwrap(),
+            "the cap is counted where the write is"
+        );
+        assert!(
+            store.put_push_subscription("a", &"changed", 2).unwrap(),
+            "changing one already kept is not a new one"
+        );
+        assert_eq!(
+            store.push_subscriptions::<String>().unwrap(),
+            ["changed", "second"]
+        );
+        assert!(store.forget_push_subscription("b").unwrap());
+        assert!(!store.forget_push_subscription("b").unwrap());
+
+        // RED/EN 18031: a resold box must not go on notifying the previous
+        // household's phones, nor keep the key their subscriptions answer to.
+        store.factory_reset().unwrap();
+        assert_eq!(
+            store.push_subscriptions::<String>().unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(store.push_vapid().unwrap(), None);
+    }
+
     #[test]
     fn a_factory_reset_leaves_a_box_that_looks_like_it_left_the_factory() {
         // `ATC_LPC_COM_PT_CSInit_002`: reset the Controllable System and its
@@ -1475,6 +1763,7 @@ mod tests {
             .unwrap();
         store.put_quarter_hour(&quarter(NOW), NOW).unwrap();
         store.put_control_event(&event(NOW)).unwrap();
+        store.put_closed_day(&closed(1)).unwrap();
         // Everything the fleet is owed, taken — a reset refuses otherwise.
         let slots: Vec<Slot> = store
             .quarter_hours()
@@ -1498,6 +1787,7 @@ mod tests {
         // the previous household's aggregator go on driving its battery (D188).
         assert_eq!(store.api_token().unwrap(), None);
         assert_eq!(store.managers().unwrap(), []);
+        assert_eq!(store.closed_days().unwrap(), []);
         assert_eq!(store.eebus_identity().unwrap(), None);
         assert_eq!(store.control_events().unwrap(), []);
         assert_eq!(store.quarter_hours().unwrap(), []);

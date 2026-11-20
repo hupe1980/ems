@@ -242,10 +242,10 @@ $ cargo run -p hemsd -- simulate --day winter --perfect-foresight
 
 | Day | Saved | Saved, knowing the weather | The premium |
 |---|---|---|---|
-| January, § 14a reduction, 20 kWh of charging to place | **€1,08** | €1,22 | +€0,14 |
-| January evening, car arrives *as* the reduction starts | **€0,93** | €1,46 | +€0,53 |
-| June, more sun than the house can use | **€4,36** | €4,59 | +€0,23 |
-| May, § 9 EEG cap, no car | **€0,57** | €0,43 | −€0,14 |
+| January, § 14a reduction, 20 kWh of charging to place | **€1,12** | €1,14 | +€0,02 |
+| January evening, car arrives *as* the reduction starts | **€1,45** | €1,42 | −€0,03 |
+| June, more sun than the house can use | **€4,17** | €5,19 | +€1,02 |
+| May, § 9 EEG cap, no car | **€0,70** | €0,71 | +€0,01 |
 
 It is the **same day** on both sides, and the unmanaged household is what proves
 it: it makes no forecast, so it cannot move between the two runs, and it comes
@@ -253,22 +253,21 @@ out identical to the cent. A flag that zeroed the *weather* rather than the
 *forecast* would run a sunnier, milder day and report the difference as the price
 of knowledge.
 
-The shape of that table is a result rather than noise. The premium is **tens of
-cents at most**:
-these days are driven by prices the planner knows exactly and by deadlines that
-are constraints rather than forecasts, and January imports 52,6 kWh against 7,4
-produced — there is not much sky to be wrong about. It is sometimes negative,
-which is ordinary receding-horizon non-monotonicity: a hedge that happened to pay
-on this realisation is one an oracle no longer buys. Where the surplus lasts
-all day the plan has slack and being wrong costs nothing. Where a large charging
-session has to be placed into the cheap hours **around** a network operator's
-reduction, more than half the headline saving was knowledge nobody has.
+The shape of that table is a result rather than noise. The premium is **cents on
+three of the four days**: those days are driven by prices the planner knows
+exactly and by deadlines that are constraints rather than forecasts, and January
+imports 52,5 kWh against 7,4 produced — there is not much sky to be wrong about.
+It is once negative, which is ordinary receding-horizon non-monotonicity: a hedge
+that happened to pay on this realisation is one an oracle no longer buys.
 
-The last row is *negative*, and that is reported rather than smoothed. Nothing on
-the capped day turns on knowing the weather: it is a statutory ceiling and a
-store that either absorbs the clipping or does not, so both plans make the same
-decisions and what is left is one realisation's worth of noise, which can fall
-either way.
+June is the other case. The roof is the whole of the bill, the plan decides in
+the morning how much of the store and the car to leave for a noon it has only
+been forecast, and knowing that noon is worth **a euro** — a quarter of what the
+day saves.
+
+Nothing on the capped day turns on knowing the weather: it is a statutory ceiling
+and a store that either absorbs the clipping or does not, so both plans make the
+same decisions and what is left is a cent of one realisation's noise.
 
 Any energy manager quoting a saving without saying which of the two it measured
 is quoting the second one.
@@ -404,7 +403,7 @@ A box's day report says what its load forecast leaned on, for as long as it
 leans on anything — on the cold January reference day, *H25, anchored on one
 reading (100 % of the day)*; on a box that has learned its household, nothing.
 
-The cold January box now **saves €0,50**. Two limits on that figure, stated rather
+The cold January box **saves €0,40**. Two limits on that figure, stated rather
 than discovered. The simulated household uses about 4 000 kWh a year, 4 % below the
 anchor's floor — the direction the floor errs in by design — so the day shows an
 undeclared box on a household close to its floor; a household far from that size
@@ -418,7 +417,7 @@ own meter, and a box that cannot read its own connection point refuses to plan.
 Two limits, stated here rather than discovered by somebody else.
 
 **A calibration figure from one day is not a calibration figure**, and the type
-now says so. Forecast error is correlated across a day, so a single realisation
+says so. Forecast error is correlated across a day, so a single realisation
 lands mostly inside or mostly outside its own band — ninety-six slots of one
 Tuesday are one draw wearing ninety-six hats. `Calibration` therefore carries an
 **episode** count as well as a sample count, `is_well_calibrated` asks for twenty

@@ -29,7 +29,7 @@ use hems_core::setpoint::{FallbackCause, GuardRule, RealtimeCause, Reason, UserO
 use serde::Serialize;
 
 /// Who is responsible for what a device is doing — the colour the page gives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Cause {
     /// The network operator: a § 14a reduction, a § 9 EEG feed-in limit, the
@@ -50,7 +50,7 @@ pub enum Cause {
 }
 
 /// Why a device is doing what it is doing, as a template key and its parameters.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Explanation {
     /// Who is responsible.
     pub cause: Cause,
@@ -83,6 +83,7 @@ pub const ALL_KEYS: &[&str] = &[
     "plan.run",
     "plan.discharge",
     "plan.wait",
+    "plan.wait_until",
     "manager",
     "live.surplus_tracking",
     "live.self_consumption",
@@ -199,7 +200,7 @@ pub fn idle() -> Explanation {
 }
 
 /// One device, as the page shows it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Device {
     /// The asset.
     pub id: String,
@@ -243,7 +244,7 @@ pub fn kind_of(asset: &Asset) -> Option<&'static str> {
 
 /// What the network operator has asked of the house right now — `None` when it
 /// has asked nothing.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Reduction {
     /// The ceiling on the controllable devices, kW.
     pub ceiling_kw: f64,
@@ -259,7 +260,7 @@ pub struct Reduction {
 }
 
 /// One quarter hour of the plan.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct PlanSlot {
     /// Its start, RFC 3339.
     pub start: String,
@@ -272,10 +273,14 @@ pub struct PlanSlot {
 }
 
 /// The day so far, as a receipt.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Receipt {
     /// The local day, `YYYY-MM-DD`.
     pub day: String,
+    /// Whether the day was priced. A running box measures energy but has no
+    /// second house to compare with; the page then prints no euros rather
+    /// than zeros.
+    pub priced: bool,
     /// What the household paid for electricity, €.
     pub bill_eur: f64,
     /// Battery wear priced, €.
@@ -305,7 +310,7 @@ pub struct Receipt {
 }
 
 /// What a car goal comes to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
     /// Already there.
@@ -319,7 +324,7 @@ pub enum Verdict {
 }
 
 /// The answer a household gets the moment it sets a goal.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct GoalAnswer {
     /// The verdict.
     pub verdict: Verdict,
@@ -394,7 +399,10 @@ fn demand_ratio(session: &hems_optimizer::model::EvSession, now: Slot) -> f64 {
 }
 
 /// A car goal as the household set it.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
 pub struct CarGoal {
     /// The state of charge wanted, in `[0, 1]`.
     pub target_soc: f64,
@@ -402,8 +410,295 @@ pub struct CarGoal {
     pub by_minute: u16,
 }
 
-/// The household's car goal, shared between the page and the planner.
-pub type Goals = std::sync::Arc<tokio::sync::Mutex<Option<CarGoal>>>;
+/// A hot-water goal as the household set it: *50 °C by 18:00*.
+#[derive(
+    Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct TankGoal {
+    /// The temperature wanted, °C.
+    pub target_c: f64,
+    /// By when, local wall-clock minutes after midnight (`1080` is 18:00).
+    pub by_minute: u16,
+}
+
+/// The answer a household gets the moment it sets a hot-water goal.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct TankAnswer {
+    /// The verdict.
+    pub verdict: Verdict,
+    /// Electricity the heater still has to take, kWh.
+    pub needed_kwh: f64,
+    /// The share of the time left the goal would use: `0` nothing, `1` all of it.
+    pub tightness: f64,
+    /// Where the goal is impossible: the temperature the tank can reach by
+    /// then, °C.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reachable_c: Option<f64>,
+}
+
+/// The tank as the planner last saw it, published so a new goal can be judged
+/// at once, without a solve.
+pub type TankFacts = std::sync::Arc<tokio::sync::Mutex<Option<hems_optimizer::model::DhwModel>>>;
+
+/// Judge a hot-water goal with the planner's own tank model.
+///
+/// `tank` is the installation (litres, the temperatures it may hold) and
+/// `facts` the store the planner plans — heater, COP, standing loss, the heat in
+/// it now. What the household draws before the time is its own business and is
+/// not guessed at: the verdict says whether the *heater* can get there.
+#[must_use]
+pub fn judge_tank(
+    tank: &hems_core::asset::DhwTank,
+    facts: &hems_optimizer::model::DhwModel,
+    goal: TankGoal,
+    now: time::OffsetDateTime,
+) -> TankAnswer {
+    let per_kelvin = tank.heat_capacity_kwh_per_k();
+    let cop = facts.cop.max(f64::EPSILON);
+    let now_c = tank.t_min_c + facts.stored_now.kwh() / per_kelvin.max(f64::EPSILON);
+    let heat = per_kelvin * (goal.target_c - now_c);
+    if heat <= 0.0 {
+        return TankAnswer {
+            verdict: Verdict::Met,
+            needed_kwh: 0.0,
+            tightness: 0.0,
+            reachable_c: None,
+        };
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let hours = Slot::containing(now)
+        .distance_to(Slot::containing(next_wall_clock(goal.by_minute, now)))
+        .max(0) as f64
+        * 0.25;
+    // What the heater puts in less what the cylinder loses meanwhile.
+    let deliverable = ((facts.heater.kw() * cop - facts.standing_loss.kw()) * hours).max(0.0);
+    let tightness = if deliverable > 0.0 {
+        heat / deliverable
+    } else {
+        f64::INFINITY
+    };
+    // Above the highest safe temperature no amount of time helps.
+    let verdict = if tightness > 1.0 || goal.target_c > tank.t_max_c {
+        Verdict::Impossible
+    } else if tightness > TIGHT_ABOVE {
+        Verdict::Tight
+    } else {
+        Verdict::Feasible
+    };
+    TankAnswer {
+        verdict,
+        needed_kwh: heat / cop,
+        tightness,
+        reachable_c: (verdict == Verdict::Impossible)
+            .then(|| (now_c + deliverable / per_kelvin.max(f64::EPSILON)).min(tank.t_max_c)),
+    }
+}
+
+/// The planner's target for a hot-water goal.
+#[must_use]
+pub fn tank_target(
+    tank: &hems_core::asset::DhwTank,
+    goal: TankGoal,
+    now: time::OffsetDateTime,
+) -> hems_optimizer::model::DhwTarget {
+    hems_optimizer::model::DhwTarget {
+        stored: tank.stored_heat(goal.target_c),
+        by: Slot::containing(next_wall_clock(goal.by_minute, now)),
+    }
+}
+
+/// What the household has asked for: at most one goal per kind.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoalSet {
+    /// The car.
+    #[serde(default)]
+    pub car: Option<CarGoal>,
+    /// The hot-water tank.
+    #[serde(default)]
+    pub tank: Option<TankGoal>,
+}
+
+/// The household's goals, shared between the page and the planner, and kept in
+/// the box's store where it has one — a goal set on Sunday still stands after
+/// Monday's power cut.
+#[derive(Clone, Default)]
+pub struct Goals {
+    set: std::sync::Arc<tokio::sync::Mutex<GoalSet>>,
+    store: Option<std::sync::Arc<tokio::sync::Mutex<crate::store::Store>>>,
+}
+
+impl Goals {
+    /// The goals `store` holds, kept there from now on.
+    ///
+    /// # Errors
+    /// [`StoreError`](crate::store::StoreError) where the read fails.
+    pub async fn remembering(
+        store: Option<std::sync::Arc<tokio::sync::Mutex<crate::store::Store>>>,
+    ) -> Result<Self, crate::store::StoreError> {
+        let set = match &store {
+            Some(store) => store.lock().await.goals::<GoalSet>()?.unwrap_or_default(),
+            None => GoalSet::default(),
+        };
+        Ok(Self {
+            set: std::sync::Arc::new(tokio::sync::Mutex::new(set)),
+            store,
+        })
+    }
+
+    /// The goals in force.
+    pub async fn get(&self) -> GoalSet {
+        *self.set.lock().await
+    }
+
+    /// Change them, and keep the change. Answers whether anything changed.
+    ///
+    /// # Errors
+    /// [`StoreError`](crate::store::StoreError) where the store refuses the
+    /// write; the goals in force are then unchanged.
+    pub async fn change(
+        &self,
+        change: impl FnOnce(&mut GoalSet),
+    ) -> Result<bool, crate::store::StoreError> {
+        let mut set = self.set.lock().await;
+        let mut next = *set;
+        change(&mut next);
+        if next == *set {
+            return Ok(false);
+        }
+        if let Some(store) = &self.store {
+            store.lock().await.put_goals(&next)?;
+        }
+        *set = next;
+        Ok(true)
+    }
+}
+
+/// A goal as `PUT /v1/goals/{asset}` takes it: the body's shape follows the
+/// asset's kind.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NewGoal {
+    /// For a charge point.
+    Car(CarGoal),
+    /// For a hot-water tank.
+    Tank(TankGoal),
+}
+
+/// Why a goal was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalRefused {
+    /// The site has no such asset.
+    UnknownAsset,
+    /// The asset is neither a charge point nor a hot-water tank.
+    NoGoalForThisKind,
+    /// The body is not a goal for this kind of asset — a temperature for a car.
+    WrongShape,
+    /// The values are outside what a goal can be.
+    OutOfRange,
+}
+
+impl GoalRefused {
+    /// What to tell the caller.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::UnknownAsset => "no such device",
+            Self::NoGoalForThisKind => "goals are for a charge point or a hot-water tank",
+            Self::WrongShape => {
+                "a charge point takes target_soc and by_minute; a hot-water tank takes \
+                 target_c and by_minute"
+            }
+            Self::OutOfRange => {
+                "a goal is a state of charge in [0, 1] or a temperature in (0, 100] °C, \
+                 and a time of day in minutes below 1440"
+            }
+        }
+    }
+}
+
+/// Which goal `asset` takes: `car`, `hot_water`, or a refusal.
+///
+/// # Errors
+/// [`GoalRefused::UnknownAsset`], [`GoalRefused::NoGoalForThisKind`].
+pub fn goal_kind(site: &Site, asset: &str) -> Result<&'static str, GoalRefused> {
+    let found = site
+        .assets
+        .iter()
+        .find(|a| a.id().to_string() == asset)
+        .ok_or(GoalRefused::UnknownAsset)?;
+    match kind_of(found) {
+        Some(kind @ ("car" | "hot_water")) => Ok(kind),
+        _ => Err(GoalRefused::NoGoalForThisKind),
+    }
+}
+
+/// Read a goal for `asset` out of a request body, typed by the asset's kind.
+///
+/// # Errors
+/// [`GoalRefused`], for an asset that takes no goal, a body of the wrong kind,
+/// or values no goal can have.
+pub fn parse_goal(
+    site: &Site,
+    asset: &str,
+    body: serde_json::Value,
+) -> Result<NewGoal, GoalRefused> {
+    let goal = match goal_kind(site, asset)? {
+        "car" => NewGoal::Car(serde_json::from_value(body).map_err(|_| GoalRefused::WrongShape)?),
+        _ => NewGoal::Tank(serde_json::from_value(body).map_err(|_| GoalRefused::WrongShape)?),
+    };
+    let in_range = match goal {
+        NewGoal::Car(g) => (0.0..=1.0).contains(&g.target_soc) && g.by_minute < 1440,
+        NewGoal::Tank(g) => g.target_c > 0.0 && g.target_c <= 100.0 && g.by_minute < 1440,
+    };
+    if in_range {
+        Ok(goal)
+    } else {
+        Err(GoalRefused::OutOfRange)
+    }
+}
+
+/// What the plan in force expects the hours ahead to put on the bill.
+///
+/// One figure, and deliberately not two. The plan also prices the same horizon
+/// without an energy manager, and since 0.4 that baseline is sound — but the
+/// *difference* between the two over a rolling horizon is not a saving a
+/// household can be shown. A plan hedges against the dull day and pays the
+/// premium in the median future this figure describes; it values what it
+/// leaves in the battery and the walls, which no bill credits; and its horizon
+/// opens and closes with the stores in different states on the two sides. On
+/// the January reference day 42 of 96 plans cost more than their own baseline
+/// on paper while the closed day saved €1,07. The saving is the receipt's,
+/// where the day is over and the ledger is closed.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct Ahead {
+    /// The first instant covered, RFC 3339.
+    pub from: String,
+    /// The instant the window ends, RFC 3339.
+    pub until: String,
+    /// What the plan expects the window to put on the electricity bill, €:
+    /// imports less what feeding in earns. Negative on a day that earns.
+    pub bill_eur: f64,
+}
+
+/// The bill the plan expects for its horizon.
+///
+/// `None` — and the page then shows nothing — where the plan carries no cost,
+/// where it is not a number, or where the plan has run out: a wrong figure
+/// here is worse than none.
+#[must_use]
+pub fn ahead(plan: &hems_core::prelude::Plan, now: time::OffsetDateTime) -> Option<Ahead> {
+    let bill = plan.expected_cost?.billed_eur();
+    let until = plan.horizon.end();
+    let from = plan.horizon.first.start();
+    if !bill.is_finite() || now >= until || now < from {
+        return None;
+    }
+    Some(Ahead {
+        from: rfc3339(from),
+        until: rfc3339(until),
+        bill_eur: bill,
+    })
+}
 
 /// The car as the planner last saw it — what is in it, its capacity, the charge
 /// point's limits — published so a new goal can be judged at once, without a
@@ -449,7 +744,7 @@ pub fn session_for(
 }
 
 /// Everything the household page shows, in one document.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Home {
     /// Which household.
     pub site: String,
@@ -471,13 +766,16 @@ pub struct Home {
     pub devices: Vec<Device>,
     /// The plan, from now to the end of its horizon.
     pub plan: Vec<PlanSlot>,
-    /// What the plan expects its horizon to cost, and the same horizon without an
-    /// energy manager, €.
-    pub plan_cost_eur: Option<(f64, f64)>,
+    /// What the plan expects its horizon to put on the bill. Absent where the
+    /// plan carries no price.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<Ahead>,
     /// The day so far.
     pub receipt: Option<Receipt>,
     /// The car goal in force, and what it comes to.
     pub goal: Option<(CarGoal, GoalAnswer)>,
+    /// The hot-water goal in force, and what it comes to.
+    pub tank_goal: Option<(TankGoal, TankAnswer)>,
     /// What an installer gives the metering point operator.
     pub ski: Option<String>,
     /// The SHA-256 fingerprint of the box's SHIP certificate.
@@ -488,6 +786,19 @@ pub struct Home {
     /// Whether the roof still delivers what it used to: `healthy`, `degraded`,
     /// `learning`.
     pub roof: Option<String>,
+    /// The year whose published levies the box is pricing on, **only** while
+    /// that is not the current year: the new year's figures are not in this
+    /// version of the box, and every price it shows is on last year's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub levies_year: Option<i32>,
+}
+
+/// The year of the published levies in use on `now`, where it is not `now`'s.
+#[must_use]
+pub fn stale_levies_year(now: time::OffsetDateTime) -> Option<i32> {
+    let year = Slot::containing(now).local_date().year();
+    let (published, _) = hems_tariff::Levies::latest_published(year);
+    (published != year).then_some(published)
 }
 
 /// Everything [`live`] reads, borrowed from the running box.
@@ -500,10 +811,12 @@ pub struct Live<'a> {
     pub plan: Option<&'a hems_core::prelude::Plan>,
     /// The prices it was made against.
     pub prices: Option<&'a hems_tariff::PriceStack>,
-    /// The household's car goal.
-    pub goal: Option<CarGoal>,
+    /// The household's goals.
+    pub goals: GoalSet,
     /// The car as the planner last saw it.
     pub car: Option<hems_optimizer::model::EvSession>,
+    /// The tank as the planner last saw it.
+    pub tank: Option<hems_optimizer::model::DhwModel>,
     /// The box's SKI and certificate fingerprint.
     pub ski: Option<String>,
     /// The SHA-256 fingerprint of its certificate.
@@ -514,6 +827,10 @@ pub struct Live<'a> {
 
 /// The household page's view of a running box.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one document, assembled field by field in the order the page reads it"
+)]
 pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
     let status = input.status;
     let slot = Slot::containing(now);
@@ -538,7 +855,9 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         })
         .unwrap_or_default();
 
-    let devices = devices_now(input, price_ct, &horizon_prices);
+    let devices = devices_now(input, price_ct, &horizon_prices, &|id| {
+        next_use(input.plan?, id, slot, &price_of)
+    });
 
     // The guard's own flag: the control box is silent and the stored
     // failsafe value stands in for an instruction.
@@ -588,7 +907,14 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         })
         .unwrap_or_default();
 
-    let goal = input.goal.map(|g| {
+    let tank_goal = input.goals.tank.and_then(|g| {
+        let tank = input.site.assets.iter().find_map(|a| match a {
+            Asset::Dhw(tank) => Some(tank),
+            _ => None,
+        })?;
+        Some((g, judge_tank(tank, input.tank.as_ref()?, g, now)))
+    });
+    let goal = input.goals.car.map(|g| {
         let answer = input.car.map_or(
             GoalAnswer {
                 verdict: Verdict::Feasible,
@@ -613,18 +939,25 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         reduction,
         devices,
         plan,
-        plan_cost_eur: status.plan_expected_eur.zip(status.plan_baseline_eur),
+        ahead: input.plan.and_then(|p| ahead(p, now)),
         receipt: status.last_day.as_ref().map(receipt_of),
         goal,
+        tank_goal,
         ski: input.ski.clone(),
         fingerprint: input.fingerprint.clone(),
         https_fingerprint: input.https_fingerprint.clone(),
         roof: status.roof_health.as_ref().map(roof_word),
+        levies_year: stale_levies_year(now),
     }
 }
 
 /// Every device the household would recognise, with what it is doing and why.
-fn devices_now(input: &Live<'_>, price_ct: Option<f64>, horizon_prices: &[f64]) -> Vec<Device> {
+fn devices_now(
+    input: &Live<'_>,
+    price_ct: Option<f64>,
+    horizon_prices: &[f64],
+    next: &dyn Fn(&AssetId) -> Option<(String, f64)>,
+) -> Vec<Device> {
     let status = input.status;
     devices_of(input.site)
         .into_iter()
@@ -632,13 +965,16 @@ fn devices_now(input: &Live<'_>, price_ct: Option<f64>, horizon_prices: &[f64]) 
             let (measured, soc) = status.readings.get(&id).copied().unwrap_or((None, None));
             let commanded = status.commanded.get(&id).copied();
             let shown = measured.or(commanded);
-            let why = status.reasons.get(&id).map_or_else(idle, |reason| {
-                relative(
-                    explain(reason, commanded.unwrap_or(Power::ZERO), price_ct),
-                    price_ct,
-                    horizon_prices,
-                )
-            });
+            let why = waiting(
+                status.reasons.get(&id).map_or_else(idle, |reason| {
+                    relative(
+                        explain(reason, commanded.unwrap_or(Power::ZERO), price_ct),
+                        price_ct,
+                        horizon_prices,
+                    )
+                }),
+                next(&id),
+            );
             let notice = if status.undriven.contains(&id) {
                 Some("undriven")
             } else if status.silent.contains(&id) {
@@ -667,6 +1003,49 @@ fn devices_now(input: &Live<'_>, price_ct: Option<f64>, horizon_prices: &[f64]) 
             }
         })
         .collect()
+}
+
+/// When the plan next runs `asset`, and at what price: the local wall-clock
+/// time of the first later quarter hour it draws in, and that slot's ct/kWh.
+fn next_use(
+    plan: &hems_core::prelude::Plan,
+    asset: &AssetId,
+    now: Slot,
+    price_of: &dyn Fn(Slot) -> Option<f64>,
+) -> Option<(String, f64)> {
+    let slot = plan
+        .slots
+        .iter()
+        .filter(|s| s.slot > now)
+        .find(|s| {
+            s.targets
+                .iter()
+                .any(|t| t.asset == *asset && t.power.kw() > 0.05)
+        })?
+        .slot;
+    let local = hems_core::calendar::to_berlin(slot.start());
+    Some((
+        format!("{:02}:{:02}", local.hour(), local.minute()),
+        price_of(slot)?,
+    ))
+}
+
+/// A device that is waiting says what for.
+///
+/// "Off" and "waiting for a cheaper time" are true and tell a household
+/// nothing it can check. Where the plan in force runs the device later, the
+/// explanation names the time and the price it is waiting for.
+fn waiting(mut e: Explanation, next: Option<(String, f64)>) -> Explanation {
+    if !matches!(e.key, "idle" | "plan.wait") {
+        return e;
+    }
+    if let Some((at, then_ct)) = next {
+        e.key = "plan.wait_until";
+        e.cause = Cause::Plan;
+        e.params.insert("at", at);
+        e.params.insert("then_ct", format!("{then_ct:.0}"));
+    }
+    e
 }
 
 /// Say *how* cheap a planned charge is, against the plan's own prices.
@@ -718,6 +1097,7 @@ pub fn receipt_of(day: &hems_core::report::DayKpis) -> Receipt {
     let total = |c: &hems_core::prelude::CostBreakdown| c.total();
     Receipt {
         day: day.date.to_string(),
+        priced: day.economics.is_some(),
         bill_eur: cost.energy_eur,
         wear_eur: cost.wear_eur,
         comfort_eur: cost.discomfort_eur,
@@ -939,6 +1319,193 @@ mod tests {
             next_wall_clock(420, datetime!(2026-01-15 08:00 UTC)),
             datetime!(2026-01-16 06:00 UTC)
         );
+    }
+
+    fn reference_tank() -> (hems_core::asset::DhwTank, hems_optimizer::model::DhwModel) {
+        let site = crate::site::Household::build(&crate::HouseholdConfig::default())
+            .expect("the reference household")
+            .site;
+        let tank = site
+            .assets
+            .iter()
+            .find_map(|a| match a {
+                Asset::Dhw(t) => Some(t.clone()),
+                _ => None,
+            })
+            .expect("the reference tank");
+        let facts = hems_optimizer::model::DhwModel {
+            // Lukewarm: 48 °C in a tank that holds 45 to 60.
+            stored_now: tank.stored_heat(48.0),
+            cop: tank.cop,
+            standing_loss: tank.standing_loss,
+            ..hems_optimizer::model::DhwModel::tank(tank.usable_heat(), tank.heater)
+        };
+        (tank, facts)
+    }
+
+    #[test]
+    fn hot_water_by_six_is_feasible_and_seventy_degrees_never_is() {
+        use time::macros::datetime;
+        let (tank, facts) = reference_tank();
+        let noon = datetime!(2026-01-15 11:00 UTC);
+        let goal = |target_c| TankGoal {
+            target_c,
+            by_minute: 18 * 60,
+        };
+        let fifty = judge_tank(&tank, &facts, goal(50.0), noon);
+        assert_eq!(fifty.verdict, Verdict::Feasible, "{fifty:?}");
+        assert!(fifty.needed_kwh > 0.0 && fifty.reachable_c.is_none());
+
+        // Above the highest safe temperature no heater gets there, and the
+        // answer names what the tank *can* hold.
+        let seventy = judge_tank(&tank, &facts, goal(70.0), noon);
+        assert_eq!(seventy.verdict, Verdict::Impossible);
+        assert_eq!(seventy.reachable_c, Some(tank.t_max_c));
+
+        // Already warmer than asked.
+        assert_eq!(
+            judge_tank(&tank, &facts, goal(46.0), noon).verdict,
+            Verdict::Met
+        );
+
+        // A quarter of an hour is not enough for ten kelvin in 300 litres, and
+        // the reachable temperature lies between now and the goal.
+        let late = judge_tank(&tank, &facts, goal(58.0), datetime!(2026-01-15 16:45 UTC));
+        assert_eq!(late.verdict, Verdict::Impossible, "{late:?}");
+        let reach = late.reachable_c.expect("a reachable temperature");
+        assert!(reach > 48.0 && reach < 58.0, "{reach}");
+    }
+
+    #[test]
+    fn a_goal_is_typed_by_the_asset_it_is_for() {
+        let site = crate::site::Household::build(&crate::HouseholdConfig::default())
+            .expect("the reference household")
+            .site;
+        let id = |kind: &str| {
+            devices_of(&site)
+                .into_iter()
+                .find(|(_, k)| *k == kind)
+                .map(|(id, _)| id.to_string())
+                .expect("the reference household has one")
+        };
+        let car = serde_json::json!({ "target_soc": 0.8, "by_minute": 420 });
+        let water = serde_json::json!({ "target_c": 50.0, "by_minute": 1080 });
+
+        assert!(matches!(
+            parse_goal(&site, &id("car"), car.clone()),
+            Ok(NewGoal::Car(_))
+        ));
+        assert!(matches!(
+            parse_goal(&site, &id("hot_water"), water.clone()),
+            Ok(NewGoal::Tank(_))
+        ));
+        // A temperature for a car, a state of charge for a tank.
+        assert_eq!(
+            parse_goal(&site, &id("car"), water),
+            Err(GoalRefused::WrongShape)
+        );
+        assert_eq!(
+            parse_goal(&site, &id("hot_water"), car.clone()),
+            Err(GoalRefused::WrongShape)
+        );
+        assert_eq!(
+            parse_goal(&site, &id("battery"), car.clone()),
+            Err(GoalRefused::NoGoalForThisKind)
+        );
+        assert_eq!(
+            parse_goal(&site, "no-such-device", car),
+            Err(GoalRefused::UnknownAsset)
+        );
+        assert_eq!(
+            parse_goal(
+                &site,
+                &id("hot_water"),
+                serde_json::json!({ "target_c": 50.0, "by_minute": 1440 })
+            ),
+            Err(GoalRefused::OutOfRange)
+        );
+    }
+
+    #[tokio::test]
+    async fn goals_survive_a_restart_and_not_a_factory_reset() {
+        let store = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::store::Store::in_memory().expect("a store"),
+        ));
+        let goals = Goals::remembering(Some(store.clone()))
+            .await
+            .expect("an empty store reads as no goals");
+        assert_eq!(goals.get().await, GoalSet::default());
+        let asked = TankGoal {
+            target_c: 50.0,
+            by_minute: 1080,
+        };
+        assert!(goals.change(|g| g.tank = Some(asked)).await.expect("kept"));
+        assert!(
+            !goals.change(|g| g.tank = Some(asked)).await.expect("kept"),
+            "the same goal again changes nothing"
+        );
+
+        // A restart: a new holder over the same store.
+        let again = Goals::remembering(Some(store.clone()))
+            .await
+            .expect("the goals read back");
+        assert_eq!(
+            again.get().await,
+            GoalSet {
+                car: None,
+                tank: Some(asked)
+            }
+        );
+
+        store
+            .lock()
+            .await
+            .factory_reset_discarding_evidence()
+            .expect("a reset");
+        let reset = Goals::remembering(Some(store)).await.expect("readable");
+        assert_eq!(reset.get().await, GoalSet::default());
+    }
+
+    #[test]
+    fn a_waiting_device_says_what_it_waits_for() {
+        let e = waiting(idle(), Some(("01:15".into(), 28.4)));
+        assert_eq!(e.key, "plan.wait_until");
+        assert_eq!(e.params.get("at").map(String::as_str), Some("01:15"));
+        assert_eq!(e.params.get("then_ct").map(String::as_str), Some("28"));
+        // Nothing planned: it is simply off.
+        assert_eq!(waiting(idle(), None).key, "idle");
+        // A device that is running is not waiting, whatever the plan does later.
+        let running = explain(
+            &Reason::guard(GuardRule::Lpc),
+            Power::from_kw(2.0),
+            Some(30.0),
+        );
+        assert_eq!(
+            waiting(running, Some(("01:15".into(), 28.0))).key,
+            "guard.lpc"
+        );
+    }
+
+    #[test]
+    fn the_bill_ahead_is_shown_only_where_the_plan_prices_it() {
+        use hems_core::prelude::{CostBreakdown, Horizon, Plan};
+        let now = time::macros::datetime!(2026-01-15 16:30 UTC);
+        let mut plan = Plan::empty(Horizon::new(now, 96), now);
+        assert_eq!(ahead(&plan, now), None, "a plan with no cost shows none");
+        plan.expected_cost = Some(CostBreakdown {
+            energy_eur: 4.0,
+            wear_eur: 0.12,
+            ..CostBreakdown::default()
+        });
+        let a = ahead(&plan, now).expect("priced");
+        // The bill, not the bill with wear in it: what the invoice will say.
+        assert!((a.bill_eur - 4.0).abs() < 1e-9);
+        assert_eq!(a.from, "2026-01-15T16:30:00Z");
+        assert_eq!(a.until, "2026-01-16T16:30:00Z");
+        // A plan that has run out describes hours that are over.
+        assert_eq!(ahead(&plan, now + time::Duration::hours(25)), None);
+        plan.expected_cost = Some(CostBreakdown::energy_only(f64::NAN));
+        assert_eq!(ahead(&plan, now), None, "not a number is not a price");
     }
 
     #[test]

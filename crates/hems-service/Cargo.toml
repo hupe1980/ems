@@ -24,7 +24,7 @@ postgres = [
 # because a fixture that could not open a pool would be a fixture for nothing.
 testkit  = ["postgres"]
 # Serving HTTPS from the shell itself, for a daemon on a network nobody else
-# secures — the household gateway (specs/006).
+# secures — the household gateway.
 tls = ["dep:tokio-rustls", "dep:hyper-util", "dep:rustls", "tokio-util/rt"]
 
 [dependencies]
@@ -66,6 +66,9 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "net", "io-util"] }
+# A certificate for the one test that serves HTTPS (`serve::tls_tests`); the
+# crate itself is handed a `rustls::ServerConfig` and never issues one.
+rcgen = { workspace = true }
 
 # `tests/migrations.rs` needs a real PostgreSQL, which is `testdb` behind the
 # `testkit` feature. An integration test links this crate from outside, so

@@ -180,6 +180,9 @@ pub struct Scenario {
     /// of what anybody actually says about a dishwasher, and it is what makes
     /// the eight hours in between worth optimising over.
     pub dishwasher: Option<(Duration, Duration)>,
+    /// A hot-water goal the household set for the day — *50 °C by 18:00* — or
+    /// `None` for a tank the plan may move freely between its bounds.
+    pub tank_goal: Option<crate::home::TankGoal>,
     /// How the planner treats the fact that its forecasts are wrong.
     ///
     /// A named comparison, like `per_asset_weights` and for the same reason: the
@@ -413,6 +416,7 @@ impl Scenario {
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
             household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
+            tank_goal: None,
             ev: Some(EvPlan::overnight(
                 Energy::from_kwh(18.0),
                 Energy::from_kwh(38.0),
@@ -446,6 +450,7 @@ impl Scenario {
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
             household_kwh_per_year: None,
             dishwasher: None,
+            tank_goal: None,
             ..Self::summer_surplus(config)
         }
     }
@@ -486,6 +491,7 @@ impl Scenario {
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
             household_kwh_per_year: None,
             dishwasher: None,
+            tank_goal: None,
             date: time::macros::date!(2026 - 09 - 20),
             outdoor_c: 14.0,
             cloudiness: 0.5,
@@ -535,6 +541,7 @@ impl Scenario {
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
             household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
+            tank_goal: None,
             ev: Some(EvPlan {
                 energy_now: Energy::from_kwh(26.0),
                 energy_target: Energy::from_kwh(38.0),
@@ -625,6 +632,7 @@ impl Scenario {
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
             household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
+            tank_goal: None,
             ev: Some(EvPlan::overnight(
                 Energy::from_kwh(20.0),
                 Energy::from_kwh(45.0),
@@ -656,6 +664,7 @@ impl Scenario {
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
             household_kwh_per_year: None,
             dishwasher: Some(evening_wash()),
+            tank_goal: None,
             ev: None,
             // **May, not June.** The cap is a fraction of installed
             // direct-current power, and what a roof delivers against that
@@ -1500,6 +1509,8 @@ pub struct Frame {
     pub plan: Option<usize>,
     /// The car as the planner would have seen it, with a full target.
     pub car: Option<hems_optimizer::model::EvSession>,
+    /// The tank as the planner would have seen it.
+    pub tank: Option<hems_optimizer::model::DhwModel>,
 }
 
 /// A whole simulated day, minute by minute.
@@ -1955,6 +1966,9 @@ fn run_with(
                 ))
                 .with_objective(scenario.objective)
                 .in_community(&horizon_share);
+            if let Some(goal) = scenario.tank_goal {
+                problem = problem.with_dhw_target(crate::home::tank_target(&tank_asset, goal, now));
+            }
 
             // The dishwasher, while there is still a decision to make about it.
             // Once it is running the decision is spent — a programme cannot be
@@ -2712,6 +2726,15 @@ fn run_with(
                 },
                 plan: plan_index,
                 car,
+                tank: Some(DhwModel {
+                    capacity: tank_asset.usable_heat(),
+                    stored_now: tank.stored,
+                    heater: tank_asset.heater,
+                    cop: tank_asset.cop,
+                    standing_loss: tank_asset.standing_loss,
+                    thermostat_set: tank_asset.stored_heat(tank_asset.t_set_c),
+                    shortfall_eur_per_kwh: HOT_WATER_SHORTFALL_EUR_PER_KWH,
+                }),
             });
         }
 
@@ -3604,7 +3627,7 @@ fn baseline_cost(
     (cost, baseline_shared_kwh, energy_eur_netted)
 }
 
-fn household_load(slot: Slot) -> Power {
+pub(crate) fn household_load(slot: Slot) -> Power {
     let minute = f64::from(slot.local_minute_of_day());
     let hour = minute / 60.0;
     let base = 250.0;

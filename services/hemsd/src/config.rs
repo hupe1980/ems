@@ -409,6 +409,77 @@ pub struct TariffSettings {
     pub feed_in_ct_per_kwh: f64,
     /// The supplier's annual standing charge, euros.
     pub standing_charge_eur_per_year: f64,
+    /// Levies and taxes from the supplier's price sheet, where it differs from
+    /// the nationally published figures.
+    pub levies: LeviesSettings,
+}
+
+/// The levies and taxes on an imported kilowatt-hour, net ct/kWh.
+///
+/// Every field is optional. Left out, the box uses the figure the transmission
+/// system operators published for the year the quarter hour falls in
+/// (`hems_tariff::levies::PUBLISHED`) and, for the Konzessionsabgabe, the band
+/// of a municipality of 25 001 to 100 000 inhabitants. Set, a field replaces
+/// that figure in **every** year until it is removed — a price sheet is the
+/// authority for one customer, and it is rewritten each January.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct LeviesSettings {
+    /// Stromsteuer (§ 3 StromStG).
+    pub stromsteuer: Option<f64>,
+    /// KWKG-Umlage.
+    pub kwkg: Option<f64>,
+    /// Aufschlag für besondere Netznutzung (§ 19 StromNEV-Umlage).
+    pub paragraph_19_strom_nev: Option<f64>,
+    /// Offshore-Netzumlage.
+    pub offshore: Option<f64>,
+    /// Konzessionsabgabe (§ 2 KAV): 1,32, 1,59, 1,99 or 2,39 ct/kWh by the
+    /// size of the municipality, 0,61 in a Schwachlast tariff.
+    pub konzessionsabgabe: Option<f64>,
+    /// Value added tax as a fraction, 0.19 for the ordinary rate.
+    pub vat_rate: Option<f64>,
+}
+
+impl LeviesSettings {
+    /// The fields with the name each has in the file.
+    fn fields(&self) -> [(&'static str, Option<f64>); 6] {
+        [
+            ("stromsteuer", self.stromsteuer),
+            ("kwkg", self.kwkg),
+            ("paragraph_19_strom_nev", self.paragraph_19_strom_nev),
+            ("offshore", self.offshore),
+            ("konzessionsabgabe", self.konzessionsabgabe),
+            ("vat_rate", self.vat_rate),
+        ]
+    }
+
+    /// The first field that cannot be a levy: negative, not a number, or a
+    /// value added tax of 100 % or more — a rate typed as `19`, not `0.19`.
+    #[must_use]
+    pub fn refused(&self) -> Option<&'static str> {
+        self.fields().into_iter().find_map(|(name, value)| {
+            let v = value?;
+            let bound = if name == "vat_rate" { 1.0 } else { 100.0 };
+            (!v.is_finite() || v < 0.0 || v >= bound).then_some(name)
+        })
+    }
+
+    /// `published` with the price sheet's figures in place of its own.
+    #[must_use]
+    pub fn over(&self, published: Levies) -> Levies {
+        let d = |v: Option<f64>, or: Decimal| {
+            v.and_then(Decimal::from_f64_retain)
+                .map_or(or, |v| v.round_dp(4))
+        };
+        Levies {
+            stromsteuer: d(self.stromsteuer, published.stromsteuer),
+            kwkg: d(self.kwkg, published.kwkg),
+            para19: d(self.paragraph_19_strom_nev, published.para19),
+            offshore: d(self.offshore, published.offshore),
+            konzessionsabgabe: d(self.konzessionsabgabe, published.konzessionsabgabe),
+            vat_rate: d(self.vat_rate, published.vat_rate),
+        }
+    }
 }
 
 impl Default for TariffSettings {
@@ -423,6 +494,7 @@ impl Default for TariffSettings {
             modul_1_reduction_eur_per_year: 120.0,
             feed_in_ct_per_kwh: 7.86,
             standing_charge_eur_per_year: 120.0,
+            levies: LeviesSettings::default(),
         }
     }
 }
@@ -491,7 +563,14 @@ impl TariffSettings {
                     },
                 },
             },
-            levies: Levies::household_2026(),
+            // Each quarter hour on its own year's published figures, with the
+            // price sheet's in their place; a year nobody has published yet
+            // runs on the last one that was.
+            levies: self.levies.over(Levies::latest_published(i32::MAX).1),
+            levies_by_year: Levies::published()
+                .into_iter()
+                .map(|(year, published)| (year, self.levies.over(published)))
+                .collect(),
             feed_in: if self.feed_in_ct_per_kwh > 0.0 {
                 FeedIn::eeg(ct(self.feed_in_ct_per_kwh))
             } else {
@@ -2141,6 +2220,39 @@ asset = "netzanschluss"
             settings.household(),
             Err(SettingsError::NotABand { .. })
         ));
+    }
+
+    #[test]
+    fn a_price_sheet_overrides_the_published_levies_in_every_year() {
+        let settings: TariffSettings =
+            toml::from_str("[levies]\nkonzessionsabgabe = 1.32\nkwkg = 0.5\n").unwrap();
+        assert_eq!(settings.levies.refused(), None);
+        let site = crate::site::Household::build(&HouseholdConfig::default())
+            .expect("the reference household")
+            .site;
+        let tariff = settings.tariff(&site, BTreeMap::new());
+        for year in [2025, 2026, 2027] {
+            let levies = tariff.levies_by_year[&year];
+            let published = Levies::household(year).unwrap();
+            assert_eq!(levies.konzessionsabgabe, Decimal::new(132, 2), "{year}");
+            assert_eq!(levies.kwkg, Decimal::new(5, 1), "{year}");
+            // What the sheet did not state is still the year's own figure.
+            assert_eq!(levies.para19, published.para19, "{year}");
+            assert_eq!(levies.offshore, published.offshore, "{year}");
+        }
+        // And with nothing stated, the box prices on the publication.
+        let plain = TariffSettings::default().tariff(&site, BTreeMap::new());
+        assert_eq!(plain.levies_by_year, Levies::published());
+    }
+
+    #[test]
+    fn a_levy_that_cannot_be_one_is_named() {
+        let of = |text: &str| toml::from_str::<LeviesSettings>(text).unwrap().refused();
+        assert_eq!(of("vat_rate = 19"), Some("vat_rate"));
+        assert_eq!(of("kwkg = -0.1"), Some("kwkg"));
+        assert_eq!(of("offshore = nan"), Some("offshore"));
+        assert_eq!(of("konzessionsabgabe = 2.39\nvat_rate = 0.19"), None);
+        assert!(toml::from_str::<LeviesSettings>("para19 = 1.5").is_err());
     }
 
     #[test]

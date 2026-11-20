@@ -9,6 +9,7 @@
 //
 //   cargo run -p hemsd -- demo &
 //   node xtask/media.mjs screenshots [base] [out-dir]     # site/static/screens
+//   HEMS_TOKEN=… node xtask/media.mjs box [base] [out-dir]  # a running box: setup, handover
 //   node xtask/media.mjs walkthrough [base] [out.mp4]     # site/static/media/walkthrough.mp4
 //
 // Both fail if any view scrolls sideways at phone width.
@@ -22,6 +23,7 @@ const [mode = "screenshots", base = "http://127.0.0.1:8080", out] = process.argv
 const chrome = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const port = 9333 + (process.pid % 500);
 const PHONE = { width: 390, height: 844, deviceScaleFactor: 3, mobile: true };
+const TABLET = { width: 1180, height: 820, deviceScaleFactor: 2, mobile: true };
 
 // ── Chrome over DevTools ────────────────────────────────────────────────────
 const profile = mkdtempSync(join(tmpdir(), "hems-media-"));
@@ -53,14 +55,18 @@ await send("Emulation.setDeviceMetricsOverride", PHONE);
 await send("Emulation.setTimezoneOverride", { timezoneId: "Europe/Berlin" });
 
 const problems = [];
-async function open(view, { lang = "en", scheme = "light", at = 1050 } = {}) {
+async function open(view, { lang = "en", scheme = "light", at = 1050, device = PHONE, scroll } = {}) {
+  await send("Emulation.setDeviceMetricsOverride", device);
   await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }] });
   await send("Page.navigate", { url: `${base}/?capture&lang=${lang}#${view}` });
   await sleep(900);
   await js(`window.hemsAt(${at})`);
-  await sleep(300);
+  await sleep(scroll || view === "day" ? 900 : 300);
+  if (scroll) { await js(`document.querySelector(${JSON.stringify(scroll)})?.scrollIntoView({ block: "start" }); window.scrollBy(0, -70)`); await sleep(300); }
   const overflow = await js(`document.documentElement.scrollWidth - document.documentElement.clientWidth`);
   if (overflow > 0) problems.push(`${view} (${lang}, ${scheme}): scrolls sideways by ${overflow}px`);
+  // A wall display has no one to scroll it.
+  if (view === "glance" && await js(`document.documentElement.scrollHeight - document.documentElement.clientHeight`) > 0) problems.push(`glance (${lang}): scrolls`);
 }
 
 // ── Screenshots ─────────────────────────────────────────────────────────────
@@ -73,12 +79,42 @@ if (mode === "screenshots") {
     ["now-night", "now", { at: 240 }],
     ["plan", "plan", { at: 1000 }],
     ["day", "day", { at: 1430 }],
+    ["month", "day", { at: 1430, scroll: ".month" }],
+    ["goals", "plan", { at: 1000, scroll: "[data-goal]" }],
     ["setup", "setup", { at: 600 }],
     ["now-de", "now", { at: 1050, lang: "de" }],
+    ["glance", "glance", { at: 840, device: TABLET }],
+    ["glance-reduced", "glance", { at: 1050, device: TABLET }],
+    ["glance-night", "glance", { at: 240, device: TABLET }],
   ];
   for (const [name, view, opts] of shots) {
     await open(view, opts);
     const { data } = await send("Page.captureScreenshot", { format: "png" });
+    writeFileSync(join(dir, `${name}.png`), Buffer.from(data, "base64"));
+    console.log(`  ${dir}/${name}.png`);
+  }
+}
+
+// ── A real box ──────────────────────────────────────────────────────────────
+// The views a replay cannot show — pairing state, discovery, notifications, the
+// handover sheet — from a running box (`hemsd house` and `hemsd run` beside it),
+// signed in with HEMS_TOKEN.
+if (mode === "box") {
+  const dir = out ?? "site/static/screens";
+  mkdirSync(dir, { recursive: true });
+  await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
+  await send("Page.navigate", { url: `${base}/?lang=en#t=${process.env.HEMS_TOKEN ?? ""}` });
+  await sleep(1500);
+  // Reload: the page forgets the access code, so the sheet is captured without
+  // the household's sign-in code. That one is never photographed.
+  await send("Page.reload");
+  await sleep(1500);
+  for (const [name, view, full] of [["box-setup", "setup", true], ["handover", "handover", true], ["record", "record=WO-2026-000417", true]]) {
+    await js(`location.hash = '${view}'`);
+    await sleep(2500);
+    const overflow = await js(`document.documentElement.scrollWidth - document.documentElement.clientWidth`);
+    if (overflow > 0) problems.push(`${view}: scrolls sideways by ${overflow}px`);
+    const { data } = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: full });
     writeFileSync(join(dir, `${name}.png`), Buffer.from(data, "base64"));
     console.log(`  ${dir}/${name}.png`);
   }
@@ -145,13 +181,21 @@ if (mode === "walkthrough") {
   await say("Der Plan für die nächsten zwei Tage. Grün ist günstig, violett der Netzbetreiber.");
   await js(`(() => { const s = document.getElementById('strip'); const r = s.getBoundingClientRect(); s.dispatchEvent(new PointerEvent('pointerdown', { clientX: r.left + r.width * 0.62, clientY: r.top + r.height / 2, bubbles: true })); })()`);
   await say("Jede Viertelstunde erklärt sich — mit dem Preis der Alternative.");
-  await js(`document.getElementById('gt')?.scrollIntoView({ block: 'center', behavior: 'smooth' })`);
+  await js(`document.querySelector('[data-goal] input')?.scrollIntoView({ block: 'center', behavior: 'smooth' })`);
   await sleep(700);
-  await js(`(() => { const g = document.getElementById('gt'); if (!g) return; g.value = 90; g.dispatchEvent(new Event('input')); g.dispatchEvent(new Event('change')); })()`);
+  await js(`(() => { const g = document.querySelector('[data-goal] input'); if (!g) return; g.value = 90; g.dispatchEvent(new Event('input')); g.dispatchEvent(new Event('change')); })()`);
   await say("Ein Ziel fürs Auto: hems sagt sofort, ob es machbar ist.");
+  await js(`document.querySelectorAll('[data-goal]')[1]?.scrollIntoView({ block: 'center', behavior: 'smooth' })`);
+  await sleep(700);
+  await js(`(() => { const g = document.querySelectorAll('[data-goal] input')[1]; if (!g) return; g.value = 55; g.dispatchEvent(new Event('input')); g.dispatchEvent(new Event('change')); })()`);
+  await say("Dasselbe fürs Warmwasser: 55 Grad bis 18 Uhr.");
   await js(`window.scrollTo({ top: 0, behavior: 'smooth' })`);
   await tap('.tabs a[data-v="day"]');
   await say("Am Ende des Tages ein Kassenbon: was der Tag gekostet hat — und was dasselbe Haus ohne hems gekostet hätte.");
+  await js(`document.querySelector('.month')?.scrollIntoView({ block: 'center', behavior: 'smooth' })`);
+  await sleep(700);
+  await say("Darunter der Monat: ein Balken je Tag, und eine Summe, die auf den Cent den Kassenbons entspricht.");
+  await js(`window.scrollTo({ top: 0, behavior: 'smooth' })`);
   await tap('.tabs a[data-v="setup"]');
   await say("Einrichtung: die SKI in Vierergruppen, zum Vergleich mit dem Etikett der Steuerbox.");
   await tap('.tabs a[data-v="now"]');

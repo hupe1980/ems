@@ -7,12 +7,12 @@ use std::collections::BTreeMap;
 
 use hems_core::prelude::{AssetId, CompressorState, Energy, Horizon, Power, Programme, Slot, Soc};
 use hems_forecast::{Band, Forecast};
-use hems_optimizer::Risk;
 use hems_optimizer::model::{
     BatteryModel, DhwModel, EvSession, HeatPumpModel, PlanningLimits, Problem, SteuVeDevices,
     ThermalModel, TimedLimit,
 };
 use hems_optimizer::solve::{AssetNames, SolveError, Solved};
+use hems_optimizer::{DhwTarget, Risk};
 
 /// Solve the way a **regression suite** has to, which is not the way a box does.
 ///
@@ -94,6 +94,7 @@ fn prices(h: Horizon, ct: &[i64]) -> PriceStack {
             konzessionsabgabe: Decimal::ZERO,
             vat_rate: Decimal::ZERO,
         },
+        levies_by_year: BTreeMap::new(),
         // Below every import price used in these tests, as an EEG tariff is in
         // reality — so a plan that exports rather than storing is choosing to
         // lose money, not spotting an arbitrage.
@@ -2263,6 +2264,7 @@ fn prices_in_community(h: Horizon, ct: &[i64], community_ct: i64) -> PriceStack 
             konzessionsabgabe: Decimal::ZERO,
             vat_rate: Decimal::ZERO,
         },
+        levies_by_year: BTreeMap::new(),
         feed_in: FeedIn::eeg(Decimal::new(4, 0))
             .under_para51_from(Some(time::macros::date!(2020 - 01 - 01))),
         sharing: Some(hems_tariff::tariff::SharingTariff::at(Decimal::new(
@@ -2440,7 +2442,8 @@ fn legacy_prices(h: Horizon, spot_ct: i64, feed_in_ct: i64) -> PriceStack {
         network: NetworkCharge::None {
             arbeitspreis: Decimal::new(10, 0),
         },
-        levies: Levies::household_2026(),
+        levies: Levies::household(2026).unwrap(),
+        levies_by_year: BTreeMap::new(),
         // No § 51 date: a plant from before the rule keeps being paid, which is
         // exactly the household this test is about.
         feed_in: FeedIn::eeg(Decimal::new(feed_in_ct, 0)),
@@ -2807,4 +2810,172 @@ fn a_battery_is_never_asked_to_charge_and_discharge_at_once() {
             f.battery_discharge.get()
         );
     }
+}
+
+// ── What the two costs cover ────────────────────────────────────────────────
+
+#[test]
+fn an_unmanaged_thermostat_holds_the_room_and_is_not_charged_for_a_switch_it_is_not() {
+    // The finding of 0.3: at one decision per quarter hour the baseline's
+    // thermostat ran the heat pump flat out, overshot, shut off and fell through
+    // the band, and the "same house without hems" cost €46,88 of energy and
+    // €46,40 of discomfort on a day whose plan cost €19. A thermostat cycles in
+    // minutes; over a slot it draws the average that holds its set point. With
+    // flat prices and no store there is nothing to decide, so a plan and a
+    // thermostat must come to nearly the same bill.
+    let h = horizon(96);
+    let p = prices(h, &[30]);
+    let pv = flat(h, 0.0);
+    let load = flat(h, 500.0);
+    let outdoor = vec![-2.0; 96];
+
+    let solved = solve(
+        &Problem::new(h, &p, &pv, &load).with_thermal(thermal(21.0, true), &outdoor, NO_SUN),
+        &names(),
+        T0,
+    )
+    .unwrap();
+    let cost = solved.plan.expected_cost.unwrap();
+    let baseline = solved.plan.baseline_cost.unwrap();
+
+    assert!(
+        baseline.discomfort_eur < 0.5,
+        "a heat pump that can hold the house leaves a thermostat's household \
+         comfortable: {:.2} € of discomfort",
+        baseline.discomfort_eur
+    );
+    assert!(
+        baseline.energy_eur < cost.energy_eur * 1.25,
+        "with nothing to shift, the unmanaged house buys about the same heat: \
+         {:.2} € against the plan's {:.2} €",
+        baseline.energy_eur,
+        cost.energy_eur
+    );
+    assert!(
+        baseline.energy_eur > cost.energy_eur * 0.9,
+        "and not less — it holds the same room: {:.2} € against {:.2} €",
+        baseline.energy_eur,
+        cost.energy_eur
+    );
+}
+
+#[test]
+fn both_costs_charge_what_the_horizon_borrowed_from_its_stores() {
+    // A horizon that opens with a full tank and closes with an empty one has
+    // not saved what its meter says. The day report closes that ledger; the
+    // plan's two costs close it by the same rule, so the saving between them
+    // means what the receipt's does.
+    let h = horizon(8);
+    let p = prices(h, &[30]);
+    let pv = flat(h, 0.0);
+    let load = flat(h, 500.0);
+    let draw = [600.0; 8];
+    let tank = DhwModel {
+        stored_now: Energy::from_kwh(5.0),
+        // An unmanaged tank that never reheats: its thermostat sits at the floor.
+        thermostat_set: Energy::ZERO,
+        ..DhwModel::tank(Energy::from_kwh(5.0), Power::from_kw(1.5))
+    };
+    let solved = solve(
+        &Problem::new(h, &p, &pv, &load).with_dhw(tank, &draw),
+        &names(),
+        T0,
+    )
+    .unwrap();
+    let baseline = solved.plan.baseline_cost.unwrap();
+    // Eight slots of 600 Wh and 45 W of standing loss leave 5 − 4,89 kWh; the
+    // 4,89 kWh of heat borrowed take 1,63 kWh of electricity at a COP of three.
+    let borrowed = (8.0 * 0.6 + 8.0 * 0.045 * 0.25) / 3.0 * 0.30;
+    assert!(
+        (baseline.stored_eur - borrowed).abs() < 0.01,
+        "the baseline drained its tank and is charged for it: {:.3} €, expected {borrowed:.3} €",
+        baseline.stored_eur
+    );
+    let cost = solved.plan.expected_cost.unwrap();
+    let last = solved.flows.last().unwrap();
+    let plan_borrowed = ((5.0 - last.dhw_stored.kwh()) / 3.0 * 0.30).max(0.0);
+    assert!(
+        (cost.stored_eur - plan_borrowed).abs() < 0.01,
+        "and the plan by the same rule: {:.3} € against {plan_borrowed:.3} €",
+        cost.stored_eur
+    );
+}
+
+// ── Hot water by a time ─────────────────────────────────────────────────────
+
+#[test]
+fn a_tank_asked_for_heat_by_a_time_holds_it_then() {
+    let h = horizon(16);
+    let p = prices(
+        h,
+        &[40, 40, 40, 40, 5, 5, 5, 5, 40, 40, 40, 40, 40, 40, 40, 40],
+    );
+    let pv = flat(h, 0.0);
+    let load = flat(h, 500.0);
+    let tank = DhwModel {
+        stored_now: Energy::from_kwh(0.5),
+        ..DhwModel::tank(Energy::from_kwh(5.0), Power::from_kw(1.5))
+    };
+    let by = h.get(12).unwrap();
+    let problem = Problem::new(h, &p, &pv, &load)
+        .with_dhw(tank, &[])
+        .with_dhw_target(DhwTarget {
+            stored: Energy::from_kwh(3.0),
+            by,
+        });
+    let solved = solve(&problem, &names(), T0).unwrap();
+
+    assert!(
+        solved.flows[11].dhw_stored.kwh() >= 3.0 - 1e-6,
+        "3 kWh by the start of slot 12, got {:.2}",
+        solved.flows[11].dhw_stored.kwh()
+    );
+    assert_eq!(solved.unmet_hot_water, Energy::ZERO);
+    let cheap: f64 = solved.flows[4..8].iter().map(|f| f.dhw.kw()).sum();
+    let dear: f64 = solved.flows[..4].iter().map(|f| f.dhw.kw()).sum();
+    assert!(
+        cheap > dear,
+        "and it is still bought in the cheap hours: {cheap:.2} kW against {dear:.2} kW"
+    );
+    // The unmanaged household turns its thermostat up, and gets it too.
+    assert!(
+        solved.plan.baseline_cost.unwrap().unserved_eur < 1e-9,
+        "the baseline delivers the same goal"
+    );
+}
+
+#[test]
+fn a_tank_goal_out_of_reach_is_a_shortfall_on_both_sides_and_not_an_infeasible_plan() {
+    let h = horizon(8);
+    let p = prices(h, &[30]);
+    let pv = flat(h, 0.0);
+    let load = flat(h, 500.0);
+    // 1,5 kW at a COP of three puts 1,125 kWh of heat into a slot: two slots
+    // cannot raise an empty tank by five.
+    let tank = DhwModel {
+        stored_now: Energy::ZERO,
+        ..DhwModel::tank(Energy::from_kwh(5.0), Power::from_kw(1.5))
+    };
+    let problem = Problem::new(h, &p, &pv, &load)
+        .with_dhw(tank, &[])
+        .with_dhw_target(DhwTarget {
+            stored: Energy::from_kwh(5.0),
+            by: h.get(2).unwrap(),
+        });
+    let solved = solve(&problem, &names(), T0).expect("a plan that says how short it is");
+
+    assert!(
+        solved.unmet_hot_water.kwh() > 2.5,
+        "about 2,8 kWh short, got {:.2}",
+        solved.unmet_hot_water.kwh()
+    );
+    let cost = solved.plan.expected_cost.unwrap();
+    let baseline = solved.plan.baseline_cost.unwrap();
+    assert!(cost.unserved_eur > 1.0, "the plan pays for it");
+    assert!(
+        (baseline.unserved_eur - cost.unserved_eur).abs() < 0.5,
+        "and so does the unmanaged house, on the same terms: {:.2} € against {:.2} €",
+        baseline.unserved_eur,
+        cost.unserved_eur
+    );
 }

@@ -1,7 +1,7 @@
 //! The 9 November 2026 field test of a market-leading energy manager, as tests.
 //!
 //! A pv magazine reader test found a § 14a reduction handled six ways a
-//! household notices (spec 004). Four of the six are decided by code that
+//! household notices. Four of the six are decided by code that
 //! already exists in this workspace; each is pinned here under the finding's
 //! name so a change that reintroduced it fails by that name. The other two —
 //! resuming from the stored failsafe after a restart, and not calling a late

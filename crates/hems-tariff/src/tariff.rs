@@ -299,8 +299,14 @@ pub struct Tariff {
     pub energy: EnergyPrice,
     /// The network charge and § 14a module.
     pub network: NetworkCharge,
-    /// Levies and taxes.
+    /// Levies and taxes — what applies in a year [`Self::levies_by_year`]
+    /// does not name.
     pub levies: Levies,
+    /// Levies and taxes per calendar year. The nationally set figures change
+    /// on 1 January, and a plan made on New Year's Eve runs across the change:
+    /// each quarter hour is priced on the figures of its own year.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub levies_by_year: BTreeMap<i32, Levies>,
     /// What exporting earns.
     pub feed_in: FeedIn,
     /// The membership of a § 42c energy-sharing community, if the household has
@@ -337,6 +343,17 @@ pub struct Tariff {
 }
 
 impl Tariff {
+    /// The levies that apply on `day`, and the year they were published for
+    /// where the tariff holds a dated table: that year's, else the last
+    /// before it, else [`Self::levies`].
+    #[must_use]
+    pub fn levies_on(&self, day: Date) -> (Option<i32>, Levies) {
+        self.levies_by_year
+            .range(..=day.year())
+            .next_back()
+            .map_or((None, self.levies), |(year, levies)| (Some(*year), *levies))
+    }
+
     /// A fixed-price tariff without any § 14a module — the baseline everything
     /// else is compared against.
     #[must_use]
@@ -344,7 +361,8 @@ impl Tariff {
         Self {
             energy: EnergyPrice::Fixed { ct_per_kwh },
             network: NetworkCharge::None { arbeitspreis },
-            levies: Levies::default(),
+            levies: Levies::latest_published(i32::MAX).1,
+            levies_by_year: Levies::published(),
             feed_in: FeedIn::NONE,
             sharing: None,
             carbon_g_per_kwh: BTreeMap::new(),

@@ -174,8 +174,11 @@ impl PriceStack {
 pub fn price_at(tariff: &Tariff, slot: Slot) -> SlotPrice {
     let (energy_ct, price_known) = tariff.energy.at(slot);
     let (network_ct, stufe) = tariff.network.at(slot);
-    let levies_ct = tariff.levies.sum_net();
-    let import_ct = tariff.levies.gross(energy_ct + network_ct + levies_ct);
+    // The levies of the slot's own year: a plan that crosses 1 January is
+    // priced on two tables.
+    let (_, levies) = tariff.levies_on(slot.local_date());
+    let levies_ct = levies.sum_net();
+    let import_ct = levies.gross(energy_ct + network_ct + levies_ct);
 
     let market_price = tariff.energy.spot_at(slot);
     let negative = market_price.is_some_and(|p| p < Decimal::ZERO);
@@ -237,9 +240,7 @@ pub fn price_at(tariff: &Tariff, slot: Slot) -> SlotPrice {
         // otherwise.
         shared_import_ct: tariff.sharing.map(|s| {
             let network = s.network_ct_per_kwh.unwrap_or(network_ct);
-            tariff
-                .levies
-                .gross(s.energy_ct_per_kwh + network + levies_ct)
+            levies.gross(s.energy_ct_per_kwh + network + levies_ct)
         }),
     }
 }
@@ -266,7 +267,8 @@ mod tests {
             network: NetworkCharge::None {
                 arbeitspreis: Decimal::new(10, 0),
             },
-            levies: Levies::household_2026(),
+            levies: Levies::household(2026).unwrap(),
+            levies_by_year: BTreeMap::new(),
             feed_in: FeedIn::eeg(Decimal::new(786, 2))
                 .under_para51_from(Some(time::macros::date!(2026 - 01 - 01))),
             sharing: None,
@@ -279,10 +281,40 @@ mod tests {
     fn the_import_price_is_the_whole_stack_with_vat() {
         let t = dynamic_tariff(&[(datetime!(2026-01-15 10:00:00 UTC), 8)]);
         let p = price_at(&t, Slot::containing(datetime!(2026-01-15 10:00:00 UTC)));
-        // energy 8 + 3 markup = 11, network 10, levies 5,28 → 26,28 net.
+        // energy 8 + 3 markup = 11, network 10, levies 6,586 → 27,586 net.
         assert_eq!(p.energy_ct, Decimal::new(11, 0));
-        assert_eq!(p.import_ct, Decimal::new(3_127_320, 5), "26,28 × 1,19");
+        assert_eq!(p.import_ct, Decimal::new(3_282_734, 5), "27,586 × 1,19");
         assert!(p.price_known);
+    }
+
+    #[test]
+    fn a_plan_across_new_year_is_priced_on_two_tables() {
+        // 23:45 on 31.12.2026 and 00:00 on 01.01.2027, Berlin: the same energy
+        // and network price, and the levies of two different years.
+        let before = datetime!(2026-12-31 22:45:00 UTC);
+        let after = datetime!(2026-12-31 23:00:00 UTC);
+        let t = Tariff {
+            levies_by_year: Levies::published(),
+            ..dynamic_tariff(&[(before, 8), (after, 8)])
+        };
+        let (old, new) = (
+            price_at(&t, Slot::containing(before)),
+            price_at(&t, Slot::containing(after)),
+        );
+        // KWKG 0,446 → 0,451, § 19 1,559 → 2,027, Offshore 0,941 → 1,143.
+        let published = Decimal::new(5, 3) + Decimal::new(468, 3) + Decimal::new(202, 3);
+        assert_eq!(new.levies_ct - old.levies_ct, published);
+        assert_eq!(
+            new.import_ct - old.import_ct,
+            published * Decimal::new(119, 2)
+        );
+        // A year nobody has published runs on the last one that was.
+        let later = price_at(&t, Slot::containing(datetime!(2029-03-01 10:00:00 UTC)));
+        assert_eq!(later.levies_ct, new.levies_ct);
+        assert_eq!(
+            t.levies_on(time::macros::date!(2029 - 03 - 01)).0,
+            Some(2027)
+        );
     }
 
     #[test]
@@ -396,6 +428,6 @@ mod tests {
         let p = price_at(&t, Slot::containing(datetime!(2026-01-15 10:00:00 UTC)));
         // 4 kW for a quarter hour is 1 kWh.
         let cost = p.cost_of(Energy::from_kwh(1.0));
-        assert_eq!(cost, Decimal::new(3_127_320, 7));
+        assert_eq!(cost, Decimal::new(3_282_734, 7));
     }
 }

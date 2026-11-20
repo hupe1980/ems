@@ -1023,7 +1023,15 @@ fn hot_water_variables(
     let dhw_deficit = problem
         .dhw
         .map_or(0.0, |d| d.standing_loss.get() * DT_HOURS)
-        + problem.dhw_draw_at(k);
+        + problem.dhw_draw_at(k)
+        // …and, in the one slot a goal falls due, whatever of it the heater
+        // could not deliver: the same soft term, for the same reason a draw is
+        // soft — a goal that cannot be met must cost something, not make the
+        // whole plan infeasible.
+        + problem
+            .dhw_target_at()
+            .filter(|(due, _)| *due == k)
+            .map_or(0.0, |(_, owed)| owed);
     v.dhw_short
         .push(vars.add(variable().min(0.0).max(dhw_deficit)));
 }
@@ -2188,6 +2196,13 @@ fn hot_water<M: SolverModel>(
                 - (d.standing_loss.get() * DT_HOURS + problem.dhw_draw_at(k))
                 + vars.dhw_short[k]
     )));
+    // The household's goal: this much heat by then. The shortfall above is its
+    // only way out.
+    if let Some((due, owed)) = problem.dhw_target_at()
+        && due == k
+    {
+        model.add_constraint(constraint!(vars.dhw_e[k] >= owed));
+    }
     model
 }
 
@@ -2399,6 +2414,7 @@ fn baseline_cost(problem: &Problem<'_>) -> hems_core::prelude::CostBreakdown {
     // The life the factory controller spent, at the rate the plan pays for its
     // own. Both households own the same pack.
     cost.wear_eur += Unmanaged::wear_eur(problem, throughput);
+    cost.stored_eur = borrowed_eur(problem, house.battery_stored, house.dhw_stored);
 
     // A departure outside the horizon is not a missed deadline, so the baseline
     // is held to exactly what the plan is held to out there: the pro-rata floor
@@ -2424,6 +2440,28 @@ fn baseline_cost(problem: &Problem<'_>) -> hems_core::prelude::CostBreakdown {
     cost
 }
 
+/// What a horizon **borrowed** from the stores, valued at what it costs to put
+/// back — [`CostBreakdown::stored_eur`](hems_core::prelude::CostBreakdown), for
+/// the plan and for the baseline by one rule.
+///
+/// A horizon that opens with a full battery and closes with an empty one has not
+/// saved what its meter says. The day report closes that ledger; a plan that
+/// did not would put a saving beside it that means something else. The same
+/// arithmetic as the report's: the battery's electrical energy plus the
+/// electricity the tank's heat would take, one quantity, one clamp, at the
+/// horizon's mean import price. Never a credit — see the field.
+fn borrowed_eur(problem: &Problem<'_>, battery_wh: f64, dhw_wh: f64) -> f64 {
+    let stores = |battery: f64, dhw: f64| {
+        problem.battery.map_or(0.0, |_| battery)
+            + problem.dhw.map_or(0.0, |d| dhw / d.cop.max(f64::EPSILON))
+    };
+    let open = stores(
+        problem.battery.map_or(0.0, |b| b.energy_now().get()),
+        problem.dhw.map_or(0.0, |d| d.stored_now.get()),
+    );
+    ((open - stores(battery_wh, dhw_wh)) / 1000.0 * mean_import_price(problem)).max(0.0)
+}
+
 /// The state an unmanaged household carries from slot to slot.
 ///
 /// Split out of [`baseline_cost`] so each appliance's "what would it do with no
@@ -2431,7 +2469,6 @@ fn baseline_cost(problem: &Problem<'_>) -> hems_core::prelude::CostBreakdown {
 /// each is a place the comparison can be made unfair.
 struct Unmanaged {
     car_remaining: f64,
-    thermostat_on: bool,
     dhw_stored: f64,
     /// What the battery is holding, Wh — see [`Unmanaged::battery`].
     battery_stored: f64,
@@ -2448,7 +2485,6 @@ impl Unmanaged {
             car_remaining: problem.ev.map_or(0.0, |e| {
                 (e.energy_target.get() - e.energy_now.get()).max(0.0)
             }),
-            thermostat_on: false,
             dhw_stored: problem.dhw.map_or(0.0, |d| d.stored_now.get()),
             battery_stored: problem.battery.map_or(0.0, |b| b.energy_now().get()),
             thermal_state: problem
@@ -2511,47 +2547,69 @@ impl Unmanaged {
         ev
     }
 
-    /// An ordinary thermostat with half a kelvin of hysteresis. It knows nothing
-    /// about the price or the weather, which is the whole of the difference
-    /// being measured.
+    /// An ordinary thermostat. It knows nothing about the price or the weather,
+    /// which is the whole of the difference being measured.
+    ///
+    /// # The slot average, not a switch per slot
+    ///
+    /// A thermostat cycles in minutes; this model steps in quarter hours. Run as
+    /// a switch that is either off or at full power for a whole slot, it
+    /// overshoots the air by several kelvin, shuts off, falls through the band
+    /// and starts again — a household that is too hot and too cold in alternate
+    /// quarter hours and buys twice the heat. On the cold January reference day
+    /// that priced the unmanaged house at €46,88 of energy and €46,40 of
+    /// discomfort over a day whose minute-by-minute baseline costs €20,60 and
+    /// €0,06, and the plan beside it at €19,05.
+    ///
+    /// So the slot gets the **average** power a cycling thermostat settles at:
+    /// the one that ends the slot at its set point, a quarter kelvin inside the
+    /// band. The building step is linear in the heat it is given, so two
+    /// evaluations find it exactly.
     fn heat_pump(&mut self, problem: &Problem<'_>, k: usize, device_ceiling: f64) -> f64 {
+        /// How far inside the band a thermostat holds the room, K.
+        const INSIDE_K: f64 = 0.25;
         let Some(t) = problem.thermal else {
             return 0.0;
         };
         let outdoor = problem.outdoor_at(k);
+        let free = problem.free_heat_at(k);
+        let off = self.thermal_step.step(self.thermal_state, free, outdoor);
 
         // The same reversible unit, on its own thermostat. A household that owns
         // the cooling function uses it when the room is already too warm; a plan
         // uses it when the roof is paying for it. That difference is what is
         // being measured, and leaving the baseline unable to cool would credit
         // the planner with the *hardware* — D195, in the other direction.
-        if t.heat_pump.is_reversible() && self.thermal_state.indoor_c > t.comfort_max_c {
-            let p = t.heat_pump.max_cooling.get().min(device_ceiling);
-            self.thermal_state = self.thermal_step.step(
-                self.thermal_state,
-                problem.free_heat_at(k) - p * t.heat_pump.eer(outdoor) / 1000.0,
-                outdoor,
-            );
-            return p;
-        }
-
-        if self.thermal_state.indoor_c < t.comfort_min_c {
-            self.thermostat_on = true;
-        } else if self.thermal_state.indoor_c > t.comfort_min_c + 0.5 {
-            self.thermostat_on = false;
-        }
-        let p = if self.thermostat_on {
-            t.heat_pump.max_electrical.get().min(device_ceiling)
-        } else {
+        let (full, per_watt_kw, hold) =
+            if t.heat_pump.is_reversible() && off.indoor_c > t.comfort_max_c {
+                (
+                    t.heat_pump.max_cooling.get().min(device_ceiling),
+                    -t.heat_pump.eer(outdoor) / 1000.0,
+                    t.comfort_max_c - INSIDE_K,
+                )
+            } else if off.indoor_c < t.comfort_min_c + INSIDE_K {
+                (
+                    t.heat_pump.max_electrical.get().min(device_ceiling),
+                    t.heat_pump.cop(outdoor) / 1000.0,
+                    t.comfort_min_c + INSIDE_K,
+                )
+            } else {
+                self.thermal_state = off;
+                return 0.0;
+            };
+        let at_full =
+            self.thermal_step
+                .step(self.thermal_state, free + full * per_watt_kw, outdoor);
+        let reach = at_full.indoor_c - off.indoor_c;
+        let share = if reach.abs() < 1e-9 {
             0.0
+        } else {
+            ((hold - off.indoor_c) / reach).clamp(0.0, 1.0)
         };
-        // The same free heat the plan is given. A baseline heated by a different
-        // physics from the plan's is not a comparison (D37).
-        self.thermal_state = self.thermal_step.step(
-            self.thermal_state,
-            p * t.heat_pump.cop(outdoor) / 1000.0 + problem.free_heat_at(k),
-            outdoor,
-        );
+        let p = full * share;
+        self.thermal_state =
+            self.thermal_step
+                .step(self.thermal_state, free + p * per_watt_kw, outdoor);
         p
     }
 
@@ -2575,7 +2633,15 @@ impl Unmanaged {
         // day and never uses the store as a store, which is what makes it a
         // baseline; a baseline that held the water hotter than the household
         // asks for would credit the manager with the difference (D183).
-        let missing = d.thermostat_set.get().min(d.capacity.get()) - self.dhw_stored;
+        // A household that wants the water hotter by a time and has no manager
+        // turns its thermostat up until then. Same service, no decisions.
+        let goal = problem.dhw_target_at();
+        let set = goal
+            .filter(|(due, _)| k <= *due)
+            .map_or(d.thermostat_set.get(), |(_, owed)| {
+                owed.max(d.thermostat_set.get())
+            });
+        let missing = set.min(d.capacity.get()) - self.dhw_stored;
         let p = if missing > 0.0 {
             d.heater
                 .get()
@@ -2584,6 +2650,12 @@ impl Unmanaged {
             0.0
         };
         self.dhw_stored = (self.dhw_stored + p * d.cop * DT_HOURS).min(d.capacity.get());
+        if let Some((due, owed)) = goal
+            && due == k
+        {
+            cost.unserved_eur +=
+                (owed - self.dhw_stored).max(0.0) * (d.shortfall_eur_per_kwh / 1000.0);
+        }
         p
     }
 }
@@ -3007,6 +3079,9 @@ fn read_back(
     }
 
     let baseline = baseline_cost(problem);
+    if let Some(last) = flows.last() {
+        cost.stored_eur = borrowed_eur(problem, last.battery_energy.get(), last.dhw_stored.get());
+    }
 
     // ── The soft terms, in **expectation** ───────────────────────────────────
     //

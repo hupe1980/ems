@@ -41,7 +41,7 @@ const SCALE_FACTOR_RANGE: std::ops::RangeInclusive<i16> = -10..=10;
 /// meant — it is a refusal to invent one, and it keeps the failure to a reading
 /// that is wrong by a known power of ten instead of a box that stops managing
 /// the house.
-fn scaled(value: i64, exponent: i16) -> f64 {
+pub(super) fn scaled(value: i64, exponent: i16) -> f64 {
     let exponent = if SCALE_FACTOR_RANGE.contains(&exponent) {
         exponent
     } else {

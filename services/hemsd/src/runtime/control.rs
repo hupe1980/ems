@@ -812,6 +812,11 @@ async fn close_the_day(
     match built {
         Ok(Some(day)) => {
             carried.last_day = Some(day.clone());
+            // Kept for the household's month before anything else is tried:
+            // the fleet's copy can be re-sent, the household's cannot.
+            if let Err(error) = guard.put_closed_day(&crate::month::ClosedDay::of_report(&day)) {
+                tracing::warn!(%error, %finished, "the closed day could not be kept");
+            }
             let event = hems_events::Event::new(
                 hems_events::SITE_DAY_REPORTED,
                 format!("hems://sites/{site}"),
@@ -1571,7 +1576,15 @@ async fn tick(
             in_failsafe: observed.limits.in_failsafe,
             readings: readings_of(&observed),
             disobedient: observed.disobedient.clone(),
-            undriven: managed.undriven.clone(),
+            // No driver at all, or one that cannot express what it is asked.
+            undriven: managed
+                .undriven
+                .iter()
+                .chain(&observed.uncommandable)
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             steuve_ceiling: observed.limits.steuve_ceiling,
             steuve_budget: decision.verdict.steuve_budget,
             netzwirksam: Some(decision.verdict.netzwirksam),

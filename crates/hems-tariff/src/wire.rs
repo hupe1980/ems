@@ -66,12 +66,22 @@ mod tests {
 
     #[test]
     fn a_quantity_travels_as_an_exact_decimal_string() {
-        let levies = Levies::household_2026();
+        let levies = Levies::household(2026).unwrap();
         let json = serde_json::to_string(&levies).unwrap();
         assert!(
             json.contains(r#""stromsteuer":"2.05""#),
             "a levy is a string, not a number: {json}"
         );
+        // The names an itemised bill uses, so one object means the same thing
+        // to whoever sold the tariff and to the box that plans against it.
+        for name in [
+            "kwkg",
+            "paragraph_19_strom_nev",
+            "offshore",
+            "konzessionsabgabe",
+        ] {
+            assert!(json.contains(&format!(r#""{name}":"#)), "{name}: {json}");
+        }
         assert_eq!(serde_json::from_str::<Levies>(&json).unwrap(), levies);
     }
 
@@ -81,8 +91,8 @@ mod tests {
         // writes a float has lost digits before the value ever arrives, and a
         // quantity that becomes a Nachweis may not be rounded on the way in.
         let err = serde_json::from_str::<Levies>(
-            r#"{"stromsteuer":2.05,"kwkg":"0.28","para19":"0.64","offshore":"0.65",
-                "konzessionsabgabe":"1.66","vat_rate":"0.19"}"#,
+            r#"{"stromsteuer":2.05,"kwkg":"0.446","paragraph_19_strom_nev":"1.559","offshore":"0.941",
+                "konzessionsabgabe":"1.59","vat_rate":"0.19"}"#,
         )
         .expect_err("a JSON number must not deserialise into a Decimal");
         assert!(

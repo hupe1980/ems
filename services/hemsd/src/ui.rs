@@ -21,6 +21,10 @@ pub const ICON_SVG: &str = include_str!("../ui/icon.svg");
 /// What a phone needs to put the page on its home screen.
 pub const MANIFEST: &str = include_str!("../ui/manifest.webmanifest");
 
+/// The service worker: shows a notification the box pushed, in browsers that
+/// do not show one on their own.
+pub const SW_JS: &str = include_str!("../ui/sw.js");
+
 /// A response with a fixed type and the page's security headers.
 fn file(body: &'static str, content_type: &'static str) -> impl IntoResponse {
     (
@@ -69,6 +73,13 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> axum::Router<S> {
             "/icon.svg",
             get(|| async { file(ICON_SVG, "image/svg+xml") }),
         )
+        // At the root, so its scope is the whole page: a worker controls only
+        // what is at or beneath its own path. `default-src 'self'` is what lets
+        // the page register it — `worker-src` falls back to `script-src`.
+        .route(
+            "/sw.js",
+            get(|| async { file(SW_JS, "text/javascript; charset=utf-8") }),
+        )
         .route(
             "/manifest.webmanifest",
             get(|| async { file(MANIFEST, "application/manifest+json") }),
@@ -85,12 +96,61 @@ mod tests {
             ("index.html", INDEX_HTML),
             ("app.js", APP_JS),
             ("app.css", APP_CSS),
+            ("sw.js", SW_JS),
         ] {
             assert!(
                 !text.contains("http://") && !text.contains("https://"),
                 "{name} names an external address; the page must work with no WAN"
             );
         }
+    }
+
+    #[test]
+    fn the_service_worker_only_shows_and_opens() {
+        // It is handed the household's notifications, so it must do nothing
+        // else: no fetch handler to sit between the page and the box, no cache
+        // to keep a document after sign-out, no request of its own.
+        for forbidden in [
+            "fetch",
+            "caches",
+            "importScripts",
+            "XMLHttpRequest",
+            "indexedDB",
+        ] {
+            assert!(!SW_JS.contains(forbidden), "sw.js uses `{forbidden}`");
+        }
+        for needed in [
+            "\"push\"",
+            "\"notificationclick\"",
+            "web_push",
+            "showNotification",
+        ] {
+            assert!(SW_JS.contains(needed), "sw.js lost `{needed}`");
+        }
+    }
+
+    #[test]
+    fn the_wall_display_offers_nothing_to_press() {
+        // A tablet on a wall is in reach of every visitor: the glance face is one
+        // link back to Now and no control, fingerprint or code.
+        let start = APP_JS.find("function viewGlance").expect("the glance view");
+        let face = &APP_JS[start..start + APP_JS[start..].find("\n}\n").expect("its end")];
+        for forbidden in [
+            "<button",
+            "<input",
+            "<select",
+            "<form",
+            "h.ski",
+            "fingerprint",
+            "/v1/qr",
+        ] {
+            assert!(
+                !face.contains(forbidden),
+                "the glance face contains {forbidden}"
+            );
+        }
+        assert_eq!(face.matches("href=").count(), 1);
+        assert!(face.contains("href=\"#now\""));
     }
 
     #[test]

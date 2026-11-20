@@ -38,6 +38,7 @@
 
 mod decode;
 pub mod frame;
+pub mod probe;
 pub mod registers;
 mod scan;
 
@@ -121,6 +122,13 @@ pub struct SunSpec {
     partial: Option<Measurement>,
     /// Whether this driver is configured to read and never command.
     listens_only: bool,
+    /// The registers of the model being polled, assembled across reads: one
+    /// request carries at most [`frame::MAX_REGISTERS_PER_READ`], and model 701
+    /// alone is longer than that.
+    block: Vec<u16>,
+    /// A ceiling waiting for the device's `WMaxLimPct_SF` before it can be
+    /// written.
+    awaiting_scale: Option<Power>,
 }
 
 /// A request that has gone out and not yet come back.
@@ -138,8 +146,11 @@ pub(crate) enum Purpose {
     Marker(u16),
     /// Reading a model header while walking the chain.
     Header(u16),
-    /// Reading the models that carry a measurement.
-    Poll { id: u16, address: u16 },
+    /// Reading the models that carry a measurement: model `id`, whose body of
+    /// `len` registers starts at `address`.
+    Poll { id: u16, address: u16, len: u16 },
+    /// Reading model 123's `WMaxLimPct_SF`, which a ceiling is scaled by.
+    Scale,
     /// Writing a curtailment setpoint.
     Curtail { address: u16, wanted: u16 },
     /// Reading back a curtailment setpoint the device has just accepted.
@@ -202,6 +213,8 @@ impl SunSpec {
             due: None,
             partial: None,
             listens_only: false,
+            block: Vec::new(),
+            awaiting_scale: None,
         }
     }
 
@@ -262,7 +275,13 @@ impl SunSpec {
         if self.due.is_none_or(|due| now >= due) {
             if let Some((id, address, len)) = self.models.next_poll() {
                 self.partial.get_or_insert_with(|| Measurement::at(now));
-                self.read(address, len, Purpose::Poll { id, address }, now);
+                self.block.clear();
+                self.read(
+                    address,
+                    len.min(frame::MAX_REGISTERS_PER_READ),
+                    Purpose::Poll { id, address, len },
+                    now,
+                );
             } else {
                 self.finish_poll(now);
             }
@@ -349,6 +368,9 @@ impl Driver for SunSpec {
         self.outbox.clear();
         self.pending = None;
         self.partial = None;
+        self.block.clear();
+        self.awaiting_scale = None;
+        self.models.forget_curtail_scale();
         self.due = None;
         self.discovery.restart();
         self.models.rewind();
@@ -374,6 +396,8 @@ impl Driver for SunSpec {
             self.abandon_command(p.purpose, "the device did not answer", now);
             self.pending = None;
             self.partial = None;
+            self.block.clear();
+            self.awaiting_scale = None;
             if self.link != LinkState::Stale {
                 self.link = LinkState::Stale;
                 self.events.push(DriverEvent::Link(LinkState::Stale));
@@ -396,28 +420,34 @@ impl Driver for SunSpec {
         if self.link != LinkState::Up {
             return Err(DriverError::NotConnected);
         }
-        let Some(write) = self.models.curtailment_write(*ceiling) else {
+        // Refused here, before anything is sent, where the device has no
+        // model 123 or the driver no rating: the caller learns it at once.
+        if !self.models.has(123) || self.models.rating().is_none() {
             return Err(DriverError::Unsupported(
-                "a production ceiling on a device with no model 123".into(),
+                "a production ceiling on a device with no model 123 or no rating".into(),
             ));
-        };
-        let transaction = self.transaction();
-        let address = write.address;
-        let wanted = write.values[0];
-        self.outbox.push(Request {
-            transaction,
-            unit: self.unit,
-            body: RequestBody::Write {
-                address,
-                values: write.values,
-            },
-        });
-        self.pending = Some(Pending {
-            transaction,
-            at: now,
-            purpose: Purpose::Curtail { address, wanted },
-        });
-        Ok(())
+        }
+        // `WMaxLimPct` is stored with the device's own scale factor, and a
+        // percentage written without it is wrong by a power of ten: sixty per
+        // cent sent as `60` to a device with `WMaxLimPct_SF = −2` is 0,6 %.
+        // It is read once per session, before the first ceiling.
+        if self.models.curtail_scale().is_none() {
+            let Some(address) = self.models.curtail_scale_address() else {
+                return Err(DriverError::Unsupported(
+                    "model 123 lies outside the address space".into(),
+                ));
+            };
+            self.awaiting_scale = Some(*ceiling);
+            self.read(address, 1, Purpose::Scale, now);
+            return Ok(());
+        }
+        if self.write_ceiling(*ceiling, now) {
+            Ok(())
+        } else {
+            Err(DriverError::Unsupported(
+                "a production ceiling this device's scale factor cannot express".into(),
+            ))
+        }
     }
 
     fn poll_event(&mut self) -> Option<DriverEvent> {
@@ -449,6 +479,30 @@ impl Driver for SunSpec {
 }
 
 impl SunSpec {
+    /// Queue the write of a ceiling. `false` where it cannot be expressed.
+    fn write_ceiling(&mut self, ceiling: Power, now: OffsetDateTime) -> bool {
+        let Some(write) = self.models.curtailment_write(ceiling) else {
+            return false;
+        };
+        let transaction = self.transaction();
+        let address = write.address;
+        let wanted = write.values[0];
+        self.outbox.push(Request {
+            transaction,
+            unit: self.unit,
+            body: RequestBody::Write {
+                address,
+                values: write.values,
+            },
+        });
+        self.pending = Some(Pending {
+            transaction,
+            at: now,
+            purpose: Purpose::Curtail { address, wanted },
+        });
+        true
+    }
+
     /// Fold one answer into whatever it was asked for.
     fn handle(&mut self, response: &Response, now: OffsetDateTime) {
         let Some(pending) = self.pending.clone() else {
@@ -468,9 +522,10 @@ impl SunSpec {
             // one: routing it through `refused` would end the model walk on the
             // strength of an inverter that simply does not accept a setpoint.
             (
-                Purpose::Curtail { .. } | Purpose::Readback { .. },
+                Purpose::Curtail { .. } | Purpose::Readback { .. } | Purpose::Scale,
                 ResponseBody::Exception { code, .. },
             ) => {
+                self.awaiting_scale = None;
                 self.events.push(DriverEvent::Command(CommandOutcome {
                     accepted: false,
                     confirmed: None,
@@ -488,11 +543,47 @@ impl SunSpec {
             (Purpose::Header(address), ResponseBody::Registers(regs)) => {
                 self.discovery.saw_header(*address, regs, &mut self.models);
             }
-            (Purpose::Poll { id, .. }, ResponseBody::Registers(regs)) => {
-                if let Some(m) = self.partial.as_mut() {
-                    decode::fold(*id, regs, m);
+            (Purpose::Poll { id, address, len }, ResponseBody::Registers(regs)) => {
+                self.block.extend_from_slice(regs);
+                let have = u16::try_from(self.block.len()).unwrap_or(u16::MAX);
+                // A model longer than one read is fetched in pieces and folded
+                // whole. An empty answer ends it: a device that returns nothing
+                // would otherwise be asked for the same registers for ever.
+                if let (true, false, Some(next)) =
+                    (have < *len, regs.is_empty(), address.checked_add(have))
+                {
+                    let (id, address, len) = (*id, *address, *len);
+                    self.read(
+                        next,
+                        (len - have).min(frame::MAX_REGISTERS_PER_READ),
+                        Purpose::Poll { id, address, len },
+                        now,
+                    );
+                } else {
+                    let block = core::mem::take(&mut self.block);
+                    if let Some(m) = self.partial.as_mut() {
+                        decode::fold(*id, &block, m);
+                    }
+                    self.models.advance_poll();
                 }
-                self.models.advance_poll();
+            }
+            (Purpose::Scale, ResponseBody::Registers(regs)) => {
+                // An unimplemented scale factor reads `0x8000`, which `scaled`
+                // treats as no scaling.
+                self.models
+                    .set_curtail_scale(regs.first().map_or(0, |r| r.cast_signed()));
+                if let Some(ceiling) = self.awaiting_scale.take()
+                    && !self.write_ceiling(ceiling, now)
+                {
+                    self.events.push(DriverEvent::Command(CommandOutcome {
+                        accepted: false,
+                        confirmed: None,
+                        at: now,
+                        detail: Some(
+                            "the device's WMaxLimPct_SF cannot express this ceiling".into(),
+                        ),
+                    }));
+                }
             }
             (Purpose::Curtail { address, wanted }, ResponseBody::WriteAccepted { .. }) => {
                 // Nothing is reported yet. The write went out well formed,
@@ -524,7 +615,10 @@ impl SunSpec {
     /// compliance. A discovery read that goes unanswered is a different thing
     /// and stays where it is, in the link state.
     fn abandon_command(&mut self, purpose: Purpose, why: &str, now: OffsetDateTime) {
-        if matches!(purpose, Purpose::Curtail { .. } | Purpose::Readback { .. }) {
+        if matches!(
+            purpose,
+            Purpose::Curtail { .. } | Purpose::Readback { .. } | Purpose::Scale
+        ) {
             self.events.push(DriverEvent::Command(CommandOutcome {
                 accepted: false,
                 confirmed: None,
@@ -550,7 +644,7 @@ impl SunSpec {
     /// reply, and assuming it is set would be inventing the confirmation this
     /// whole exchange exists to obtain.
     fn readback(&self, wanted: u16, regs: &[u16], now: OffsetDateTime) -> CommandOutcome {
-        let Some((&percent, &enabled)) = regs.first().zip(regs.get(ENABLE_OFFSET)) else {
+        let Some((&raw, &enabled)) = regs.first().zip(regs.get(ENABLE_OFFSET)) else {
             return CommandOutcome {
                 accepted: false,
                 confirmed: None,
@@ -562,14 +656,20 @@ impl SunSpec {
             };
         };
         let in_force = enabled == 1;
+        let scale = self.models.curtail_scale().unwrap_or(0);
+        let percent = |raw: u16| decode::scaled(i64::from(raw), scale);
         let confirmed = self
             .models
             .rating()
-            .map(|rating| Power::new(rating.get() * f64::from(percent) / 100.0));
+            .map(|rating| Power::new(rating.get() * percent(raw) / 100.0));
         let detail = if !in_force {
             Some("WMaxLimPct was stored but WMaxLim_Ena reads 0: the limit is not in force".into())
-        } else if percent != wanted {
-            Some(format!("the device clipped {wanted} % to {percent} %"))
+        } else if raw != wanted {
+            Some(format!(
+                "the device clipped {} % to {} %",
+                percent(wanted),
+                percent(raw)
+            ))
         } else {
             None
         };
@@ -598,23 +698,29 @@ pub struct CurtailWrite {
     pub values: Vec<u16>,
 }
 
-/// What a ceiling means as a percentage of the device's rating.
+/// What a ceiling means in `WMaxLimPct`'s own units.
 ///
 /// SunSpec model 123 curtails in **per cent of `WMax`**, not in watts, so a
 /// driver that does not know the rating cannot express a ceiling at all — and
-/// saying so is better than writing a percentage computed from a guess.
+/// saying so is better than writing a percentage computed from a guess. The
+/// register holds the percentage divided by `10^scale` (`WMaxLimPct_SF`): sixty
+/// per cent is `60` at a scale of 0 and `6000` at −2. `None` where the rating
+/// is not positive or the result does not fit the register.
 #[must_use]
-pub fn curtail_percent(ceiling: Power, rating: Power) -> Option<u16> {
+pub fn curtail_register(ceiling: Power, rating: Power, scale: i16) -> Option<u16> {
     if rating <= Power::ZERO {
         return None;
     }
     let pct = (ceiling.get() / rating.get() * 100.0).clamp(0.0, 100.0);
-    // Clamped to `[0, 100]` on the line above and rounded here, so every value
-    // it can take is a whole number a `u16` holds exactly.
+    let unit = decode::scaled(1, scale);
+    let raw = (pct / unit).round();
+    if !(0.0..=f64::from(u16::MAX)).contains(&raw) {
+        return None;
+    }
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "clamped to [0, 100] and rounded, so the conversion is exact"
+        reason = "checked to lie in a u16's range on the line above, and rounded"
     )]
-    Some(pct.round() as u16)
+    Some(raw as u16)
 }
