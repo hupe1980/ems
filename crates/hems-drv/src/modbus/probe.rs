@@ -2,7 +2,7 @@
 //!
 //! Commissioning's question, not the driver's: an installer names a host, and
 //! the box says what — if anything — answered. It reads the `SunS` marker at the
-//! three base addresses ([`super::scan::BASES`]) and then the common model
+//! three base addresses SunSpec allows (40000, 50000 and 0) and then the common model
 //! (model 1: manufacturer, model, version, serial number), and nothing else. It
 //! never writes.
 //!

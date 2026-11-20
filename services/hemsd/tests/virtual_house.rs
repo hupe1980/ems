@@ -97,17 +97,23 @@ async fn every_device_is_discovered_read_and_obeyed_over_modbus() {
         },
     )
     .await;
-    let silent: Vec<_> = running
-        .registry
-        .lock()
-        .await
-        .silent(OffsetDateTime::now_utc())
-        .cloned()
-        .collect();
-    assert!(
-        silent.is_empty(),
-        "a device the house serves is silent: {silent:?}"
-    );
+    // Every device is heard — the Steuerbox too, whose SHIP pairing runs beside
+    // the Modbus reads and can finish after them on a slow machine.
+    until(
+        StdDuration::from_secs(60),
+        "every device the house serves is heard",
+        async || {
+            running
+                .registry
+                .lock()
+                .await
+                .silent(OffsetDateTime::now_utc())
+                .next()
+                .is_none()
+                .then_some(())
+        },
+    )
+    .await;
 
     // A write is honoured. Nothing here commands the inverter — the box's own
     // control loop does, with the ceiling § 9 EEG puts on this roof — so what is
