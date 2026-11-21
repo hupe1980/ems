@@ -43,3 +43,5 @@ target
 
 # Zola build output
 /site/public
+
+.DS_Store
