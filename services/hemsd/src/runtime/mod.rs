@@ -40,11 +40,14 @@ pub mod handover;
 pub mod outbox;
 pub mod overrides;
 pub mod planner;
+pub mod problem;
 pub mod push;
+pub mod quote;
 pub mod s2;
 pub mod ship;
 pub mod tls;
 pub mod transport;
+pub mod webhooks;
 pub mod webpush;
 
 use std::collections::BTreeMap;
@@ -163,6 +166,8 @@ pub struct Running {
     pub car: crate::home::CarFacts,
     /// The tank as the planner last saw it.
     pub tank: crate::home::TankFacts,
+    /// The planner's last solve, for pricing a goal before it is set.
+    pub last: planner::LastInputs,
     /// The plan in force and the prices it was made against, for the page.
     pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
     /// The prices the plan in force was made against.
@@ -233,6 +238,7 @@ pub fn assemble(
         goal: crate::home::Goals::default(),
         car: crate::home::CarFacts::default(),
         tank: crate::home::TankFacts::default(),
+        last: planner::LastInputs::default(),
         plan: Arc::default(),
         prices: Arc::default(),
         tls: None,
@@ -1010,6 +1016,18 @@ pub fn surfaces_over(
         ))
         .merge(crate::ui::router())
         .merge(access::session_router(access, https))
+        // The contract, from the box that keeps it: public, like the page's
+        // files, because it says what the API is and nothing about the house.
+        .route("/openapi.json", axum::routing::get(contract))
+        // Outermost, so the access layer's 401 and an extractor's rejection
+        // leave in the same shape as a handler's own refusal.
+        .layer(axum::middleware::from_fn(problem::as_problem))
+}
+
+/// `GET /openapi.json`: the OpenAPI 3.1 document, built once.
+async fn contract() -> axum::Json<&'static serde_json::Value> {
+    static DOCUMENT: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    axum::Json(DOCUMENT.get_or_init(crate::openapi::document))
 }
 
 /// The map an S2 session writes and the arbiter reads.
@@ -1327,6 +1345,7 @@ async fn start_planner(
             goal: running.goal.clone(),
             car: running.car.clone(),
             tank: running.tank.clone(),
+            last: running.last.clone(),
         },
         Arc::clone(&running.registry),
         fleet,

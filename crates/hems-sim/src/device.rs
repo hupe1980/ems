@@ -11,6 +11,22 @@ use hems_core::prelude::{
 };
 use time::Duration;
 
+/// The cells' one-way efficiency: √0.95 (HTW 2026, mean round trip 95.0 %).
+pub const CELL_EFFICIENCY: f64 = 0.974_679_434_480_896_4;
+
+/// A good 10-kW hybrid's no-load conversion loss, W — fitted with
+/// [`PROPORTIONAL_LOSS`] to the Fronius GEN24 10.0 discharge curve HTW Berlin
+/// publishes (*Stromspeicher-Inspektion 2026*, Bild 40: ≈ 86 % at 0.2 kW,
+/// 93 % at 0.5 kW, 96 % at 1 kW, 97 % at 2–6 kW).
+pub const NO_LOAD_LOSS_W: f64 = 30.0;
+
+/// The same unit's proportional conversion loss.
+pub const PROPORTIONAL_LOSS: f64 = 0.02;
+
+/// The storage system's standby draw, W: HTW's median for an empty system,
+/// meter included (*Stromspeicher-Inspektion 2026*, Bild 24).
+pub const STANDBY_W: f64 = 8.0;
+
 /// A stationary battery with efficiency, limits and a state of charge.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatterySim {
@@ -22,10 +38,17 @@ pub struct BatterySim {
     pub max_charge: Power,
     /// Maximum discharging power as a positive magnitude.
     pub max_discharge: Power,
-    /// One-way charging efficiency.
-    pub efficiency_charge: f64,
-    /// One-way discharging efficiency.
-    pub efficiency_discharge: f64,
+    /// The cells' one-way efficiency, the same both ways: √0.95, HTW Berlin's
+    /// mean battery round trip of 95.0 % (*Stromspeicher-Inspektion 2026*,
+    /// Bild 12).
+    pub cell_efficiency: f64,
+    /// The battery inverter's no-load loss, W: what it draws to be on at all.
+    /// With [`BatterySim::proportional_loss`] it is the whole conversion curve,
+    /// `P_DC = P_AC + P₀ + k·P_AC` — the shape that makes a household battery
+    /// lose a quarter of what it delivers at 100 W and almost nothing at 10 kW.
+    pub no_load_loss: Power,
+    /// The conversion loss proportional to the power converted, `k`.
+    pub proportional_loss: f64,
     /// Lowest usable state of charge.
     pub soc_min: Soc,
     /// Highest usable state of charge.
@@ -44,12 +67,47 @@ impl BatterySim {
             stored: capacity * 0.5,
             max_charge: max_power,
             max_discharge: max_power,
-            efficiency_charge: 0.95,
-            efficiency_discharge: 0.95,
+            cell_efficiency: CELL_EFFICIENCY,
+            no_load_loss: Power::new(NO_LOAD_LOSS_W),
+            proportional_loss: PROPORTIONAL_LOSS,
             soc_min: Soc::new(0.05).unwrap_or(Soc::EMPTY),
             soc_max: Soc::FULL,
-            standby_loss: Power::new(15.0),
+            standby_loss: Power::new(STANDBY_W),
         }
+    }
+
+    /// The converter's discharge efficiency at `ac` delivered: `P_AC / P_DC`.
+    #[must_use]
+    pub fn discharge_conversion(&self, ac: Power) -> f64 {
+        let p = ac.get().abs();
+        if p <= 0.0 {
+            return 1.0;
+        }
+        p / (p * (1.0 + self.proportional_loss) + self.no_load_loss.get())
+    }
+
+    /// The converter's charge efficiency at `ac` taken: `P_DC / P_AC`.
+    #[must_use]
+    pub fn charge_conversion(&self, ac: Power) -> f64 {
+        let p = ac.get().abs();
+        if p <= 0.0 {
+            return 1.0;
+        }
+        ((p * (1.0 - self.proportional_loss) - self.no_load_loss.get()) / p).max(0.0)
+    }
+
+    /// One-way efficiency, cells and converter, discharging at `ac` — what a
+    /// linear planner should price a stored kilowatt-hour at when it knows the
+    /// power the house will draw it at.
+    #[must_use]
+    pub fn discharge_efficiency_at(&self, ac: Power) -> f64 {
+        self.cell_efficiency * self.discharge_conversion(ac)
+    }
+
+    /// One-way efficiency, converter and cells, charging at `ac`.
+    #[must_use]
+    pub fn charge_efficiency_at(&self, ac: Power) -> f64 {
+        self.charge_conversion(ac) * self.cell_efficiency
     }
 
     /// The current state of charge.
@@ -68,20 +126,35 @@ impl BatterySim {
         let floor = self.capacity * self.soc_min.fraction();
 
         let wanted = commanded.clamp(-self.max_discharge, self.max_charge);
-        let actual = if wanted > Power::ZERO {
-            // Charging: bounded by the room left, after losses.
+        let actual = if wanted > Power::ZERO && self.charge_conversion(wanted) <= 0.0 {
+            // Below its own no-load draw a converter charges nothing at all.
+            Power::ZERO
+        } else if wanted > Power::ZERO {
+            // Charging: the converter keeps its losses, the cells theirs.
             let room = (ceiling - self.stored).max(Energy::ZERO);
-            let max_by_room = Power::new(room.get() / hours.max(1e-9) / self.efficiency_charge);
+            let max_by_room = Power::new(
+                room.get()
+                    / hours.max(1e-9)
+                    / (self.cell_efficiency * self.charge_conversion(wanted)),
+            );
             let p = wanted.min(max_by_room);
-            self.stored += Energy::new(p.get() * hours * self.efficiency_charge);
+            self.stored +=
+                Energy::new(p.get() * hours * self.charge_conversion(p) * self.cell_efficiency);
             p
         } else if wanted < Power::ZERO {
-            // Discharging: bounded by what is stored, before losses.
+            // Discharging: the cells deliver what the converter needs, which at
+            // a few hundred watts is a good deal more than the house receives.
             let available = (self.stored - floor).max(Energy::ZERO);
-            let max_by_charge =
-                Power::new(available.get() / hours.max(1e-9) * self.efficiency_discharge);
-            let p = wanted.abs().min(max_by_charge);
-            self.stored -= Energy::new(p.get() * hours / self.efficiency_discharge);
+            let asked = wanted.abs();
+            let max_by_charge = Power::new(
+                available.get() / hours.max(1e-9)
+                    * self.cell_efficiency
+                    * self.discharge_conversion(asked),
+            );
+            let p = asked.min(max_by_charge);
+            self.stored -= Energy::new(
+                p.get() * hours / (self.discharge_conversion(p) * self.cell_efficiency),
+            );
             -p
         } else {
             Power::ZERO
@@ -1086,5 +1159,35 @@ mod tests {
             b.cop(10.0) > b.cop(-10.0),
             "heat pumps are worse when it is cold"
         );
+    }
+
+    /// The conversion curve is HTW Berlin's, not ours: a planner and a
+    /// simulator that shared one wrong loss model would never see it.
+    #[test]
+    fn the_battery_loses_at_low_power_what_htw_measured() {
+        let b = BatterySim::new(Energy::from_kwh(10.0), Power::from_kw(10.0));
+        // Fronius GEN24 10.0, *Stromspeicher-Inspektion 2026*, Bild 40 (read off
+        // the chart, ± 1 pp), and the 74 % at 100 W of p. 23.
+        for (watts, published) in [
+            (100.0, 0.74),
+            (200.0, 0.86),
+            (500.0, 0.93),
+            (1_000.0, 0.96),
+            (10_000.0, 0.97),
+        ] {
+            let ours = b.discharge_conversion(Power::new(watts));
+            assert!(
+                (ours - published).abs() <= 0.025,
+                "{watts} W: {ours:.3} against HTW's {published}"
+            );
+        }
+        // Mean battery round trip 95.0 % (Bild 12) and median standby 8 W (Bild 24).
+        assert!((b.cell_efficiency * b.cell_efficiency - 0.95).abs() < 1e-12);
+        assert!((b.standby_loss.get() - 8.0).abs() < f64::EPSILON);
+        // HTW's own chain: charging at 4 kW and discharging at 200 W through an
+        // efficient system comes to about 78 % (p. 42, Bild 41).
+        let chain = b.charge_efficiency_at(Power::from_kw(4.0))
+            * b.discharge_efficiency_at(Power::new(200.0));
+        assert!((chain - 0.78).abs() < 0.04, "{chain:.3}");
     }
 }

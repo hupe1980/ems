@@ -155,6 +155,23 @@ impl Event {
         })
     }
 
+    /// The view a tap on it opens: where the household can act on it.
+    ///
+    /// A goal at risk opens Plan, where the goal is; failsafe opens Setup,
+    /// whose trust lines say what the control box last did; a reduction and a
+    /// device that stopped following open Now, which says what the house is
+    /// doing about them.
+    #[must_use]
+    pub const fn view(self) -> &'static str {
+        match self {
+            Self::GoalTight | Self::GoalImpossible => "plan",
+            Self::Failsafe => "setup",
+            Self::ReductionBegan | Self::ReductionEnded | Self::DeviceNotFollowing | Self::Test => {
+                "now"
+            }
+        }
+    }
+
     /// The `Topic` a push service collapses undelivered messages by, and the
     /// tag a browser replaces a shown notification by — so *ended* replaces
     /// *began* on a phone that was off for both.
@@ -279,7 +296,8 @@ impl Lang {
 ///
 /// `web_push: 8030` is what makes a browser that understands the format show
 /// it without running anything; `navigate` is required by it and is where a tap
-/// lands. Others hand the same document to the page's service worker.
+/// lands — the view the event is about. Others hand the same document to the
+/// page's service worker.
 #[must_use]
 pub fn message(event: Event, lang: Lang, origin: &str) -> serde_json::Value {
     let (title, body) = event.sentence(lang);
@@ -291,7 +309,7 @@ pub fn message(event: Event, lang: Lang, origin: &str) -> serde_json::Value {
             "lang": lang.tag(),
             "dir": "ltr",
             "tag": event.topic(),
-            "navigate": format!("{origin}/#now"),
+            "navigate": format!("{origin}/#{}", event.view()),
         }
     })
 }
@@ -1056,12 +1074,17 @@ pub fn local_minute(now: OffsetDateTime) -> u16 {
 /// How often the watcher looks.
 const EVERY: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// Watch the box and tell the subscribed browsers what is worth telling.
+/// Watch the box and tell whoever asked what is worth telling: the subscribed
+/// browsers a sentence, the subscribed systems the event with its numbers.
 ///
-/// `document` yields the household page's document — the same one `GET
-/// /v1/home` answers — or `None` while there is none to read.
-pub async fn run<F, Fut>(push: Push, document: F, shutdown: hems_service::Shutdown)
-where
+/// One detector, two doors. `document` yields the household page's document —
+/// the same one `GET /v1/home` answers — or `None` while there is none to read.
+pub async fn run<F, Fut>(
+    push: Option<Push>,
+    hooks: Option<crate::runtime::webhooks::Webhooks>,
+    document: F,
+    shutdown: hems_service::Shutdown,
+) where
     F: Fn() -> Fut + Send,
     Fut: std::future::Future<Output = Option<serde_json::Value>> + Send,
 {
@@ -1082,6 +1105,14 @@ where
         let now = OffsetDateTime::now_utc();
         let signals = Signals::of(&home);
         let events = detector.observe(&signals, now);
+        if let Some(hooks) = &hooks
+            && !events.is_empty()
+        {
+            hooks.emit(&events, &home, now).await;
+        }
+        let Some(push) = &push else {
+            continue;
+        };
         let subscriptions = match push.subscriptions().await {
             Ok(subscriptions) => subscriptions,
             Err(error) => {
@@ -1157,6 +1188,27 @@ mod tests {
         assert_eq!(n["navigate"], "https://hems.local:8443/#now");
         assert_eq!(n["lang"], "en");
         assert_eq!(m.as_object().unwrap().len(), 2, "no measurement beside it");
+    }
+
+    /// A tap opens the view the household can act from, and only views the
+    /// page has.
+    #[test]
+    fn a_notification_opens_what_it_is_about() {
+        let opens = |e| message(e, Lang::En, "https://b")["notification"]["navigate"].clone();
+        assert_eq!(opens(Event::GoalImpossible), "https://b/#plan");
+        assert_eq!(opens(Event::GoalTight), "https://b/#plan");
+        assert_eq!(opens(Event::Failsafe), "https://b/#setup");
+        assert_eq!(opens(Event::ReductionBegan), "https://b/#now");
+        assert_eq!(opens(Event::DeviceNotFollowing), "https://b/#now");
+        let page = include_str!("../../ui/app.js");
+        let views = &page[page.find("const VIEWS").expect("the page's views")..];
+        let views = &views[..views.find(';').expect("their end")];
+        for event in Event::ALL {
+            assert!(
+                views.contains(&format!("\"{}\"", event.view())),
+                "{event:?}"
+            );
+        }
     }
 
     #[test]

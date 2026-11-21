@@ -62,11 +62,11 @@ $ just fleet-demo  # a box reporting its day into the fleet view
 
 No hardware yet? A virtual house answers on the real protocols — a SunSpec
 inverter, meter and battery over Modbus TCP and a network operator's Steuerbox
-over EEBUS — and an ordinary box manages it:
+over EEBUS, with the day's prices and weather — and an ordinary box manages
+it, in the same command:
 
 ```console
-$ cargo run -p hemsd --features house -- house --at 16:58   # writes house.toml
-$ cargo run -p hemsd --features house -- run --config house.toml
+$ cargo run -p hemsd --features house -- house --run --at 16:58
 ```
 
 To manage a real house, describe it in a file and check it before anything
@@ -149,18 +149,18 @@ $ cargo run -p hemsd -- simulate --day winter
   produced                                  7.4 kWh
   household consumption                    11.0 kWh
   charged into the car                     21.7 kWh
-  heat pump                                21.8 kWh
-  battery throughput                       15.6 kWh
-  imported                                 52.5 kWh
+  heat pump                                22.1 kWh
+  battery throughput                       14.6 kWh
+  imported                                 52.2 kWh
   self-sufficiency                             12 %
 
-  electricity bill                          20.64 €
-  battery life spent                         0.63 €
-  comfort given up                           0.22 €
-  cost of the day                           21.58 €
-  without optimisation                      22.69 €
-  saved                                      1.12 €
-  …of it on the bill                         0.66 €
+  electricity bill                          20.50 €
+  battery life spent                         0.58 €
+  comfort given up                           0.13 €
+  cost of the day                           21.61 €
+  without optimisation                      22.70 €
+  saved                                      1.10 €
+  …of it on the bill                         0.83 €
 
   § 14a limit in force                       90 min
   …against a minimum of                     10.5 kW
@@ -220,7 +220,7 @@ credentials its REST routes use.
 | Control | The guard, the allocator, the one-second arbiter and the receding-horizon MILP, planning against three futures where a service is at risk |
 | Devices | SunSpec inverters, meters and batteries and vendor Modbus maps; EEBUS LPC/LPP with a Steuerbox over a real SHIP session, the heat pump, the hot-water tank and the car |
 | External energy managers | S2 Resource Manager at `/s2/{asset}`, clamped by the guard, with named, revocable credentials |
-| The household | A page served by the box over HTTPS — now, the plan, a receipt and its month, pairing — in German and English; goals for the car and the hot water answered *feasible / tight / impossible* at once; notifications for the four occasions worth one; a wall display; a printed handover sheet with QR codes; local history at `/v1/series`; overrides; a factory reset that refuses while evidence is unforwarded |
+| The household | A page served by the box over HTTPS — now, the plan, a receipt and its month, pairing — in German and English; goals for the car and the hot water answered *feasible / tight / impossible* and priced before they are set; the plan in sentences, with the price at which it would rather export than store; notifications for the four occasions worth one; the same events, signed, to Home Assistant or any webhook; a wall display; a printed handover sheet with QR codes; local history at `/v1/series`; overrides; a factory reset that refuses while evidence is unforwarded |
 | The fleet | Prices, weather, evidence, enrolment, signed day reports, the fleet view, advisory findings |
 | Evaluation | Seven reference days and a cold first day, multi-day back-test and risk sweeps, forecasts scored in CRPS |
 
@@ -231,13 +231,13 @@ the household page; no OpenADR, § 41e, V2H/V2G or Matter.
 
 ## ✅ Quality
 
-1 343 tests. `just ci` runs formatting, Clippy with warnings as errors, a purity
+1 367 tests. `just ci` runs formatting, Clippy with warnings as errors, a purity
 check that keeps clocks and sockets out of the domain crates, the whole suite,
 the workspace guards, `cargo-deny` and the docs. The guards make the claims above
 checkable:
 
 - `check-citations` — 469 citations across five document families; all 469 of them against an index of primary sources resolve, or the build fails.
-- `check-wire` — the 138 quantities and instants, each of which becomes money or evidence, say how they travel.
+- `check-wire` — the 140 quantities and instants, each of which becomes money or evidence, say how they travel.
 - `check-deps-used` — 266 declared dependencies, every one reached from source.
 - `check-actions` — every GitHub Action pinned by commit.
 

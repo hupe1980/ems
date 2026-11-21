@@ -21,6 +21,7 @@ const T = {
     sCovering: "Der Speicher deckt das Haus, damit Sie zu <em>{ct} ct</em> fast nichts kaufen.",
     sPlain: "Das Haus nimmt, was es braucht. Alles Flexible wartet auf eine günstigere Zeit.",
     chipReduced: "§ 14a · {min} kW garantiert", chipFailsafe: "Failsafe · {min} kW",
+    shared: "So teilt die Box {kw} kW auf", sharedHelp: "Nach Bedarf. § 14a begrenzt den Bezug aus dem Netz — was Dach und Speicher decken, kommt hinzu. Ein Gerät, das nur misst, bekommt nichts zugeteilt.",
     cheapNow: "Jetzt günstig", cheapUntil: "bis {t}", cheapNext: "Günstig ab {t}", cheapFor: "für {h} h", cheapNone: "Kein günstiges Fenster im Plan",
     car: "Auto", heat_pump: "Wärmepumpe", battery: "Speicher", hot_water: "Warmwasser", appliance: "Gerät", roof: "Dach",
     carCharging: "lädt mit {kw} kW", carIdle: "angesteckt, wartet", carGoal: "{pct} % bis {t}", carNoGoal: "Ziel setzen",
@@ -30,6 +31,10 @@ const T = {
     nothing: "Nichts geplant", nothingWhy: "Das Haus nimmt, was es braucht.",
     contrast: "Dieselbe Energie im günstigsten Fenster ({best} ct) kostete {diff} weniger.", contrastBest: "Das ist das günstigste Fenster im Plan.",
     goal: "Ziel fürs Auto", goalTank: "Ziel fürs Warmwasser", goalTo: "Laden auf", goalHeat: "Heizen auf", goalBy: "Bis", goalClear: "Ziel löschen", tankGoal: "{c} °C bis {t}",
+    worthStore: "Eine Kilowattstunde im Speicher ist Ihnen jetzt {b} ct wert; eingespeist bringt sie {e} ct — darum geht der Überschuss in den Speicher.",
+    worthSell: "Eingespeist bringt eine Kilowattstunde jetzt {e} ct; im Speicher wäre sie Ihnen {b} ct wert — darum wird eingespeist.",
+    runCar: "Das Auto lädt {a}–{b}.", runBatteryIn: "Der Speicher lädt {a}–{b}.", runBatteryOut: "Der Speicher versorgt das Haus {a}–{b}.", runHot: "Das Warmwasser heizt {a}–{b}.", runHeat: "Die Wärmepumpe läuft {a}–{b}.",
+    qMore: "{eur} mehr als jetzt", qLess: "{eur} weniger als jetzt", qFree: "Keine Mehrkosten", qSet: "Übernehmen", qAsk: "Wird berechnet …",
     aheadBill: "Bis {t} voraussichtlich <b>{eur}</b> Strom", aheadEarn: "Bis {t} voraussichtlich <b>{eur}</b> Erlös",
     v_met: "erreicht", v_feasible: "machbar", v_tight: "knapp", v_impossible: "nicht machbar",
     vt_met: "Schon erreicht.", vt_feasible: "{kwh} kWh in den günstigsten Stunden.", vt_tight: "Nur, wenn nichts anderes den Anschluss braucht.", vt_impossible: "Bis dahin sind {reach} möglich.",
@@ -55,6 +60,7 @@ const T = {
     id_kept: "Die Box hat dieselbe Identität wie vor dem Neustart.", id_ephemeral: "Die Box behält ihre Identität nicht — nach einem Neustart muss neu gekoppelt werden.",
     find: "Geräte im Netz", findHosts: "Adressen, z. B. 192.168.1.40", findGo: "Suchen", findNone: "Nichts gefunden.",
     st_configured: "eingerichtet", st_missing: "eingerichtet, antwortet nicht", st_found: "gefunden, nicht eingerichtet", st_silent: "keine Antwort", st_waiting: "möchte sich koppeln",
+    hooks: "Andere Systeme", hooksHelp: "Home Assistant, Node-RED oder Ihr Installateur erfahren, was die Box Ihnen mitteilt — mit den Zahlen, signiert. Nur an Adressen, die Sie hier eintragen.", hookName: "Name", hookUrl: "Adresse (Webhook-URL)", hookWhat: "Was senden", hookGrid: "Dimmung und Failsafe", hookAll: "Alles", hookPublic: "Die Adresse liegt im Internet — die Ereignisse verlassen Ihr Netz", hookAdd: "Hinzufügen", hookTest: "Testen", hookRemove: "Entfernen", hookSecret: "Das Geheimnis für den Empfänger — es wird nur jetzt angezeigt:", hookCopy: "Kopieren", hookCopied: "Kopiert", hookOk: "Empfangen ({ms} ms)", hookOwed: "{n} noch in Zustellung", hookNone: "Noch kein System.",
     notify: "Mitteilungen", notifyOn: "Mitteilungen einschalten", notifyHelp: "Die Box meldet sich bei vier Anlässen — und sonst nie. Der Mitteilungsdienst Ihres Telefons sieht, wann die Box etwas sendet, aber nicht was.", notifyHome: "Auf dem iPhone die Seite zuerst zum Home-Bildschirm hinzufügen, dann hier einschalten.",
     ev_reduction: "Netzbetreiber dimmt", evd_reduction: "Beginn und Ende", ev_goal: "Ziel in Gefahr", evd_goal: "Knapp oder nicht machbar", ev_device: "Gerät folgt nicht", evd_device: "Länger als zehn Minuten", ev_failsafe: "Failsafe", evd_failsafe: "Die Steuerbox schweigt",
     quiet: "Nachtruhe", quietHelp: "22 bis 7 Uhr still", pushTest: "Probe senden", pushOff: "Ausschalten", pushDenied: "Mitteilungen sind für diese Seite gesperrt.", pushSent: "Unterwegs.",
@@ -108,6 +114,7 @@ const T = {
     sCovering: "The battery is covering the house, so you buy almost nothing at <em>{ct} ct</em>.",
     sPlain: "The house is taking what it needs. Everything flexible waits for a cheaper time.",
     chipReduced: "§ 14a · {min} kW guaranteed", chipFailsafe: "Failsafe · {min} kW",
+    shared: "How the box shares {kw} kW", sharedHelp: "By need. § 14a limits what comes from the grid — what the roof and the battery cover is added to it. A device that only measures is given no share.",
     cheapNow: "Cheap now", cheapUntil: "until {t}", cheapNext: "Cheap from {t}", cheapFor: "for {h} h", cheapNone: "No cheap window in the plan",
     car: "Car", heat_pump: "Heat pump", battery: "Battery", hot_water: "Hot water", appliance: "Appliance", roof: "Roof",
     carCharging: "charging at {kw} kW", carIdle: "plugged in, waiting", carGoal: "{pct} % by {t}", carNoGoal: "Set a goal",
@@ -117,6 +124,10 @@ const T = {
     nothing: "Nothing scheduled", nothingWhy: "The house takes what it needs.",
     contrast: "The same energy in the cheapest window ({best} ct) would cost {diff} less.", contrastBest: "This is the cheapest window in the plan.",
     goal: "Goal for the car", goalTank: "Goal for hot water", goalTo: "Charge to", goalHeat: "Heat to", goalBy: "By", goalClear: "Clear goal", tankGoal: "{c} °C by {t}",
+    worthStore: "A kilowatt-hour in the battery is worth {b} ct to you now; exported it earns {e} ct — so the surplus goes into the battery.",
+    worthSell: "Exported, a kilowatt-hour earns {e} ct now; in the battery it would be worth {b} ct to you — so it is exported.",
+    runCar: "The car charges {a}–{b}.", runBatteryIn: "The battery charges {a}–{b}.", runBatteryOut: "The battery carries the house {a}–{b}.", runHot: "Hot water heats {a}–{b}.", runHeat: "The heat pump runs {a}–{b}.",
+    qMore: "{eur} more than now", qLess: "{eur} less than now", qFree: "No extra cost", qSet: "Set", qAsk: "Working it out …",
     aheadBill: "About <b>{eur}</b> of electricity until {t}", aheadEarn: "About <b>{eur}</b> earned until {t}",
     v_met: "met", v_feasible: "feasible", v_tight: "tight", v_impossible: "impossible",
     vt_met: "Already there.", vt_feasible: "{kwh} kWh in the cheapest hours.", vt_tight: "Only if nothing else needs the connection.", vt_impossible: "By then {reach} is possible.",
@@ -142,6 +153,7 @@ const T = {
     id_kept: "The box has the same identity as before the restart.", id_ephemeral: "The box does not keep its identity — it must be paired again after a restart.",
     find: "Devices on the network", findHosts: "Addresses, e.g. 192.168.1.40", findGo: "Search", findNone: "Nothing found.",
     st_configured: "configured", st_missing: "configured, not answering", st_found: "found, not configured", st_silent: "no answer", st_waiting: "asking to pair",
+    hooks: "Other systems", hooksHelp: "Home Assistant, Node-RED or your installer hear what the box tells you — with the numbers, signed. Only at addresses you enter here.", hookName: "Name", hookUrl: "Address (webhook URL)", hookWhat: "What to send", hookGrid: "Reductions and failsafe", hookAll: "Everything", hookPublic: "This address is on the internet — the events leave your network", hookAdd: "Add", hookTest: "Test", hookRemove: "Remove", hookSecret: "The secret for the receiver — shown only now:", hookCopy: "Copy", hookCopied: "Copied", hookOk: "Received ({ms} ms)", hookOwed: "{n} still being delivered", hookNone: "No system yet.",
     notify: "Notifications", notifyOn: "Turn on notifications", notifyHelp: "The box speaks up on four occasions — and never otherwise. Your phone's notification service sees when the box sends something, not what.", notifyHome: "On an iPhone, add the page to the home screen first, then turn them on here.",
     ev_reduction: "Operator reduces", evd_reduction: "When it begins and ends", ev_goal: "Goal at risk", evd_goal: "Tight or impossible", ev_device: "Device not following", evd_device: "For more than ten minutes", ev_failsafe: "Failsafe", evd_failsafe: "The control box is silent",
     quiet: "Quiet hours", quietHelp: "Silent from 22:00 to 07:00", pushTest: "Send a test", pushOff: "Turn off", pushDenied: "Notifications are blocked for this page.", pushSent: "On its way.",
@@ -193,7 +205,7 @@ let lang = fromQuery || (() => { try { return localStorage.getItem("hems.lang");
 // The access code lives in this variable from sign-in until the page is closed,
 // and nowhere a later script could find it: the sign-in QR needs it once more.
 let code = null, order = "", sheet = null, signinQr = null, trust = null, found = null;
-let push = null, sub = null;
+let push = null, sub = null, hooks = null, hookSecret = null;
 let days = null, monthKey = null, picked = null;
 let home = null, pairing = null, view = "now", focus = 0, at = null, playing = false, stale = false, lastOk = null;
 const VIEWS = ["now", "plan", "day", "setup", "glance", "handover", "record"];
@@ -247,7 +259,11 @@ function runs(flags, span) {
 async function api(path, opts = {}) {
   const r = await fetch(path, { credentials: "same-origin", headers: { "content-type": "application/json" }, ...opts });
   if (r.status === 401) { view = "signin"; render(); throw new Error("unauthorised"); }
-  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  if (!r.ok) {
+    // Every refusal is an RFC 9457 problem document; `detail` is the sentence.
+    const problem = await r.json().catch(() => null);
+    throw new Error(problem?.detail || r.statusText);
+  }
   return r.status === 204 ? null : r.json();
 }
 async function signIn(token) {
@@ -313,6 +329,17 @@ function row(h, d) {
   <span class="why">${why(d.why)}</span>${d.notice ? `<span class="notice">${t("notice_" + d.notice)}</span>` : ""}
   ${d.kind === "hot_water" && h.tank_goal ? `<span class="why">${t("tankGoal", { c: num(h.tank_goal[0].target_c, 0), t: minToHHMM(h.tank_goal[0].by_minute) })}<span class="verdict v-${h.tank_goal[1]?.verdict}">${h.tank_goal[1] ? t("v_" + h.tank_goal[1].verdict) : ""}</span></span>` : ""}</div>`;
 }
+// While § 14a is in force: who gets what of the ceiling, by need, from the
+// guard's own verdict. A device that only measures takes no share.
+function shares(h) {
+  const r = h.reduction, entries = Object.entries(r?.shares ?? {});
+  if (!entries.length) return "";
+  const of = (id) => h.devices.find((d) => d.id === id) ?? { id, kind: "appliance" };
+  const budget = r.budget_kw ?? r.ceiling_kw, scale = Math.max(budget, 0.001);
+  return `<h2 class="sec">${t("shared", { kw: num(budget) })}</h2><div class="group shares">${entries.map(([id, kw]) =>
+    `<div class="row"><span class="glyph">${glyph(of(id).kind)}</span><span class="why"><b>${esc(label(h, of(id)))}</b><i class="share" style="--w:${Math.min(100, (Math.max(kw, 0) / scale) * 100).toFixed(1)}%"></i></span><span class="num">${num(kw)} kW</span></div>`).join("")}</div>
+  <p class="cap" style="margin:8px 16px 0">${t("sharedHelp")}</p>`;
+}
 function viewNow(h) {
   const g = h.grid_kw ?? 0, r = h.reduction;
   // Resting means drawing nothing as well as being told nothing.
@@ -323,6 +350,7 @@ function viewNow(h) {
   <div class="cap">${g < -0.05 ? t("toGrid") : t("fromGrid")}${h.price_ct != null ? ` · <b>${num(h.price_ct, 0)} ct</b> ${t("perKwh")}` : ""}</div>
   <p class="say">${sentence(h)}</p>
   ${r ? `<span class="chip">${t(r.failsafe ? "chipFailsafe" : "chipReduced", { min: num(r.minimum_kw ?? r.ceiling_kw) })}</span>` : ""}</section>
+  ${shares(h)}
   ${h.plan.length ? `<h2 class="sec">${t("next24")}</h2>${cheapBand(h)}` : ""}
   ${car(h)}
   <h2 class="sec">${t("devices")}</h2><div class="group">${active.map((d) => row(h, d)).join("")}
@@ -386,8 +414,38 @@ function goalCard(h, kind) {
   <div class="row"><label>${t(tank ? "goalHeat" : "goalTo")}</label><output class="num">${v} ${unit}</output></div>
   <div class="row" style="padding-top:0"><input type="range" min="${tank ? 40 : 20}" max="${tank ? 70 : 100}" step="5" value="${v}" aria-label="${t(tank ? "goalHeat" : "goalTo")}" style="grid-column:1/3"></div>
   <div class="row"><label>${t("goalBy")}</label><select aria-label="${t("goalBy")}">${times.map((m) => `<option value="${m}" ${m === g.by_minute ? "selected" : ""}>${minToHHMM(m)}</option>`).join("")}</select></div>
-  ${a ? `<div class="row"><span><span class="verdict v-${a.verdict}" style="margin:0 8px 0 0">${t("v_" + a.verdict)}</span>${t("vt_" + a.verdict, { kwh: num(a.needed_kwh), reach })}</span></div>` : ""}
+  ${a ? `<div class="row" data-answer><span><span class="verdict v-${a.verdict}" style="margin:0 8px 0 0">${t("v_" + a.verdict)}</span>${t("vt_" + a.verdict, { kwh: num(a.needed_kwh), reach })}</span></div>` : ""}
+  <div class="row quote" data-quote hidden></div>
   ${pair ? `<button class="link danger" type="button" data-clear>${t("goalClear")}</button>` : ""}</div>`;
+}
+// The plan in at most three sentences: each controllable device's first run in
+// the next 24 hours, from the plan's own slots. A device with nothing planned
+// has no sentence.
+function tonight(h) {
+  const slots = h.plan.slice(0, 96), out = [];
+  const run = (id, test) => {
+    const i = slots.findIndex((s) => test(s.kw[id] ?? 0)); if (i < 0) return null;
+    let j = i; while (j + 1 < slots.length && test(slots[j + 1].kw[id] ?? 0)) j++;
+    const end = new Date(new Date(slots[j].start).getTime() + 15 * 60000).toISOString();
+    return { a: hhmm(slots[i].start), b: hhmm(end), at: i };
+  };
+  for (const d of h.devices) {
+    const say = (key, r) => r && out.push({ text: t(key, r), at: r.at });
+    if (d.kind === "car") say("runCar", run(d.id, (kw) => kw > 0.05));
+    else if (d.kind === "hot_water") say("runHot", run(d.id, (kw) => kw > 0.05));
+    else if (d.kind === "heat_pump") say("runHeat", run(d.id, (kw) => kw > 0.05));
+    else if (d.kind === "battery") {
+      const i = run(d.id, (kw) => kw > 0.05), o = run(d.id, (kw) => kw < -0.05);
+      const first = [i && { key: "runBatteryIn", r: i }, o && { key: "runBatteryOut", r: o }].filter(Boolean).sort((x, y) => x.r.at - y.r.at)[0];
+      if (first) say(first.key, first.r);
+    }
+  }
+  return out.sort((x, y) => x.at - y.at).slice(0, 3).map((x) => x.text).join(" ");
+}
+// The export-or-store decision with both prices: the number closed systems withhold.
+function worth(h) {
+  const w = h.worth; if (!w) return "";
+  return t(w.battery_ct >= w.export_ct ? "worthStore" : "worthSell", { b: num(w.battery_ct, 0), e: num(w.export_ct, 0) });
 }
 function viewPlan(h) {
   if (!h.plan.length) return `<div class="group"><div class="slot"><p>${why({ key: "fallback.no_plan" })}</p></div></div>`;
@@ -397,8 +455,13 @@ function viewPlan(h) {
   const best = Math.min(...h.plan.map((p) => p.price_ct ?? Infinity));
   const diff = s.price_ct != null && isFinite(best) ? ((s.price_ct - best) / 100) * energy : null;
   const name = (id) => esc(label(h, h.devices.find((d) => d.id === id) ?? { kind: "appliance", id }));
+  const said = [tonight(h), worth(h)].filter(Boolean).join(" ");
+  // The legend names only colours the strip uses: an operator's reduction is
+  // never announced ahead, so most strips carry none.
+  const op = h.plan.some((p) => p.reduced);
   return `<h2 class="sec">${t("planTitle")}</h2>${strip(h)}
-  <div class="legend"><span><i style="background:var(--cheap)"></i>${t("legendCheap")}</span><span><i style="background:var(--ink3)"></i>${t("legendDraw")}</span><span><i style="background:var(--op)"></i>${t("legendOp")}</span></div>
+  <div class="legend"><span><i style="background:var(--cheap)"></i>${t("legendCheap")}</span><span><i style="background:var(--ink3)"></i>${t("legendDraw")}</span>${op ? `<span><i style="background:var(--op)"></i>${t("legendOp")}</span>` : ""}</div>
+  ${said ? `<p class="say plan">${said}</p>` : ""}
   ${h.ahead ? `<p class="cap" style="margin:10px 4px 0">${t(h.ahead.bill_eur < 0 ? "aheadEarn" : "aheadBill", { t: new Date(h.ahead.until).toLocaleString(locale(), { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" }), eur: eur(Math.abs(h.ahead.bill_eur)) })}</p>` : ""}
   <div class="group" style="margin-top:14px"><div class="slot"><span class="when num">${hhmm(s.start)} · ${s.price_ct != null ? num(s.price_ct, 0) + " ct/kWh" : "–"}${s.reduced ? ` · <span style="color:var(--op)">${t("reducedSlot")}</span>` : ""}</span>
   <h3>${running.length ? running.map(([id, kw]) => `${name(id)} <span class="num" style="color:var(--ink2);font-weight:400">${num(kw)} kW</span>`).join(" · ") : t("nothing")}</h3>
@@ -501,6 +564,25 @@ function notifications() {
   return `<h2 class="sec">${t("notify")}</h2><div class="group">${body}</div><p class="cap" style="margin:8px 16px 0">${t("notifyHelp")}</p>`;
 }
 
+// ── Other systems ───────────────────────────────────────────────────────────
+// Events out: CloudEvents, signed per Standard Webhooks, to URLs the household
+// adds. The secret is in the answer to the add and nowhere else, so it is shown
+// once, beside a copy button.
+async function loadHooks() { try { hooks = await api("/v1/subscriptions"); } catch { hooks = null; } render(); }
+function otherSystems() {
+  if (!hooks) return "";
+  const what = (h) => (h.types.includes("de.hems.*") ? t("hookAll") : t("hookGrid"));
+  const rows = hooks.map((h) => `<div class="slot"><b>${esc(h.name)}</b><small style="display:block;color:var(--ink2);word-break:break-all">${esc(h.url)} · ${what(h)}${h.owed ? ` · ${t("hookOwed", { n: h.owed })}` : ""}</small>
+    <div class="peerbtns"><button data-hook-test="${esc(h.id)}" type="button">${t("hookTest")}</button><button data-hook-remove="${esc(h.id)}" type="button">${t("hookRemove")}</button></div></div>`).join("");
+  const secret = hookSecret ? `<div class="slot"><p>${t("hookSecret")}</p><code class="secret">${esc(hookSecret)}</code><button class="link" id="hookCopy" type="button">${t("hookCopy")}</button></div>` : "";
+  const form = hooks.length < 8 ? `<form class="slot" id="hookAdd"><label class="sec" for="hookName">${t("hookName")}</label><input id="hookName" required maxlength="64" placeholder="Home Assistant">
+    <label class="sec" for="hookUrl">${t("hookUrl")}</label><input id="hookUrl" type="url" required inputmode="url" placeholder="homeassistant.local:8123/api/webhook/…">
+    <label class="sec" for="hookWhat">${t("hookWhat")}</label><select id="hookWhat"><option value="de.hems.grid.*">${t("hookGrid")}</option><option value="de.hems.*">${t("hookAll")}</option></select>
+    <label class="row sw"><span><small>${t("hookPublic")}</small></span><input type="checkbox" role="switch" id="hookPublic"></label>
+    <button class="primary" type="submit">${t("hookAdd")}</button></form>` : "";
+  return `<h2 class="sec">${t("hooks")}</h2><div class="group">${secret}${rows || (hookSecret ? "" : `<div class="slot"><p>${t("hookNone")}</p></div>`)}${form}</div><p class="cap" style="margin:8px 16px 0">${t("hooksHelp")}</p>`;
+}
+
 // ── Handover ────────────────────────────────────────────────────────────────
 // One A4 sheet: what the operator's portal asks for, and the household's key.
 const groups4 = (s) => (s || "").replace(/[^0-9a-fA-F]/g, "").match(/.{1,4}/g)?.map((g) => `<span>${g}</span>`).join(" ") ?? "–";
@@ -566,6 +648,7 @@ function viewSetup(h) {
   ${!p.trusted.length && !p.waiting.length ? `<div class="slot"><p>${t("noPeer")}</p></div>` : ""}</div>
   ${h.demo ? "" : discovery()}
   ${notifications()}
+  ${h.demo ? "" : otherSystems()}
   <h2 class="sec">${t("language")}</h2><div class="group"><div class="row" style="grid-template-columns:1fr auto"><span>${lang === "de" ? "Deutsch" : "English"}</span><button class="link" id="lang" type="button" style="padding:0;width:auto">${lang === "de" ? "English" : "Deutsch"}</button></div></div>
   <h2 class="sec">${t("glance")}</h2><div class="group"><a class="link" href="#glance">${t("open")} ›</a></div><p class="cap" style="margin:8px 16px 0">${t("glanceHelp")}</p>
   ${h.demo ? "" : `<h2 class="sec"></h2><div class="group"><a class="link" href="#handover">${t("sheet")} ›</a><a class="link" href="#record">${t("recordOpen")} ›</a><button class="link" id="newCode" type="button">${t("newCode")}</button></div><p class="cap" style="margin:8px 16px 0">${t("newCodeHelp")}</p><p style="margin-top:10px"><button class="link danger" id="signout" type="button">${t("signout")}</button></p>`}`;
@@ -609,7 +692,18 @@ function wire() {
     const path = `/v1/goals/${encodeURIComponent(card.dataset.goal)}`, range = card.querySelector("input"), by = card.querySelector("select");
     const put = async () => { try { await api(path, { method: "PUT", body: JSON.stringify({ [card.dataset.tank ? "target_c" : "target_soc"]: card.dataset.tank ? +range.value : +range.value / 100, by_minute: +by.value }) }); await load(); } catch (e) { toast(e.message); } };
     range.oninput = () => (card.querySelector("output").textContent = `${range.value} ${card.dataset.unit}`);
-    range.onchange = put; by.onchange = put;
+    // Released: what the goal would cost, from the plan solved with it. Only
+    // *Set* commits; a box that has not planned yet offers *Set* alone.
+    const box = card.querySelector("[data-quote]"), body = () => JSON.stringify({ [card.dataset.tank ? "target_c" : "target_soc"]: card.dataset.tank ? +range.value : +range.value / 100, by_minute: +by.value });
+    const ask = async () => {
+      box.hidden = false; box.innerHTML = `<span class="cap">${t("qAsk")}</span>`;
+      let q = null; try { q = await api(`${path}/quote`, { method: "POST", body: body() }); } catch { /* not planned yet */ }
+      const price = q?.extra_eur == null ? "" : Math.abs(q.extra_eur) < 0.005 ? t("qFree") : t(q.extra_eur > 0 ? "qMore" : "qLess", { eur: eur(Math.abs(q.extra_eur)) });
+      box.innerHTML = `<span>${q ? `<span class="verdict v-${q.verdict}" style="margin:0 8px 0 0">${t("v_" + q.verdict)}</span>` : ""}${price}</span><button class="primary small" type="button" data-set>${t("qSet")}</button>`;
+      box.querySelector("[data-set]").onclick = put;
+      const old = card.querySelector("[data-answer]"); if (old) old.hidden = true;
+    };
+    range.onchange = ask; by.onchange = ask;
     const clear = card.querySelector("[data-clear]"); if (clear) clear.onclick = async () => { await api(path, { method: "DELETE" }).catch(() => {}); load(); };
   });
   document.querySelectorAll("[data-approve]").forEach((b) => (b.onclick = async () => { pairing = await api("/v1/pairing", { method: "POST", body: JSON.stringify({ ski: b.dataset.approve }) }); toast(t("approved")); render(); }));
@@ -621,6 +715,20 @@ function wire() {
   document.querySelectorAll("[data-push]").forEach((b) => (b.onchange = () => {
     const m = mine(), id = b.dataset.push;
     savePush(id === "quiet" ? { quiet: b.checked ? NIGHT : null } : { events: EVENTS.filter((e) => (e === id ? b.checked : m.events.includes(e))) }).catch((e) => toast(e.message));
+  }));
+  const ha = $("#hookAdd"); if (ha) ha.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const made = await api("/v1/subscriptions", { method: "POST", body: JSON.stringify({ name: $("#hookName").value.trim(), url: $("#hookUrl").value.trim(), types: [$("#hookWhat").value], public: $("#hookPublic").checked }) });
+      hookSecret = made.secret; await loadHooks();
+    } catch (err) { toast(err.message); }
+  };
+  const hc = $("#hookCopy"); if (hc) hc.onclick = async () => { try { await navigator.clipboard.writeText(hookSecret); toast(t("hookCopied")); } catch { /* the code is selectable */ } };
+  document.querySelectorAll("[data-hook-test]").forEach((b) => (b.onclick = async () => {
+    try { const r = await api(`/v1/subscriptions/${encodeURIComponent(b.dataset.hookTest)}/test`, { method: "POST" }); toast(r.delivered ? t("hookOk", { ms: r.millis }) : r.error); } catch (e) { toast(e.message); }
+  }));
+  document.querySelectorAll("[data-hook-remove]").forEach((b) => (b.onclick = async () => {
+    try { await api(`/v1/subscriptions/${encodeURIComponent(b.dataset.hookRemove)}/revoke`, { method: "POST" }); hookSecret = null; await loadHooks(); } catch (e) { toast(e.message); }
   }));
   const pr = $("#print"); if (pr) pr.onclick = () => window.print();
   const so = $("#signout"); if (so) so.onclick = async () => { await api("/v1/session", { method: "DELETE" }).catch(() => {}); code = null; view = "signin"; render(); };
@@ -665,11 +773,11 @@ async function start() {
   // at the wall: <box>/#record=<reference>.
   takeOrder();
   view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "now";
-  window.addEventListener("hashchange", () => { takeOrder(); const v = location.hash.slice(1); if (VIEWS.includes(v)) { view = v; if (v === "setup") { loadPairing(); loadPush(); loadTrust(); } if (v === "handover") loadSheet(); if (v === "day") loadDays(); render(); window.scrollTo(0, 0); } });
+  window.addEventListener("hashchange", () => { takeOrder(); const v = location.hash.slice(1); if (VIEWS.includes(v)) { view = v; if (v === "setup") { loadPairing(); loadPush(); loadTrust(); loadHooks(); } else { hookSecret = null; } if (v === "handover") loadSheet(); if (v === "day") loadDays(); render(); window.scrollTo(0, 0); } });
   $("#scrub").addEventListener("input", (e) => { at = +e.target.value; playing = false; load(); });
   $("#play").addEventListener("click", () => { playing = !playing; render(); });
   await load();
-  if (view === "setup") { loadPairing(); loadPush(); }
+  if (view === "setup") { loadPairing(); loadPush(); loadHooks(); }
   if (view === "day") loadDays();
   setInterval(() => { if (home?.demo) { if (playing) { at = ((at ?? 0) + 5) % 1440; load(); } } else if (view !== "signin") load(); }, home?.demo ? 350 : 5000);
 }

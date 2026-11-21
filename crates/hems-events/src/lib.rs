@@ -80,6 +80,12 @@ pub const SITE_BALANCE_DIVERGED: &str = "de.hems.site.balance.diverged";
 /// that comes back after an outage and re-sends yesterday is correcting itself
 /// rather than adding a day.
 pub const SITE_DAY_REPORTED: &str = "de.hems.site.day.reported";
+/// A local day closed, as the household's receipt: whole cents, Wh and the
+/// § 14a lines. Sent to the systems a household subscribed, not to the fleet —
+/// a type of its own because its `data` is not [`SITE_DAY_REPORTED`]'s.
+pub const SITE_DAY_CLOSED: &str = "de.hems.site.day.closed";
+/// A goal the household set turned *tight* or *impossible*.
+pub const SITE_GOAL_AT_RISK: &str = "de.hems.site.goal.at-risk";
 
 // ── Devices ─────────────────────────────────────────────────────────────────
 
@@ -91,6 +97,13 @@ pub const DEVICE_PAIRED: &str = "de.hems.device.paired";
 pub const DEVICE_LOST: &str = "de.hems.device.lost";
 /// A device refused a command.
 pub const DEVICE_COMMAND_REJECTED: &str = "de.hems.device.command.rejected";
+/// A device has not done what it was asked for ten minutes.
+pub const DEVICE_DEVIATION_DETECTED: &str = "de.hems.device.deviation.detected";
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+/// Sent on request to check that a receiver hears the box and verifies it.
+pub const TEST_PING: &str = "de.hems.test.ping";
 
 // ── Tariffs and forecasts ───────────────────────────────────────────────────
 
@@ -128,10 +141,14 @@ pub const ALL: &[&str] = &[
     SITE_SETPOINT_ISSUED,
     SITE_BALANCE_DIVERGED,
     SITE_DAY_REPORTED,
+    SITE_DAY_CLOSED,
+    SITE_GOAL_AT_RISK,
     DEVICE_DISCOVERED,
     DEVICE_PAIRED,
     DEVICE_LOST,
     DEVICE_COMMAND_REJECTED,
+    DEVICE_DEVIATION_DETECTED,
+    TEST_PING,
     TARIFF_PUBLISHED,
     TARIFF_NEGATIVE_PRICE_AHEAD,
     FORECAST_PUBLISHED,

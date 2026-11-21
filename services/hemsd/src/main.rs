@@ -103,7 +103,8 @@ enum Command {
     /// Modbus TCP and a Steuerbox over EEBUS, for `hemsd run` to manage.
     ///
     /// Writes the box's configuration, then lives a reference day in real time.
-    /// In a second terminal: `hemsd run --config house.toml`.
+    /// With `--run`, the box that manages it starts in the same process;
+    /// otherwise, in a second terminal: `hemsd run --config house.toml`.
     #[cfg(feature = "house")]
     House {
         /// Which day the house lives.
@@ -126,6 +127,10 @@ enum Command {
         /// is kept beside it so the SKI in the file stays true.
         #[arg(long, default_value = "house.toml")]
         out: PathBuf,
+        /// Start the box that manages the house as well — the real product, in
+        /// one command.
+        #[arg(long)]
+        run: bool,
         /// Allow `--listen` on an address other machines can reach. The house
         /// asks nobody for a credential.
         #[arg(long)]
@@ -465,18 +470,32 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
         goal: running.goal.clone(),
         car: running.car.clone(),
         tank: running.tank.clone(),
+        last: running.last.clone(),
         fingerprint: running.fingerprint.clone(),
         https_fingerprint: https.as_ref().map(|(_, f)| f.clone()),
     })
     .with_commissioning(hemsd::runtime::handover::Commissioning::of(&settings))
     .with_push(push.clone());
-    if let Some(push) = push {
+    // Events out: kept in the store where there is one, and in memory where
+    // there is not — a box without a store can still tell Home Assistant.
+    let hooks = hemsd::runtime::webhooks::Webhooks::new(
+        &running.household.site.id.to_string(),
+        running.store.clone(),
+    );
+    let local = local.with_webhooks(Some(hooks.clone()));
+    health.vital(
+        "webhooks",
+        signal.clone(),
+        hemsd::runtime::webhooks::run(hooks.clone(), signal.clone()),
+    );
+    {
         let watched = local.clone();
         health.vital(
-            "push",
+            "detector",
             signal.clone(),
             hemsd::runtime::push::run(
                 push,
+                Some(hooks),
                 move || {
                     let watched = watched.clone();
                     async move {
@@ -565,8 +584,21 @@ async fn main() -> anyhow::Result<()> {
             ship,
             api,
             out,
+            run,
             exposed,
-        } => return house(day, at, listen, ship, api, &out, exposed).await,
+        } => {
+            return house(HouseArgs {
+                day,
+                at,
+                listen,
+                ship,
+                api,
+                out,
+                exposed,
+                run,
+            })
+            .await;
+        }
         Command::Simulate {
             day,
             json,
@@ -886,19 +918,36 @@ fn time_of_day(text: &str) -> Result<time::Duration, String> {
     parsed.ok_or_else(|| format!("`{text}` is not a time of day like 16:58"))
 }
 
-/// The virtual house: start it, write the box's configuration, and report what
-/// the devices are doing until interrupted.
+/// `hemsd house`'s arguments, as the command line gave them.
 #[cfg(feature = "house")]
-async fn house(
+struct HouseArgs {
     day: Day,
     at: Option<time::Duration>,
     listen: std::net::SocketAddr,
     ship: std::net::SocketAddr,
     api: std::net::SocketAddr,
-    out: &std::path::Path,
+    out: PathBuf,
     exposed: bool,
-) -> anyhow::Result<()> {
+    run: bool,
+}
+
+/// The virtual house: start it, write the box's configuration, and report what
+/// the devices are doing until interrupted — managed by a box in the same
+/// process when `run` is set.
+#[cfg(feature = "house")]
+async fn house(args: HouseArgs) -> anyhow::Result<()> {
     use hemsd::house;
+    let HouseArgs {
+        day,
+        at,
+        listen,
+        ship,
+        api,
+        out,
+        exposed,
+        run,
+    } = args;
+    let out = out.as_path();
 
     let scenario = scenario_for(day, HouseholdConfig::default());
     let house = house::start(house::Options {
@@ -939,34 +988,60 @@ async fn house(
             until.whole_minutes() % 60,
         );
     }
-    println!("\n  now, in a second terminal:\n");
-    println!("      hemsd run --config {}\n", out.display());
-    println!("  and open http://{api}\n");
-
-    let mut every = tokio::time::interval(std::time::Duration::from_secs(10));
-    loop {
-        tokio::select! {
-            _ = every.tick() => {}
-            _ = tokio::signal::ctrl_c() => return Ok(()),
-        }
-        let r = house.reading();
-        let seen = *house.steuerbox.borrow();
-        let minutes = house.clock.since_midnight().whole_minutes();
+    if run {
         println!(
-            "  {:02}:{:02}  roof {:>5.0} W  house {:>5.0} W  battery {:>+6.0} W ({:>3.0} %)  grid {:>+6.0} W  steuerbox {}",
-            (minutes / 60) % 24,
-            minutes % 60,
-            r.pv_w,
-            r.load_w,
-            r.battery_w,
-            r.soc * 100.0,
-            r.grid_w,
-            match (seen.connected, seen.accepted_w) {
-                (false, _) => "waiting for the box".to_owned(),
-                (true, None) => "connected, no limit".to_owned(),
-                (true, Some(w)) => format!("limit {:.1} kW accepted", w / 1000.0),
-            },
+            "\n  the box is starting; open http://{api} and sign in with the code it prints\n"
         );
+    } else {
+        println!("\n  now, in a second terminal:\n");
+        println!("      hemsd run --config {}\n", out.display());
+        println!("  and open http://{api}\n");
+    }
+
+    // SIGTERM as well as Ctrl-C: a house under a service manager or in a
+    // container is stopped the way every other daemon here is.
+    let (stop, trigger) = hems_service::Shutdown::channel();
+    tokio::spawn(hems_service::shutdown::on_signal(trigger));
+    let report = async {
+        let mut every = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            every.tick().await;
+            let r = house.reading();
+            let seen = *house.steuerbox.borrow();
+            let minutes = house.clock.since_midnight().whole_minutes();
+            println!(
+                "  {:02}:{:02}  roof {:>5.0} W  house {:>5.0} W  battery {:>+6.0} W ({:>3.0} %)  grid {:>+6.0} W  steuerbox {}",
+                (minutes / 60) % 24,
+                minutes % 60,
+                r.pv_w,
+                r.load_w,
+                r.battery_w,
+                r.soc * 100.0,
+                r.grid_w,
+                match (seen.connected, seen.accepted_w) {
+                    (false, _) => "waiting for the box".to_owned(),
+                    (true, None) => "connected, no limit".to_owned(),
+                    (true, Some(w)) => format!("limit {:.1} kW accepted", w / 1000.0),
+                },
+            );
+        }
+    };
+    // The box, managing the house from the file the house just wrote — the
+    // same path `hemsd run` takes, in the same process, and raced rather than
+    // spawned: a box that stops ends the command instead of leaving a house
+    // reporting to nobody.
+    let config = out.to_path_buf();
+    let managed = async {
+        if run {
+            manage(Some(&config), false).await
+        } else {
+            std::future::pending().await
+        }
+    };
+    tokio::select! {
+        () = report => Ok(()),
+        () = stop.clone().wait() => Ok(()),
+        result = managed => result.map_err(|e| anyhow::anyhow!("the box stopped: {e:#}")),
     }
 }
 

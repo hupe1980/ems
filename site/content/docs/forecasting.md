@@ -242,10 +242,10 @@ $ cargo run -p hemsd -- simulate --day winter --perfect-foresight
 
 | Day | Saved | Saved, knowing the weather | The premium |
 |---|---|---|---|
-| January, § 14a reduction, 20 kWh of charging to place | **€1,12** | €1,14 | +€0,02 |
-| January evening, car arrives *as* the reduction starts | **€1,45** | €1,42 | −€0,03 |
-| June, more sun than the house can use | **€4,17** | €5,19 | +€1,02 |
-| May, § 9 EEG cap, no car | **€0,70** | €0,71 | +€0,01 |
+| January, § 14a reduction, 20 kWh of charging to place | **€1,10** | €1,13 | +€0,03 |
+| January evening, car arrives *as* the reduction starts | **€0,88** | €1,42 | +€0,54 |
+| June, more sun than the house can use | **€4,47** | €4,73 | +€0,26 |
+| May, § 9 EEG cap, no car | **€0,68** | €0,70 | +€0,02 |
 
 It is the **same day** on both sides, and the unmanaged household is what proves
 it: it makes no forecast, so it cannot move between the two runs, and it comes
@@ -254,11 +254,14 @@ out identical to the cent. A flag that zeroed the *weather* rather than the
 of knowledge.
 
 The shape of that table is a result rather than noise. The premium is **cents on
-three of the four days**: those days are driven by prices the planner knows
-exactly and by deadlines that are constraints rather than forecasts, and January
-imports 52,5 kWh against 7,4 produced — there is not much sky to be wrong about.
-It is once negative, which is ordinary receding-horizon non-monotonicity: a hedge
-that happened to pay on this realisation is one an oracle no longer buys.
+the January day and the May one**: those days are driven by prices the planner
+knows exactly and by deadlines that are constraints rather than forecasts, and
+January imports 52,2 kWh against 7,4 produced — there is not much sky to be wrong
+about. It is real on the two days where a stored kilowatt-hour has to be worth
+its round trip: 54 cents on the evening the car arrives as the reduction starts,
+where the battery carries the house at a few hundred watts and its converter
+loses a tenth of what it delivers, and 26 cents in June, where the surplus is
+stored or sold on a forecast of how much of it the evening will need.
 
 June is the other case. The roof is the whole of the bill, the plan decides in
 the morning how much of the store and the car to leave for a noon it has only
@@ -403,7 +406,7 @@ A box's day report says what its load forecast leaned on, for as long as it
 leans on anything — on the cold January reference day, *H25, anchored on one
 reading (100 % of the day)*; on a box that has learned its household, nothing.
 
-The cold January box **saves €0,40**. Two limits on that figure, stated rather
+The cold January box **saves €0,63**. Two limits on that figure, stated rather
 than discovered. The simulated household uses about 4 000 kWh a year, 4 % below the
 anchor's floor — the direction the floor errs in by design — so the day shows an
 undeclared box on a household close to its floor; a household far from that size

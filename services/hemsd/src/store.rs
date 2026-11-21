@@ -144,6 +144,11 @@ const PUSH_VAPID: &str = "push-vapid";
 /// through its vendor's push service.
 const PUSH: TableDefinition<&str, &[u8]> = TableDefinition::new("push");
 
+/// The systems this household has asked the box to tell about its events, by
+/// subscription id — each row the subscription, its secret, the deliveries it
+/// is still owed and the last seven days of what was sent to it.
+const WEBHOOKS: TableDefinition<&str, &[u8]> = TableDefinition::new("webhooks");
+
 /// The failsafe a network operator wrote, per direction.
 const FAILSAFE: TableDefinition<&str, &[u8]> = TableDefinition::new("failsafe");
 
@@ -458,6 +463,7 @@ impl Store {
             sql!(write.open_table(MANAGERS))?;
             sql!(write.open_table(GOALS))?;
             sql!(write.open_table(PUSH))?;
+            sql!(write.open_table(WEBHOOKS))?;
             sql!(write.open_table(DAYS))?;
 
             let mut meta = sql!(write.open_table(META))?;
@@ -748,6 +754,62 @@ impl Store {
         let existed = {
             let mut table = sql!(write.open_table(PUSH))?;
             sql!(table.remove(endpoint))?.is_some()
+        };
+        sql!(write.commit())?;
+        Ok(existed)
+    }
+
+    /// Every webhook subscription, with what it is owed.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the read fails or a row cannot be read.
+    pub fn webhooks<T: serde::de::DeserializeOwned>(&self) -> Result<Vec<T>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let table = sql!(read.open_table(WEBHOOKS))?;
+        let mut out = Vec::new();
+        for row in sql!(table.iter())? {
+            let (_, subscription) = sql!(row)?;
+            out.push(decode(0, subscription.value())?);
+        }
+        Ok(out)
+    }
+
+    /// Keep one under `id`, or replace it — unless that would make more than
+    /// `at_most`. Counted inside the write transaction. Returns whether it was
+    /// kept.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails.
+    pub fn put_webhook<T: serde::Serialize>(
+        &self,
+        id: &str,
+        subscription: &T,
+        at_most: u64,
+    ) -> Result<bool, StoreError> {
+        let bytes = encode(subscription)?;
+        let write = sql!(self.db.begin_write())?;
+        let kept = {
+            let mut table = sql!(write.open_table(WEBHOOKS))?;
+            let known = sql!(table.get(id))?.is_some();
+            let room = known || sql!(table.len())? < at_most;
+            if room {
+                sql!(table.insert(id, bytes.as_slice()))?;
+            }
+            room
+        };
+        sql!(write.commit())?;
+        Ok(kept)
+    }
+
+    /// Forget one, with everything it was owed. Returns whether it was known.
+    ///
+    /// # Errors
+    /// [`StoreError`] where the write fails.
+    pub fn forget_webhook(&self, id: &str) -> Result<bool, StoreError> {
+        let write = sql!(self.db.begin_write())?;
+        let existed = {
+            let mut table = sql!(write.open_table(WEBHOOKS))?;
+            sql!(table.remove(id))?.is_some()
         };
         sql!(write.commit())?;
         Ok(existed)
@@ -1402,6 +1464,9 @@ impl Store {
             // go on telling the previous household's phones what the new one's
             // network operator is doing. The signing key went with `IDENTITY`.
             sql!(sql!(write.open_table(PUSH))?.retain(|_, _| false))?;
+            // And every system it told: the next household did not ask for its
+            // reductions to be sent to this one's Home Assistant.
+            sql!(sql!(write.open_table(WEBHOOKS))?.retain(|_, _| false))?;
             // And the closed days: ninety days of when a household was home,
             // away and charging are the last thing a box should carry to its
             // next owner.

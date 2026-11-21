@@ -28,7 +28,7 @@ through the real guard, arbiter and planner — `hemsd demo`, below.
 | View | What it answers | How |
 |---|---|---|
 | **Now** | *What is the house doing, and why?* | One figure — what the house draws or feeds in — and one sentence. While the network operator reduces the connection, the sentence says so in the operator's colour and what the box is doing about it. Then the cheap hours of the next day, the car, and every device with its reason |
-| **Plan** | *What will happen tonight?* | The next two days as one strip: bars for what the house will draw, green where power is cheap *for this household*, and the electricity bill the plan expects. Touch a quarter hour and it explains itself, with what the same energy would have cost in the cheapest window. Below it, the goals |
+| **Plan** | *What will happen tonight?* | The next two days as one strip: bars for what the house will draw, green where power is cheap *for this household*, and the electricity bill the plan expects. Under it, what the next night does in at most three sentences, and the price at which the box would rather export than store — both prices, said out loud. Touch a quarter hour and it explains itself. Below it, the goals |
 | **Day** | *What did it cost?* | A receipt: the bill, battery wear and comfort priced in, the same house with the same battery and no hems, the saving — and how much of it reached the bill. Under it, the month |
 | **Setup** | *Is it paired?* | The SKI and certificate fingerprints in groups of four, to compare with a label by eye; a waiting Steuerbox to approve or refuse; whether the box kept its identity over the last restart; devices found on the network; notifications; the handover sheet |
 
@@ -60,6 +60,13 @@ device:
 | **tight** | it fits only if nothing else needs the connection — a § 14a reduction or a phase switch would cost it |
 | **impossible** | not by then; the page says the level or temperature that *is* reachable rather than quietly planning for less |
 
+**And it says what the goal costs, before it is set.** Releasing the slider
+asks the box what the plan would cost with the new goal: *feasible — 42 ct
+more than now*. The box solves the same plan it is following with the goal
+changed and subtracts — energy, battery wear and what it borrows from the
+stores — so the price is the plan's own, to the cent. Nothing changes until
+*Set*.
+
 The time is the wall clock's: on the night the clocks go forward, 07:00 is
 still 07:00. A goal survives a restart. A device that waits says until when,
 and at what price: *Waiting until 21:00 — 31 ct then.*
@@ -80,19 +87,30 @@ been told too late. Added to a home screen, the page can be sent
 notifications — on an iPhone from iOS 18.4, on every other current browser —
 for four occasions and no others:
 
-| Occasion | Sent |
-|---|---|
-| The network operator reduces the connection | when it begins and when it ends |
-| A goal is at risk | when its verdict turns *tight* or *impossible* |
-| A device stops following | after ten minutes, once |
-| Failsafe | when the control box falls silent |
+| Occasion | Sent | A tap opens |
+|---|---|---|
+| The network operator reduces the connection | when it begins and when it ends | Now |
+| A goal is at risk | when its verdict turns *tight* or *impossible* | Plan, where the goal is |
+| A device stops following | after ten minutes, once | Now |
+| Failsafe | when the control box falls silent | Setup, whose trust lines say what the control box last did |
 
 Each is a switch on the Setup view, with quiet hours from 22:00 to 07:00. A
 notification carries the sentence the page would show and nothing measured;
 it is encrypted for the one browser that subscribed, signed by the box, and
 sent only to the browser vendors' push services. A box with no internet
 sends nothing and queues nothing — a reduction that ended an hour ago is not
-news.
+news. On a reference day the box speaks at most six times.
+
+While a reduction is in force, Now shows how the box shares what the network
+operator left: a bar per device, by need — *car 6.2 kW · heat pump 4.3 kW*.
+§ 14a limits the draw from the grid, so what the roof and the battery cover is
+added to it; a device that only measures is given no share.
+
+**Other systems** hear the same events with their numbers: on Setup, a
+household adds Home Assistant, Node-RED or its installer by URL, chooses
+*reductions and failsafe* or *everything*, and copies the secret the box shows
+once. Each event is a signed CloudEvent; [the API](@/docs/api.md#events-out)
+has the details and a Home Assistant automation.
 
 ## The month
 

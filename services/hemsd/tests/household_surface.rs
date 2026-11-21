@@ -260,8 +260,11 @@ async fn a_write_on_the_cookie_needs_a_json_body() {
         .send()
         .await
         .expect("the box to answer");
-    assert!(
-        as_the_page.status().is_success(),
+    // Past the content-type rule: nothing was in force, so the answer is the
+    // route's own 404 rather than the layer's refusal of a form-shaped write.
+    assert_eq!(
+        as_the_page.status(),
+        reqwest::StatusCode::NOT_FOUND,
         "{}",
         as_the_page.status()
     );
@@ -755,4 +758,107 @@ fn the_demo_command_refuses_before_it_simulates_a_day() {
         !String::from_utf8_lossy(&output.stdout).contains("simulating"),
         "it simulated a day before refusing"
     );
+}
+
+/// Every refusal under `/v1/` is one RFC 9457 problem document — the handler's
+/// own sentence, an extractor's rejection, the access layer's 401 and a path
+/// that does not exist alike.
+#[tokio::test]
+async fn every_refusal_is_a_problem_document() {
+    let (address, _) = a_box().await;
+    let base = format!("http://{address}");
+    let client = reqwest::Client::new();
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(TOKEN);
+    let cases: Vec<(&str, reqwest::RequestBuilder, u16)> = vec![
+        ("no credential", client.get(format!("{base}/v1/home")), 401),
+        (
+            "a path that does not exist",
+            auth(client.get(format!("{base}/v1/nothing-here"))),
+            404,
+        ),
+        (
+            "a series nobody records",
+            auth(client.get(format!("{base}/v1/series/no-such-point"))),
+            404,
+        ),
+        (
+            "a body that is not JSON",
+            auth(
+                client
+                    .put(format!("{base}/v1/goals/car"))
+                    .header("content-type", "application/json")
+                    .body("{not json"),
+            ),
+            400,
+        ),
+        (
+            "forgetting a control box nobody trusts",
+            auth(client.delete(format!("{base}/v1/pairing/{SKI}"))),
+            404,
+        ),
+        (
+            "withdrawing overrides when none is in force",
+            auth(client.delete(format!("{base}/v1/overrides"))),
+            404,
+        ),
+    ];
+    for (what, request, status) in cases {
+        let response = request.send().await.expect("an answer");
+        assert_eq!(response.status().as_u16(), status, "{what}");
+        let media = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        assert_eq!(media, "application/problem+json", "{what}");
+        let problem: serde_json::Value = response.json().await.expect("a JSON body");
+        assert_eq!(problem["status"], status, "{what}");
+        assert!(
+            problem["type"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("https://hupe1980.github.io/hems/docs/api/#")),
+            "{what}: {problem}"
+        );
+        assert!(
+            problem["detail"].as_str().is_some_and(|d| !d.is_empty()),
+            "{what}: a sentence a person can act on"
+        );
+    }
+}
+
+/// The contract is served by the box it describes, without a credential.
+#[tokio::test]
+async fn the_box_serves_its_own_contract() {
+    let (address, _) = a_box().await;
+    let base = format!("http://{address}");
+    let document: serde_json::Value = reqwest::get(format!("{base}/openapi.json"))
+        .await
+        .expect("an answer")
+        .json()
+        .await
+        .expect("JSON");
+    assert_eq!(document["openapi"], "3.1.0");
+    assert!(document["components"]["schemas"]["Problem"].is_object());
+}
+
+/// A quote is two solves, so the box answers at most one a second.
+#[tokio::test]
+async fn quotes_come_one_at_a_time() {
+    let (address, _) = a_box().await;
+    let client = reqwest::Client::new();
+    let ask = || {
+        client
+            .post(format!("http://{address}/v1/goals/wallbox/quote"))
+            .bearer_auth(TOKEN)
+            .json(&serde_json::json!({ "target_soc": 0.8, "by_minute": 420 }))
+            .send()
+    };
+    // Nothing planned on this box: the first quote takes the slot and says so…
+    assert_eq!(ask().await.unwrap().status().as_u16(), 503);
+    // …and the next, within the second, is turned away before any solve.
+    let again = ask().await.unwrap();
+    assert_eq!(again.status().as_u16(), 429);
+    let problem: serde_json::Value = again.json().await.unwrap();
+    assert!(problem["type"].as_str().unwrap().ends_with("#too-many"));
 }

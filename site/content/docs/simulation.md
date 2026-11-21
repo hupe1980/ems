@@ -42,13 +42,13 @@ $ just demo-all
 
 | Day | What it shows | Saved |
 |---|---|---|
-| `winter` | a reduction from 17:00 to 18:30, a car that must be full by seven, and a dishwasher the plan holds back 75 minutes | €1,12 |
-| `summer` | more production than the house can use, and **twelve** quarter hours of negative prices — three whole hours of § 51 EEG | €4,17 |
-| `deadline` | a car that arrives *as the reduction starts* with three hours to take 13 kWh under the household's own 10,5 kW minimum, shared with a heat pump | €1,45 |
-| `shared` | the same evening on a household with **no store**, owed 7,56 kW rather than 10,5, and a reduction that arrives at 17:07 rather than on the re-planning grid | €0,88 |
-| `offline` | **the planner switched off** — what the box does on its own | €6,12 |
-| `autumn` | a September day, planner off, the surplus in the band only one conductor can use | €0,25 |
-| `capped` | a clear May day on a 20 kWp roof, the § 9 EEG cap binding at 12,01 of 12,00 kW | €0,70 |
+| `winter` | a reduction from 17:00 to 18:30, a car that must be full by seven, and a dishwasher the plan holds back an hour | €1,10 |
+| `summer` | more production than the house can use, and **twelve** quarter hours of negative prices — three whole hours of § 51 EEG | €4,47 |
+| `deadline` | a car that arrives *as the reduction starts* with three hours to take 13 kWh under the household's own 10,5 kW minimum, shared with a heat pump | €0,88 |
+| `shared` | the same evening on a household with **no store**, owed 7,56 kW rather than 10,5, and a reduction that arrives at 17:07 rather than on the re-planning grid | €0,70 |
+| `offline` | **the planner switched off** — what the box does on its own | €6,08 |
+| `autumn` | a September day, planner off, the surplus in the band only one conductor can use | €0,24 |
+| `capped` | a clear May day on a 20 kWp roof, the § 9 EEG cap binding at 12,01 of 12,00 kW | €0,68 |
 
 Only the winter day's full transcript is held to the binary by a test; the
 savings in this table are not, and a figure nothing compares is wrong within a
@@ -76,12 +76,12 @@ because each costs minutes rather than seconds.
 
 | Flag | What it isolates |
 |---|---|
-| `--perfect-foresight` | the **same** January day with the weather known: €0,16 more on a €0,66 bill saving, and an unmanaged household identical to the cent |
-| `--wear-eur-per-kwh 0` | a cost-only optimiser: 17,9 kWh of battery throughput instead of 15,6, and a bill saving that *falls* from €0,66 to €0,49 — both households pay their own wear |
-| `--no-phase-switching` | on the autumn day, 0,1 kWh into the car against 6,5 — and a saving of −€23,44 against €0,25 |
-| `--imsys` | the § 9 EEG cap lifted: seven cents to the managed household, eleven to the unmanaged one |
+| `--perfect-foresight` | the **same** January day with the weather known: €0,05 more on a €0,83 bill saving, and an unmanaged household identical to the cent |
+| `--wear-eur-per-kwh 0` | a cost-only optimiser: 16,6 kWh of battery throughput instead of 14,6, and a bill saving that *falls* from €0,83 to €0,63 — both households pay their own wear |
+| `--no-phase-switching` | on the autumn day, 0,1 kWh into the car against 6,5 — and a saving of −€23,45 against €0,24 |
+| `--imsys` | the § 9 EEG cap lifted: six cents to the managed household, eleven to the unmanaged one |
 | `--uniform-weights` | every asset given the same allocation weight, which is what one marginal value per slot amounts to |
-| `--sharing` | inside a § 42c community: 12,9 kWh allocated against the 3,9 a member who does nothing about it gets, and the baseline joins the same community. It runs a year on from the winter day's own date — a network operator's duty to allocate begins on 1 June 2026, and both sides of the comparison move together in whole weeks so the weekday survives |
+| `--sharing` | inside a § 42c community: 11,2 kWh allocated against the 1,4 a member who does nothing about it gets, and the baseline joins the same community. It runs a year on from the winter day's own date — a network operator's duty to allocate begins on 1 June 2026, and both sides of the comparison move together in whole weeks so the weekday survives |
 | `--heat-pump-on-off` | a single-speed compressor — the only unit a minimum runtime constrains |
 | `--risk` | one future or three, and how much of the objective sits on the worst of them |
 
@@ -93,7 +93,7 @@ bugs worth finding. So each one has at least one refusal:
 | Simulator | Its refusal |
 |---|---|
 | `EvseSim` | below 6 A per conductor it charges **nothing**, and the contactor costs a session ten seconds while the vehicle re-negotiates |
-| `BatterySim` | reports what it **took**, not what it was told, and has a standing loss — one left alone is not full a week later |
+| `BatterySim` | reports what it **took**, not what it was told; loses what HTW Berlin measured — a quarter of what it delivers at 100 W, 7 % at 500 W, 2 % at 10 kW — and draws 8 W standing by |
 | `PvSim` | follows a curtailment command with a two-second time constant rather than instantly |
 | `BuildingSim` | a thermostat that refuses to keep heating a house that is already warm |
 | `TankSim` | runs out of hot water |
@@ -107,6 +107,18 @@ whoever is calling it. These days tick once a minute and a box ticks once a
 second, so a "two-second" inverter counted in steps would take four minutes to
 obey a feed-in limit. Every simulator here takes the step duration, and a day run
 at any cadence describes the same hardware.
+
+**The battery's losses are a publication's, not ours.** A planner and a
+simulator that shared one loss model would agree with each other and never see
+what it costs. So the simulator's converter follows the curve HTW Berlin
+measured on a good 10-kW hybrid (*Stromspeicher-Inspektion 2026*): a no-load
+loss of 30 W plus 2 % of the power converted, the cells √0.95 each way, 8 W
+standby — held by a test to the report's published points. The planner, which is
+linear, prices a stored kilowatt-hour at the efficiency of the power the house
+actually draws it at: the night loads HTW measured run 160–500 W, so it plans at
+400 W, where the round trip is 84 %, not the 95 % a datasheet's rated power
+promises. Priced that way, the winter day cycles 14,6 kWh through the battery
+and keeps €0,83 of its €1,10 saving on the bill.
 
 Two of those found real defects. Without the heat pump's own thermostat, a
 manager that stopped planning cooked the reference house to **64 °C** and
@@ -197,15 +209,15 @@ so measured once, insurance is always a pure loss.
 $ just risk deadline 20
 
   policy                mean     worst      best    unserved     solve
-  one median           0.61€    -1.01€     1.45€       0.05€      227s
-  three futures        0.90€    -0.04€     1.48€       0.02€      700s
-  …and the tail        0.81€    -0.21€     1.46€       0.03€      688s
-  only when at risk     0.75€    -0.23€     1.45€       0.03€      814s
+  one median           0.46€    -1.19€     1.39€       0.14€      114s
+  three futures        0.84€    -0.26€     1.75€       0.03€      702s
+  …and the tail        0.78€    -0.20€     1.44€       0.02€      760s
+  only when at risk     0.67€    -0.23€     1.42€       0.02€      737s
 ```
 
-Scenarios **pay where a service is at risk**, **cost eighteen cents a day where
+Scenarios **pay where a service is at risk**, **cost eight cents a day where
 nothing is**, and the hedge **does** buy a better bad day: on this evening it
-takes the worst weather from −€1,01 to −€0,04. That finding read the opposite
+takes the worst weather from −€1,19 to −€0,26. That finding read the opposite
 way until the baseline was given the battery it owns — a handicapped
 counterfactual did not merely flatter a figure, it reversed a conclusion. The
 [optimizer](@/docs/optimizer.md) has the ordinary day beside it.
@@ -232,7 +244,7 @@ nobody is cold, and that it is **honest about knowing nothing**, with a roof
 correction of exactly 1,0 and a forecast score strictly worse than the warm box's.
 
 The saving is the finding as well as an assertion: a box on its first evening
-**saves €0,40**, where the warm one saves €1,12. Without a profile it would plan
+**saves €0,63**, where the warm one saves €1,10. Without a profile it would plan
 from one meter reading — usually the night trough, a third of what the house
 will use. It starts instead from BDEW's H25 standard load profile hung on the
 household's stated or first-day consumption. A hand-fitted curve would score

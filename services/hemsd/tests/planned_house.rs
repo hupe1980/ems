@@ -262,6 +262,7 @@ async fn a_box_with_a_fleet_plans_against_real_prices_and_a_real_sky() {
             goal: hemsd::home::Goals::default(),
             tank: hemsd::home::TankFacts::default(),
             car: hemsd::home::CarFacts::default(),
+            last: hemsd::runtime::planner::LastInputs::default(),
             wear_eur_per_kwh: 0.08,
         },
         Arc::clone(&registry),
@@ -411,6 +412,7 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
             goal: hemsd::home::Goals::default(),
             tank: hemsd::home::TankFacts::default(),
             car: hemsd::home::CarFacts::default(),
+            last: hemsd::runtime::planner::LastInputs::default(),
             wear_eur_per_kwh: 0.08,
         },
         registry,
@@ -501,6 +503,7 @@ async fn a_box_installed_this_morning_plans_from_persistence() {
             goal: hemsd::home::Goals::default(),
             tank: hemsd::home::TankFacts::default(),
             car: hemsd::home::CarFacts::default(),
+            last: hemsd::runtime::planner::LastInputs::default(),
             wear_eur_per_kwh: 0.08,
         },
         registry,
@@ -594,6 +597,20 @@ async fn plan_with(
     registry: Arc<Mutex<Registry>>,
     household: &hemsd::Household,
 ) -> Option<hems_core::prelude::Plan> {
+    plan_keeping(
+        registry,
+        household,
+        hemsd::runtime::planner::LastInputs::default(),
+    )
+    .await
+}
+
+/// …keeping the solve's inputs in `last`, as a running box does for quotes.
+async fn plan_keeping(
+    registry: Arc<Mutex<Registry>>,
+    household: &hemsd::Household,
+    last: hemsd::runtime::planner::LastInputs,
+) -> Option<hems_core::prelude::Plan> {
     let (fleet_url, _keep) = fleet_on_loopback().await;
     let settings = hemsd::Settings {
         fleet: hemsd::config::FleetSettings {
@@ -628,6 +645,7 @@ async fn plan_with(
             goal: hemsd::home::Goals::default(),
             tank: hemsd::home::TankFacts::default(),
             car: hemsd::home::CarFacts::default(),
+            last,
             wear_eur_per_kwh: 0.08,
         },
         registry,
@@ -730,4 +748,71 @@ async fn a_measured_house_is_planned_rather_than_left_to_its_own_thermostat() {
         commanded.iter().any(|t| t.power.inflow().get() > 0.0),
         "and it is asked to run, because a house at 3 °C outside cools"
     );
+}
+
+/// A goal is priced by the plan itself: the goal already in force costs
+/// nothing more, and asking for more charge by the same time costs no less.
+#[tokio::test]
+async fn a_goal_is_priced_by_solving_the_same_plan_with_it() {
+    use hemsd::home::CarGoal;
+    let (registry, household) = registry_with_a_battery_at(0.5);
+    let last = hemsd::runtime::planner::LastInputs::default();
+    plan_keeping(registry, &household, last.clone())
+        .await
+        .expect("a plan");
+    let at = last
+        .lock()
+        .await
+        .as_ref()
+        .expect("the inputs are kept")
+        .at();
+    // A car parked with 20 of 60 kWh, the box's view of it with a full target.
+    let departure = hems_core::prelude::Slot::containing(at + time::Duration::hours(14));
+    let full = hems_optimizer::model::EvSession {
+        energy_now: hems_core::prelude::Energy::from_kwh(20.0),
+        energy_target: hems_core::prelude::Energy::from_kwh(60.0),
+        capacity: hems_core::prelude::Energy::from_kwh(60.0),
+        max_charge: Power::from_kw(11.0),
+        min_charge: Power::from_kw(4.2),
+        efficiency: 0.9,
+        arrival: None,
+        departure,
+    };
+    let car = hemsd::home::CarFacts::default();
+    *car.lock().await = Some(full);
+    let by_minute =
+        hems_core::prelude::Slot::containing(at + time::Duration::hours(14)).local_minute_of_day();
+    let seventy = CarGoal {
+        target_soc: 0.7,
+        by_minute,
+    };
+    let ninety = CarGoal {
+        target_soc: 0.9,
+        by_minute,
+    };
+
+    // The plan in force carries the seventy-per-cent goal.
+    {
+        let mut held = last.lock().await;
+        let inputs = held.take().unwrap();
+        *held = Some(inputs.with_car(Some(hemsd::home::session_for(&full, seventy, at))));
+    }
+    let same = hemsd::runtime::quote::car(&last, &car, seventy, at)
+        .await
+        .expect("a quote");
+    assert_eq!(
+        same.extra_eur,
+        Some(0.0),
+        "the goal in force costs nothing more"
+    );
+
+    let more = hemsd::runtime::quote::car(&last, &car, ninety, at)
+        .await
+        .expect("a quote");
+    let extra = more.extra_eur.expect("priced");
+    assert!(
+        extra >= 0.0,
+        "twelve more kWh by the same time cost {extra} €"
+    );
+    assert!(extra > 0.0, "and buying them is not free");
 }

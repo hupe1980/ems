@@ -165,11 +165,12 @@ impl EvSession {
     ///
     /// It is the cheap answer to "is this household at risk today", and the
     /// reason it exists is a measurement. Planning against three futures instead
-    /// of one median is worth €0,29 a day on the evening a car arrives *as* a
-    /// § 14a reduction starts, more than halves the charge the median plan
-    /// leaves undelivered, and takes that evening's **worst** weather from
-    /// −€1,01 to −€0,04. On an ordinary winter day, where nothing is at stake,
-    /// the same machinery costs €0,18 a day at about three times the solve.
+    /// of one median is worth €0,38 a day on the evening a car arrives *as* a
+    /// § 14a reduction starts, cuts the charge the median plan leaves
+    /// undelivered from €0,14 to €0,03, and takes that evening's **worst**
+    /// weather from −€1,19 to −€0,26. On an ordinary winter day, where nothing
+    /// is at stake, the same machinery costs €0,08 a day at about three times
+    /// the solve.
     /// Something has to decide which day it is.
     ///
     /// Those figures are against a baseline that owns the same battery. Against

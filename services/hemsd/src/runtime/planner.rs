@@ -285,6 +285,8 @@ pub struct Planner {
     pub car: crate::home::CarFacts,
     /// The tank as this planner last saw it, for the same reason.
     pub tank: crate::home::TankFacts,
+    /// The last solve's inputs, for pricing a goal before it is set.
+    pub last: LastInputs,
 }
 
 /// The charging settings with the household's goal, where it set one, in place
@@ -722,38 +724,131 @@ async fn attempt(
     // gateway box with two cores is the difference between a control period and
     // a missed one. `Problem` borrows its inputs, so it is assembled inside the
     // task rather than sent into it.
-    tokio::task::spawn_blocking(move || {
-        let mut problem = Problem::new(horizon, &prices, &pv, &load)
-            .with_limits(limits)
-            .with_objective(objective)
+    let inputs = Inputs {
+        horizon,
+        prices,
+        pv,
+        load,
+        limits,
+        objective,
+        risk,
+        battery,
+        dhw,
+        draw,
+        dhw_target,
+        ev,
+        thermal,
+        outdoor,
+        window,
+        names,
+        budget,
+        now,
+    };
+    // Kept for a quote: what a goal would cost is this same problem solved
+    // again with the goal changed, not a second model of the house.
+    *planner.last.lock().await = Some(inputs.clone());
+    tokio::task::spawn_blocking(move || inputs.solve())
+        .await
+        .map_err(|e| Reason::Unsolvable(format!("the solve panicked: {e}")))?
+        .map_err(|e| Reason::Unsolvable(e.to_string()))
+}
+
+/// Everything one solve needs, owned.
+///
+/// The planner keeps the last one, so a goal can be priced by solving the same
+/// problem with the goal changed (`quote`): the price on the slider is then the
+/// plan's own difference, not a second estimate of the house.
+#[derive(Clone)]
+pub struct Inputs {
+    horizon: Horizon,
+    prices: PriceStack,
+    pv: Forecast,
+    load: Forecast,
+    limits: hems_optimizer::model::PlanningLimits,
+    objective: hems_optimizer::model::Objective,
+    risk: hems_optimizer::Risk,
+    battery: Option<BatteryModel>,
+    dhw: Option<DhwModel>,
+    draw: Vec<f64>,
+    dhw_target: Option<hems_optimizer::model::DhwTarget>,
+    ev: Option<hems_optimizer::model::EvSession>,
+    thermal: Option<hems_optimizer::model::ThermalModel>,
+    outdoor: Vec<f64>,
+    window: Vec<f64>,
+    names: AssetNames,
+    budget: f64,
+    now: OffsetDateTime,
+}
+
+impl Inputs {
+    /// Solve it. Blocking: call it off the runtime.
+    ///
+    /// # Errors
+    /// The solver's refusal.
+    pub fn solve(
+        &self,
+    ) -> Result<hems_optimizer::solve::Solved, hems_optimizer::solve::SolveError> {
+        let mut problem = Problem::new(self.horizon, &self.prices, &self.pv, &self.load)
+            .with_limits(self.limits.clone())
+            .with_objective(self.objective)
             // Until this was wired the box could only ever plan against one
             // median: the whole scenario set, its CVaR tail and the quantile
             // knob were reachable from `hemsd simulate` and from nothing on a
             // wall, so a household could not act on the trade-off `hemsd risk`
             // had measured for it.
-            .with_risk(risk);
-        if let Some(model) = battery {
+            .with_risk(self.risk);
+        if let Some(model) = self.battery {
             problem = problem.with_battery(model);
         }
-        if let Some(model) = dhw {
-            problem = problem.with_dhw(model, &draw);
+        if let Some(model) = self.dhw {
+            problem = problem.with_dhw(model, &self.draw);
         }
-        if let Some(target) = dhw_target {
+        if let Some(target) = self.dhw_target {
             problem = problem.with_dhw_target(target);
         }
-        if let Some(session) = ev {
+        if let Some(session) = self.ev {
             problem = problem.with_ev(session);
         }
-        if let Some(model) = thermal {
-            problem = problem.with_thermal(model, &outdoor, &window);
+        if let Some(model) = self.thermal {
+            problem = problem.with_thermal(model, &self.outdoor, &self.window);
         }
-        problem.solve_budget_s = budget;
-        solve(&problem, &names, now)
-    })
-    .await
-    .map_err(|e| Reason::Unsolvable(format!("the solve panicked: {e}")))?
-    .map_err(|e| Reason::Unsolvable(e.to_string()))
+        problem.solve_budget_s = self.budget;
+        solve(&problem, &self.names, self.now)
+    }
+
+    /// The same problem with the car's goal replaced.
+    #[must_use]
+    pub fn with_car(&self, session: Option<hems_optimizer::model::EvSession>) -> Self {
+        Self {
+            ev: session,
+            ..self.clone()
+        }
+    }
+
+    /// The same problem with the tank's goal replaced.
+    #[must_use]
+    pub fn with_tank(&self, target: Option<hems_optimizer::model::DhwTarget>) -> Self {
+        Self {
+            dhw_target: target,
+            ..self.clone()
+        }
+    }
+
+    /// The car's session as planned, where there is one.
+    #[must_use]
+    pub fn car(&self) -> Option<hems_optimizer::model::EvSession> {
+        self.ev
+    }
+
+    /// When these inputs were planned at.
+    #[must_use]
+    pub fn at(&self) -> OffsetDateTime {
+        self.now
+    }
 }
+
+/// The last solve's inputs, shared with the page's quote.
+pub type LastInputs = std::sync::Arc<tokio::sync::Mutex<Option<Inputs>>>;
 
 /// Hand the control loop the three series the plan was made against.
 ///
@@ -870,6 +965,7 @@ fn dhw_model(
     let Some(Asset::Dhw(tank)) = site.asset(dhw_id) else {
         return None;
     };
+    drivable(observed, dhw_id)?;
     let degrees = observed.state.asset(dhw_id)?.temperature_c?;
     Some(DhwModel {
         capacity: tank.usable_heat(),
@@ -927,6 +1023,7 @@ fn heat_pump_model(
     let Some(Asset::HeatPump(hp)) = site.asset(id) else {
         return None;
     };
+    drivable(observed, id)?;
     let indoor_c = observed.state.asset(id)?.temperature_c?;
 
     let mut unit = if hp.modulating {
@@ -1017,6 +1114,7 @@ fn ev_session(
     let Some(Asset::Evse(evse)) = site.asset(evse_id) else {
         return None;
     };
+    drivable(observed, evse_id)?;
     let charging = charging?;
     let present = observed.vehicles.get(evse_id)?;
     if !present.connected {
@@ -1054,6 +1152,20 @@ fn ev_session(
     })
 }
 
+/// `Some` where the planner may move `id`: a store its driver cannot command
+/// is not a store to plan.
+///
+/// A SunSpec battery is the case — the standard's storage model carries rate
+/// limits and no setpoint, so its driver refuses every command and the
+/// registry names it `uncommandable`. Planned anyway, every slot after the first
+/// was priced on energy the battery would never move, while the page called it
+/// *not connected*. Left out, it is neither modelled nor named, which by D96 is
+/// what keeps the arbiter from receiving a target for it at all: the battery
+/// runs its own logic and the plan prices the house around it.
+fn drivable(observed: &crate::drivers::Observed, id: &hems_core::prelude::AssetId) -> Option<()> {
+    (!observed.uncommandable.contains(id)).then_some(())
+}
+
 fn battery_model(
     site: &Site,
     observed: &crate::drivers::Observed,
@@ -1064,6 +1176,7 @@ fn battery_model(
     let Some(Asset::Battery(b)) = site.asset(battery_id) else {
         return None;
     };
+    drivable(observed, battery_id)?;
     let soc = observed.state.asset(battery_id)?.soc?;
     Some(BatteryModel {
         capacity: b.capacity,
@@ -1250,6 +1363,42 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    /// A store whose driver cannot take a command is not planned as one.
+    ///
+    /// Each device model is asked with the device measured — so the `None` is
+    /// the refusal and nothing else.
+    #[test]
+    fn a_device_no_driver_can_command_is_left_out_of_the_plan() {
+        use hems_core::prelude::Measurement;
+
+        let household = crate::site::Household::build(&crate::HouseholdConfig::default())
+            .expect("the reference household");
+        let now = time::OffsetDateTime::now_utc();
+        let battery = household.battery.clone().expect("the reference battery");
+        let tank = household.dhw.clone().expect("the reference tank");
+        let mut state = hems_realtime::guard::SiteState::default();
+        let mut soc = Measurement::at(now);
+        soc.soc = hems_core::prelude::Soc::new(0.5).ok();
+        state.assets.insert(battery.clone(), soc);
+        let mut warm = Measurement::at(now);
+        warm.temperature_c = Some(52.5);
+        state.assets.insert(tank.clone(), warm);
+        let mut observed = crate::drivers::Observed {
+            state,
+            ..crate::drivers::Observed::default()
+        };
+        assert!(battery_model(&household.site, &observed, &household, 0.0).is_some());
+        assert!(dhw_model(&household.site, &observed, &household).is_some());
+
+        observed.uncommandable.insert(battery);
+        observed.uncommandable.insert(tank);
+        assert!(
+            battery_model(&household.site, &observed, &household, 0.0).is_none(),
+            "a battery that refuses every command is the house's, not the plan's"
+        );
+        assert!(dhw_model(&household.site, &observed, &household).is_none());
     }
 
     #[test]

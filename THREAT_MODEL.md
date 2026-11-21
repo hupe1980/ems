@@ -20,8 +20,8 @@ The baseline counts 14 actors, 15 trust zones, 13 assets, 17 components, 19 data
 flows and 40 threats (24 high, 13 medium, 3 low), 40 mitigations (32 in
 place — 30 implemented, 2 verified by a test — and 8 required) and 29 security
 requirements; the feature models extending it add the threats and requirements
-of the household page, commissioning, notifications, the kept days and the
-virtual house listed below. Nothing is rated
+of the household page, commissioning, notifications, events out, the goal
+quote, the kept days and the virtual house listed below. Nothing is rated
 critical; the highest-ranked open risks are on the household network, where the
 protocols the devices speak have no authentication to rely on.
 
@@ -92,6 +92,7 @@ flowchart LR
 | The box's SHIP private key and Steuerbox trust store | Whoever holds the key *is* this household to the network operator's control box |
 | The box API token and energy-manager tokens | Read the household's life; drive its battery and car. The household's token is also the session cookie and the sign-in code printed on the handover sheet |
 | Push subscriptions and the box's Web Push signing key | Reach the household's phones in the box's name |
+| Webhook subscriptions, their signing secrets and what each is owed | Tell Home Assistant or an installer, in the box's name, that the operator is reducing the house; a subscriber URL can itself be the receiver's only credential |
 | Fleet credentials — box tokens, enrolment secrets, operator tokens, per-site webhook keys, the database URL | Each one is an identity; a webhook key decides whose day a report is |
 | The release- and configuration-signing key | The one thing a box trusts unconditionally |
 | § 14a evidence and settlement registers | The record a network operator may ask about for two years; MiSpeL money is computed from it |
@@ -178,6 +179,39 @@ the only path on which it speaks to a third party about the household unasked.
 | `manager-subscribes` — a manager subscribes a browser of its own, or lists and removes the household's | medium | `/v1/push` is household-only; no answer contains a subscription's keys or the signing key; subscribing and unsubscribing log the subject | `tests/push_routes.rs` `an_energy_manager_s_credential_does_not_reach_notifications` | Control (spec 012, SR-057) |
 | `push-survives-resale` — a resold box goes on telling the previous household's phones | low | The factory reset removes every subscription and the signing key | `store.rs` `push_subscriptions_are_capped_kept_and_gone_after_a_reset` | Control (spec 012, SR-058) |
 | `push-fanout-exhaustion` — subscriptions, per-tick notifications or retries turn an event into a storm of outbound requests | medium | Eight subscriptions at most; one notification per episode; a ten-second budget; nothing queued or retried. Not yet held over a whole day | `runtime/push.rs` `a_subscription_is_checked_before_it_is_kept`, `a_reduction_is_two_events_however_long_it_lasts`, `an_unreachable_or_unwilling_push_service_costs_nothing_and_keeps_the_subscription` | Partial (spec 012, SR-059) |
+
+### Events out
+
+The box delivers its events, with their numbers, to systems the household
+names: CloudEvents signed per Standard Webhooks, to a URL on the household
+network or, with the household's word, the internet. The only outbound request
+whose destination the household types.
+
+| Threat | Sev | Mitigation | Evidence | Status |
+|---|---|---|---|---|
+| `webhook-ssrf` — a subscriber URL points the box at loopback, link-local (cloud metadata), multicast or the box itself | high | Loopback, link-local, unspecified, multicast and broadcast refused at subscription and on every attempt; no redirect followed. The box's own LAN address is not refused | `tests/events_out.rs` `the_box_refuses_to_send_where_the_household_did_not_point_it`; `runtime/webhooks.rs` `the_household_network_is_reachable_and_the_box_itself_is_not` | Partial (spec 019, SR-074) |
+| `webhook-dns-rebinding` — a name checked at subscription resolves somewhere else later | medium | Resolved and checked again on every attempt; the request pinned to the address checked. Not tested | `runtime/webhooks.rs` `attempt` (read) | Partial (spec 019, SR-075) |
+| `webhook-data-leaves-home` — events go to the internet in clear or without the household knowing | medium | A public address over `https` only and only with `public: true`, said in words on the page. Not kept with the subscription, so a private name that later resolves public is delivered to | `runtime/webhooks.rs` `the_internet_takes_https_and_the_households_word` | Partial (spec 019, SR-076) |
+| `webhook-secret-disclosure` — the `whsec_` secret is read later from a listing or a log | low | Shown once in the creating answer; listings carry a four-character hint; the box keeps the key bytes it signs with | `runtime/webhooks.rs` `View`, `Created` (read; no test) | Partial (spec 019, SR-077) |
+| `webhook-url-credential-logged` — a Home Assistant webhook id in the URL, that receiver's only credential, is written to the box's log | medium | None: subscribing logs the full URL | — | **Open** (spec 019, SR-078) |
+| `manager-adds-subscriber` — a manager subscribes a system of its own, or reads or revokes the household's | medium | `/v1/subscriptions` and `/v1/deliveries` are household-only; subscribe and revoke log the subject. No manager-credential test | `openapi.rs` `the_household_only_routes_are_the_ones_the_access_layer_guards` | Partial (spec 019, SR-079) |
+| `webhook-queue-growth` — a receiver that never answers grows what is owed and logged without bound | medium | Eight subscriptions counted inside the write; 200 owed and 500 logged each; dropped after 24 hours; seven-day log | `tests/events_out.rs` `a_ninth_system_is_refused` | Partial (spec 019, SR-080) |
+| `slow-receiver-stalls-control` — a slow or redirecting receiver holds the detector or the control loop | medium | Deliveries on their own task; ten seconds and 1 KiB per attempt; the detector only queues. Not tested | `main.rs` (`webhooks` vital task), `runtime/webhooks.rs` `attempt` (read) | Partial (spec 019, SR-081) |
+| `revoked-subscriber-resurrected` — a subscription revoked during a delivery pass is written back by it | low | None: the pass writes each subscription back unconditionally | — | **Open** (spec 019, SR-082) |
+| `webhook-forged-or-replayed` — a forged or replayed event makes a receiver act on a reduction that did not happen | medium | Every delivery signed over id, timestamp and body; checking the timestamp window and de-duplicating by id are the receiver's | `tests/events_out.rs` `a_reduction_reaches_a_receiver_signed_and_nothing_else_does` (verifier written from the specification) | Control (spec 019, SR-083) |
+| `webhooks-survive-resale` — a resold box goes on telling the previous household's systems | low | The factory reset empties the webhooks table. Not tested | `store.rs` `factory_reset` (read) | Partial (spec 019, SR-084) |
+
+### Asking the plan
+
+A goal can be priced before it is set: the box solves its last plan twice, with
+the goal in force and with the proposed one.
+
+| Threat | Sev | Mitigation | Evidence | Status |
+|---|---|---|---|---|
+| `quote-solve-flood` — quoting on every drag tick or in a loop starves the planner the control loop depends on | medium | One quote at a time and none within a second of the last, `429` before any solve; each solve within the planner's budget | `tests/household_surface.rs` `quotes_come_one_at_a_time` | Partial (spec 020, SR-085: the in-flight case is not tested) |
+| `quote-abandoned-keeps-solving` — a caller that disconnects frees the slot while its solves still run | medium | None: the slot is held by the request, not the solves | — | **Open** (spec 020, SR-086) |
+| `manager-reads-quote` — a manager asks the quote route and reads goals and prices | medium | Under the household-only `/v1/goals` prefix, held to the contract. No manager-credential test | `openapi.rs` `the_household_only_routes_are_the_ones_the_access_layer_guards` | Partial (spec 020, SR-087) |
+| `quote-moves-the-plan` — asking what a goal costs changes the goal or the plan | low | The quote solves a clone of the last inputs and writes nothing. Not tested | `runtime/quote.rs` (read) | Partial (spec 020, SR-088) |
 
 ### The virtual house
 
@@ -270,13 +304,16 @@ plane could leak or be made to say:
 | 11 | `push-fanout-exhaustion` | medium | SR-059 — a whole reference day held to at most six notifications |
 | 12 | `push-metadata-timing` | medium | None possible at the protocol; the household is told before it subscribes |
 | 13 | `glance-shows-commissioning-secrets` | low | SR-063 — a test that the wall view contains no control that writes and no code or fingerprint |
+| 14 | `webhook-ssrf`, `webhook-data-leaves-home` | high / medium | SR-074, SR-076 — refuse the box's own addresses; keep the household's `public` word and require it on every attempt |
+| 15 | `quote-abandoned-keeps-solving` | medium | SR-086 — the quote slot held until the solves end, not until the request is dropped |
+| 16 | `webhook-url-credential-logged`, `revoked-subscriber-resurrected` | medium / low | SR-078, SR-082 — a subscriber logged by name and host; a delivery pass writes back only what still exists |
 
 ## Extending the model
 
 - **A feature model extends the baseline.** `/speckit-threatspec-model` writes a
   feature's threat model extending the project baseline; it inherits these
   trust zones, actors, assets and components and continues the `SR-###`
-  numbering after the highest SR in use (SR-073 as of 2026-11-19; feature specifications hold SR-026 to SR-037 and SR-042 to SR-073).
+  numbering after the highest SR in use (SR-088 as of 2026-11-21; feature specifications hold SR-026 to SR-037 and SR-042 to SR-088).
 - **The engine is deterministic.** `threatspec.sh validate` checks the schema
   and every reference; `threatspec.sh check` runs gap checks C1–C12 without an
   agent and exits non-zero on a high or critical finding, so it can gate CI.

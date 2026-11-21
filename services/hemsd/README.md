@@ -58,14 +58,14 @@ fails when the two differ.
 
 ```console
 $ cargo run -p hemsd -- demo                                   # a replayed day on the household page
-$ cargo run -p hemsd --features house -- house --at 16:58      # a house on the real protocols
-$ cargo run -p hemsd --features house -- run --config house.toml
+$ cargo run -p hemsd --features house -- house --run --at 16:58   # a house, and the box managing it
 ```
 
 `demo` serves a simulated day minute by minute (`--days 30` adds a month
 before it). `house` serves a SunSpec inverter, meter and battery over Modbus
-TCP and dials the box as a Steuerbox over EEBUS, and writes the configuration
-an ordinary `run` manages it with.
+TCP, dials the box as a Steuerbox over EEBUS, answers for its day's prices and
+sky as `tariffd` and `forecastd` would, and writes the configuration an
+ordinary `run` manages it with; `--run` starts that box in the same process.
 
 ## Simulating a day
 

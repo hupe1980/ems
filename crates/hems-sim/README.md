@@ -3,8 +3,9 @@
 Deterministic hardware for [hems](https://github.com/hupe1980/hems) to be tested
 against.
 
-A battery with round-trip losses, state-of-charge bounds and the standing loss
-that is the reason one left alone is not full a week later; a charge point with a
+A battery that loses what HTW Berlin measured — most at the few hundred watts a
+house draws at night — with state-of-charge bounds and the standing loss that is
+the reason one left alone is not full a week later; a charge point with a
 contactor that takes a tick to change its conductor count and a car whose onboard
 charger is measurably less efficient on one of them; an inverter that follows a
 curtailment command in a second or two rather than instantly; the same two-mass

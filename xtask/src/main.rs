@@ -1231,7 +1231,7 @@ fn manifest_file(manifest: &str, key: &str, default: &str) -> Option<String> {
 // ── check-events ────────────────────────────────────────────────────────────
 
 /// Every string that looks like a hems CloudEvents type has to be in the
-/// catalogue.
+/// catalogue, and every type pattern has to match something in it.
 ///
 /// The failure it prevents: an emitter and a consumer that spell the same event
 /// differently. Nothing breaks, nothing logs, and the feature simply never
@@ -1252,7 +1252,17 @@ fn check_events(root: &Path) -> Result<()> {
                 continue;
             }
             found += 1;
-            if !hems_events::is_known(&literal) {
+            // A pattern a subscriber asks for (`de.hems.grid.*`) is as good as
+            // the types it matches — and one that matches none is the same
+            // silent failure as a misspelt type: a subscription that never fires.
+            let known = if literal.contains('*') || literal.contains('?') {
+                hems_events::ALL
+                    .iter()
+                    .any(|t| hems_events::matches(&literal, t))
+            } else {
+                hems_events::is_known(&literal)
+            };
+            if !known {
                 unknown.push((file.clone(), literal));
             }
         }

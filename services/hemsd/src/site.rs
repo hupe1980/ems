@@ -631,8 +631,14 @@ fn assets_of(
             capacity: battery.kwh,
             max_charge: battery.power,
             max_discharge: battery.power,
-            efficiency_charge: 0.95,
-            efficiency_discharge: 0.95,
+            // Priced as the reference days price it: HTW Berlin's published
+            // part-load curve at the power the house actually draws — a 400-W
+            // night, a 4-kW charge — and not a datasheet's rated 95 %, which
+            // overstates a night's round trip by ten points.
+            efficiency_charge: hems_sim::BatterySim::new(battery.kwh, battery.power)
+                .charge_efficiency_at(crate::scenario::TYPICAL_CHARGE),
+            efficiency_discharge: hems_sim::BatterySim::new(battery.kwh, battery.power)
+                .discharge_efficiency_at(crate::scenario::TYPICAL_DISCHARGE),
             soc_min: Soc::new(0.05)?,
             soc_max: Soc::FULL,
             reserve_soc: battery.reserve_soc,

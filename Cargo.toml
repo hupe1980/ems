@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/hems-core", "crates/hems-device", "crates/hems-drv", "crates/hems-flex", "crates/hems-grid", "crates/hems-realtime", "crates/hems-tariff", "crates/hems-forecast", "crates/hems-optimizer", "crates/hems-events", "crates/hems-service", "crates/hems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/histd", "services/obsd", "services/tariffd", "xtask"]
 
 [workspace.package]
-version      = "0.5.0"
+version      = "0.6.0"
 authors      = ["hupe1980"]
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
@@ -111,18 +111,18 @@ tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-se
 good_lp      = { version = "1.15", default-features = false }
 
 # ── Internal (path + version so the domain crates can be published) ─────────
-hems-core      = { path = "crates/hems-core",      version = "0.5" }
-hems-device    = { path = "crates/hems-device",    version = "0.5" }
-hems-drv       = { path = "crates/hems-drv",       version = "0.5" }
-hems-flex      = { path = "crates/hems-flex",      version = "0.5" }
-hems-grid      = { path = "crates/hems-grid",      version = "0.5" }
-hems-tariff    = { path = "crates/hems-tariff",    version = "0.5" }
-hems-forecast  = { path = "crates/hems-forecast",  version = "0.5" }
-hems-optimizer = { path = "crates/hems-optimizer", version = "0.5" }
-hems-realtime  = { path = "crates/hems-realtime",  version = "0.5" }
-hems-events    = { path = "crates/hems-events",    version = "0.5" }
-hems-service   = { path = "crates/hems-service",   version = "0.5" }
-hems-sim       = { path = "crates/hems-sim",       version = "0.5" }
+hems-core      = { path = "crates/hems-core",      version = "0.6" }
+hems-device    = { path = "crates/hems-device",    version = "0.6" }
+hems-drv       = { path = "crates/hems-drv",       version = "0.6" }
+hems-flex      = { path = "crates/hems-flex",      version = "0.6" }
+hems-grid      = { path = "crates/hems-grid",      version = "0.6" }
+hems-tariff    = { path = "crates/hems-tariff",    version = "0.6" }
+hems-forecast  = { path = "crates/hems-forecast",  version = "0.6" }
+hems-optimizer = { path = "crates/hems-optimizer", version = "0.6" }
+hems-realtime  = { path = "crates/hems-realtime",  version = "0.6" }
+hems-events    = { path = "crates/hems-events",    version = "0.6" }
+hems-service   = { path = "crates/hems-service",   version = "0.6" }
+hems-sim       = { path = "crates/hems-sim",       version = "0.6" }
 
 # ── The fleet's own dependencies ────────────────────────────────────────────
 #

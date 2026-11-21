@@ -38,6 +38,45 @@
         ],
         "type": "object"
       },
+      "Asked": {
+        "description": "What a household asks for.",
+        "properties": {
+          "name": {
+            "description": "A name the household recognises: *Home Assistant*, *the installer*.",
+            "type": "string"
+          },
+          "public": {
+            "default": false,
+            "description": "Required, and `true`, for an address on the public internet: the\nhousehold has been told the events leave its network.",
+            "type": "boolean"
+          },
+          "subjects": {
+            "default": [],
+            "description": "Narrow to these subjects — asset ids or the site; empty is all.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "types": {
+            "description": "The types wanted; a trailing `*` matches a family (`de.hems.grid.*`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "url": {
+            "description": "Where to deliver.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "types"
+        ],
+        "type": "object"
+      },
       "CarGoal": {
         "additionalProperties": false,
         "description": "A car goal as the household set it.",
@@ -253,6 +292,67 @@
         ],
         "type": "object"
       },
+      "Created": {
+        "description": "A new subscription, with the secret shown this once.",
+        "properties": {
+          "created_at": {
+            "description": "When it was made, RFC 3339.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Its id, for `revoke` and `test`.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Its name.",
+            "type": "string"
+          },
+          "owed": {
+            "description": "Deliveries still being tried.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "secret": {
+            "description": "The Standard Webhooks secret, `whsec_…`. Shown once; the box keeps only\nwhat it signs with.",
+            "type": "string"
+          },
+          "secret_hint": {
+            "description": "The last four characters of its secret, to tell two apart.",
+            "type": "string"
+          },
+          "subjects": {
+            "description": "The subjects it narrows to; empty is all.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "types": {
+            "description": "The types it takes.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "url": {
+            "description": "Where it delivers.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "url",
+          "types",
+          "subjects",
+          "secret_hint",
+          "created_at",
+          "owed",
+          "secret"
+        ],
+        "type": "object"
+      },
       "Days": {
         "description": "The document `GET /v1/days` answers with.",
         "properties": {
@@ -271,6 +371,79 @@
         "required": [
           "days",
           "total"
+        ],
+        "type": "object"
+      },
+      "Delivery": {
+        "description": "One attempt, as the log keeps it.",
+        "properties": {
+          "at": {
+            "description": "When it was tried, RFC 3339.",
+            "type": "string"
+          },
+          "attempt": {
+            "description": "Which attempt, from 1.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "error": {
+            "description": "Why it failed, where it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "description": "The event's id — the same on every attempt.",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "`delivered`, `retrying` or `dropped`.",
+            "type": "string"
+          },
+          "status": {
+            "description": "The receiver's status, where it answered.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "subscription": {
+            "description": "The subscription it was for.",
+            "type": "string"
+          },
+          "type": {
+            "description": "The event's type.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription",
+          "event",
+          "type",
+          "at",
+          "attempt",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "DeviationDetected": {
+        "description": "`de.hems.device.deviation.detected`: a device has not done what it was\nasked for ten minutes.",
+        "properties": {
+          "assets": {
+            "description": "The devices not following.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "assets"
         ],
         "type": "object"
       },
@@ -462,6 +635,20 @@
         ],
         "type": "object"
       },
+      "FailsafeEntered": {
+        "description": "`de.hems.grid.lpc.failsafe.entered`: the control box fell silent.",
+        "properties": {
+          "failsafe_w": {
+            "description": "The failsafe ceiling now in force, W.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "GoalAnswer": {
         "description": "The answer a household gets the moment it sets a goal.",
         "properties": {
@@ -492,6 +679,27 @@
           "verdict",
           "needed_kwh",
           "tightness"
+        ],
+        "type": "object"
+      },
+      "GoalAtRisk": {
+        "description": "`de.hems.site.goal.at-risk`: a goal turned tight or impossible.",
+        "properties": {
+          "assets": {
+            "description": "The devices whose goal it is.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "verdict": {
+            "description": "`tight` or `impossible`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict",
+          "assets"
         ],
         "type": "object"
       },
@@ -727,6 +935,17 @@
               "array",
               "null"
             ]
+          },
+          "worth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Worth"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The export-or-store decision, in the open: what a kilowatt-hour in the\nbattery is worth to this household now, against what exporting one\nearns. Present only where the plan priced the battery and the export\nprice is known."
           }
         },
         "required": [
@@ -735,6 +954,42 @@
           "devices",
           "plan"
         ],
+        "type": "object"
+      },
+      "LimitReceived": {
+        "description": "`de.hems.grid.lpc.limit.received`: the network operator reduced the\nconnection.",
+        "properties": {
+          "limit_w": {
+            "description": "The ceiling on the controllable devices, W.",
+            "format": "double",
+            "type": "number"
+          },
+          "minimum_w": {
+            "description": "What § 14a guarantees the household meanwhile, W.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "limit_w"
+        ],
+        "type": "object"
+      },
+      "LimitReleased": {
+        "description": "`de.hems.grid.lpc.limit.released`: the reduction ended.",
+        "properties": {
+          "lasted_s": {
+            "description": "How long it lasted, seconds, where the box saw it begin.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
         "type": "object"
       },
       "Manager": {
@@ -991,6 +1246,37 @@
         ],
         "type": "object"
       },
+      "Problem": {
+        "description": "An RFC 9457 problem document.",
+        "properties": {
+          "detail": {
+            "description": "What happened in this case, as a sentence a person can act on.",
+            "type": "string"
+          },
+          "status": {
+            "description": "The HTTP status, repeated so the document stands on its own.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "description": "The kind, in a few words.",
+            "type": "string"
+          },
+          "type": {
+            "description": "A stable URI naming the kind of refusal — an anchor on the API page.\nA client branches on this.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail"
+        ],
+        "type": "object"
+      },
       "PushEndpoint": {
         "description": "Which browser a push request is about.",
         "properties": {
@@ -1208,6 +1494,35 @@
         "required": [
           "from_minute",
           "to_minute"
+        ],
+        "type": "object"
+      },
+      "Quote": {
+        "description": "What a proposed goal comes to.",
+        "properties": {
+          "extra_eur": {
+            "description": "What the plan with this goal costs beyond the plan with the goal in\nforce now, € — energy, battery wear and what is borrowed from the\nstores. Negative where it is cheaper. `None` where no plan could be made.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "reachable": {
+            "description": "What is reachable by then where the goal is not: a state of charge in\n`[0, 1]` for a car, °C for a tank.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict",
+            "description": "Met, feasible, tight or impossible — the page's own answer."
+          }
+        },
+        "required": [
+          "verdict"
         ],
         "type": "object"
       },
@@ -1481,6 +1796,14 @@
       "Reduction": {
         "description": "What the network operator has asked of the house right now — `None` when it\nhas asked nothing.",
         "properties": {
+          "budget_kw": {
+            "description": "What the guard shared among the controllable devices, kW: the ceiling,\nraised by what the roof and the battery already cover — § 14a limits\nthe draw from the grid, not the devices' own consumption.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "ceiling_kw": {
             "description": "The ceiling on the controllable devices, kW.",
             "format": "double",
@@ -1930,6 +2253,56 @@
         ],
         "type": "object"
       },
+      "TestDelivery": {
+        "description": "What a test delivery found.",
+        "properties": {
+          "delivered": {
+            "description": "Whether the receiver answered `2xx`.",
+            "type": "boolean"
+          },
+          "error": {
+            "description": "Why not, where not.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "millis": {
+            "description": "How long it took.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "description": "Its status, where it answered.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "delivered",
+          "millis"
+        ],
+        "type": "object"
+      },
+      "TestPing": {
+        "description": "`de.hems.test.ping`: sent on request, to check a receiver.",
+        "properties": {
+          "test": {
+            "description": "Always `true`; a receiver can tell a test from an event by its type.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "test"
+        ],
+        "type": "object"
+      },
       "Total": {
         "description": "What a run of closed days adds up to.",
         "properties": {
@@ -2045,6 +2418,62 @@
           }
         ]
       },
+      "View": {
+        "description": "What the household sees of a subscription — never its secret.",
+        "properties": {
+          "created_at": {
+            "description": "When it was made, RFC 3339.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Its id, for `revoke` and `test`.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Its name.",
+            "type": "string"
+          },
+          "owed": {
+            "description": "Deliveries still being tried.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "secret_hint": {
+            "description": "The last four characters of its secret, to tell two apart.",
+            "type": "string"
+          },
+          "subjects": {
+            "description": "The subjects it narrows to; empty is all.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "types": {
+            "description": "The types it takes.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "url": {
+            "description": "Where it delivers.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "url",
+          "types",
+          "subjects",
+          "secret_hint",
+          "created_at",
+          "owed"
+        ],
+        "type": "object"
+      },
       "Waiting": {
         "description": "A peer whose handshake is waiting for somebody to say yes.",
         "properties": {
@@ -2060,6 +2489,26 @@
         "required": [
           "ski",
           "fingerprint"
+        ],
+        "type": "object"
+      },
+      "Worth": {
+        "description": "What a kilowatt-hour is worth kept, and what it earns sent away.",
+        "properties": {
+          "battery_ct": {
+            "description": "The battery's own marginal value now, ct/kWh — the dual of its state\nequation in the plan in force.",
+            "format": "double",
+            "type": "number"
+          },
+          "export_ct": {
+            "description": "What an exported kilowatt-hour earns now, ct/kWh.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "battery_ct",
+          "export_ct"
         ],
         "type": "object"
       }
@@ -2086,7 +2535,7 @@
   "info": {
     "description": "The local API of a hems box. A request authenticated by the session cookie that changes anything must carry `Content-Type: application/json`.",
     "title": "hemsd",
-    "version": "0.5.0"
+    "version": "0.6.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2120,6 +2569,30 @@
         },
         "security": [],
         "summary": "Prometheus metrics"
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "An OpenAPI 3.1 document",
+                  "required": [
+                    "openapi",
+                    "info",
+                    "paths"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The document"
+          }
+        },
+        "security": [],
+        "summary": "This contract: the OpenAPI 3.1 document the box was built with"
       }
     },
     "/readyz": {
@@ -2193,6 +2666,13 @@
             "description": "Switching to the S2 WebSocket protocol"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "404": {
@@ -2243,25 +2723,39 @@
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "Not a reference"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2269,9 +2763,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2321,18 +2815,53 @@
             "description": "The days, oldest first; a missing date is a day the box was off"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "Not a window"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "This box keeps no store"
           },
           "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "They could not be read"
           }
         },
@@ -2379,18 +2908,53 @@
             "description": "One row per day"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "Not a window"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "This box keeps no store"
           },
           "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "They could not be read"
           }
         },
@@ -2403,6 +2967,54 @@
           }
         ],
         "summary": "The same days as CSV"
+      }
+    },
+    "/v1/deliveries": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Delivery"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Every attempt"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The last seven days of deliveries, newest first"
       }
     },
     "/v1/discover": {
@@ -2430,18 +3042,32 @@
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "A host name, a public address, too many hosts, or another port"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           }
         },
@@ -2473,16 +3099,30 @@
             "description": "Withdrawn"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2490,9 +3130,9 @@
           },
           "422": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2500,9 +3140,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2570,25 +3210,39 @@
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "Out of range"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2596,9 +3250,9 @@
           },
           "422": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2606,9 +3260,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2626,6 +3280,128 @@
         "summary": "Ask for a charge or a temperature by a time; answered with a verdict"
       }
     },
+    "/v1/goals/{asset}/quote": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CarGoal"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TankGoal"
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Quote"
+                }
+              }
+            },
+            "description": "The verdict and the price"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Out of range"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No such device"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The wrong goal for this kind of device"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A quote is already running, or one ended under a second ago"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The box has not planned yet, or cannot see this device"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "What a goal would cost, before it is set: the same plan solved with it"
+      }
+    },
     "/v1/handover": {
       "get": {
         "responses": {
@@ -2640,12 +3416,33 @@
             "description": "The sheet"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "The box has no site to describe"
           }
         },
@@ -2674,12 +3471,33 @@
             "description": "The document"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "The box has no site to describe"
           }
         },
@@ -2711,12 +3529,33 @@
             "description": "Their names"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "They could not be read"
           }
         },
@@ -2748,19 +3587,40 @@
             "description": "Withdrawn"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No such manager"
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2801,25 +3661,39 @@
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "Not a name"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -2844,7 +3718,24 @@
             "description": "Withdrawn"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No override was in force"
           }
         },
         "security": [
@@ -2876,6 +3767,13 @@
             "description": "The overrides"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           }
         },
@@ -2910,12 +3808,33 @@
             "description": "Withdrawn"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "Not a device name"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "None was set"
           }
         },
@@ -2965,9 +3884,23 @@
             "description": "The override as held"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "Not a device name"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           }
         },
@@ -2999,9 +3932,23 @@
             "description": "Trusted and waiting"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           }
         },
@@ -3039,25 +3986,39 @@
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "Not an SKI, or it could not be kept"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3088,41 +4049,58 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PairingBody"
-                }
-              }
-            },
-            "description": "Trusted and waiting, afterwards"
+          "204": {
+            "description": "Forgotten"
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
-            "description": "Not an SKI, or it could not be kept"
+            "description": "Not an SKI"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
-            "description": "The box has no EEBUS identity"
+            "description": "Not trusted, or the box has no EEBUS identity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "It could not be kept"
           }
         },
         "security": [
@@ -3161,25 +4139,39 @@
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "Not an SKI"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3214,16 +4206,30 @@
             "description": "Forgotten"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3231,9 +4237,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3263,16 +4269,30 @@
             "description": "Key and subscriptions"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3280,9 +4300,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3323,25 +4343,39 @@
           },
           "400": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "Not a known push service, bad keys or quiet hours"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3349,9 +4383,9 @@
           },
           "409": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3359,9 +4393,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3396,16 +4430,30 @@
             "description": "Accepted by the push service"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3413,9 +4461,9 @@
           },
           "410": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3423,9 +4471,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3433,9 +4481,9 @@
           },
           "502": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3493,28 +4541,63 @@
             "description": "The code"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "Not an origin, or not a reference"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "`signin` asked for with the cookie"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No such code, or no identity"
           },
           "413": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
             "description": "`commissioning`: the record is longer than a code is scanned at; fetch it"
           },
           "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "It could not be drawn"
           }
         },
@@ -3569,18 +4652,53 @@
             "description": "The readings"
           },
           "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "The window ends before it starts"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "This box keeps no series"
           },
           "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "It could not be read"
           }
         },
@@ -3621,6 +4739,13 @@
             "description": "Signed in; the cookie is set"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "Not the household's token"
           }
         },
@@ -3642,6 +4767,13 @@
             "description": "The status"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           }
         },
@@ -3659,6 +4791,260 @@
         "summary": "What the box is doing and what it cannot see"
       }
     },
+    "/v1/subscriptions": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/View"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Each, without its secret"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The systems this box tells about its events"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Asked"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            },
+            "description": "Subscribed; the secret is shown this once"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Eight already"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A destination or type the box does not deliver"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "It could not be kept"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Tell one more system: CloudEvents signed per Standard Webhooks"
+      }
+    },
+    "/v1/subscriptions/{id}/revoke": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No such subscription"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Stop telling one, and forget what it was owed"
+      }
+    },
+    "/v1/subscriptions/{id}/test": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestDelivery"
+                }
+              }
+            },
+            "description": "What the receiver answered"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No such subscription"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Send it a de.hems.test.ping now"
+      }
+    },
     "/v1/token": {
       "post": {
         "responses": {
@@ -3673,16 +5059,30 @@
             "description": "The new token"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           },
           "409": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3690,9 +5090,9 @@
           },
           "500": {
             "content": {
-              "text/plain": {
+              "application/problem+json": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },
@@ -3721,9 +5121,23 @@
             "description": "The check"
           },
           "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "No credential, or not one this box issued"
           },
           "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
             "description": "A manager's credential, on a route that is the household's"
           }
         },
@@ -3766,6 +5180,400 @@
         },
         "security": [],
         "summary": "The daemon's name and version"
+      }
+    }
+  },
+  "webhooks": {
+    "de.hems.device.deviation.detected": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/DeviationDetected"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.hems.device.deviation.detected"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "A device has not done what it was asked for ten minutes"
+      }
+    },
+    "de.hems.grid.lpc.failsafe.entered": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/FailsafeEntered"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.hems.grid.lpc.failsafe.entered"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "The control box fell silent; the failsafe value applies"
+      }
+    },
+    "de.hems.grid.lpc.limit.received": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/LimitReceived"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.hems.grid.lpc.limit.received"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "The network operator reduced the connection (§ 14a)"
+      }
+    },
+    "de.hems.grid.lpc.limit.released": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/LimitReleased"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.hems.grid.lpc.limit.released"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "The reduction ended"
+      }
+    },
+    "de.hems.site.day.closed": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/ClosedDay"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.hems.site.day.closed"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "A day closed: the receipt, in whole cents and Wh"
+      }
+    },
+    "de.hems.site.goal.at-risk": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/GoalAtRisk"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.hems.site.goal.at-risk"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "A goal turned tight or impossible"
+      }
+    },
+    "de.hems.test.ping": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/TestPing"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.hems.test.ping"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "Sent on request, to check a receiver"
       }
     }
   }

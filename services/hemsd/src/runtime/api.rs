@@ -64,6 +64,8 @@ pub struct Local {
     days: Option<Arc<Mutex<crate::store::Store>>>,
     /// The Web Push sender, where the box has a store to keep subscriptions in.
     push: Option<crate::runtime::push::Push>,
+    /// Events out: the systems the household asked the box to tell.
+    webhooks: Option<crate::runtime::webhooks::Webhooks>,
 }
 
 /// What the household page needs beyond `/v1/status`.
@@ -81,6 +83,8 @@ pub struct HomeSources {
     pub car: crate::home::CarFacts,
     /// The tank as the planner last saw it.
     pub tank: crate::home::TankFacts,
+    /// The planner's last solve, for pricing a goal before it is set.
+    pub last: crate::runtime::planner::LastInputs,
     /// The SHA-256 fingerprint of the box's SHIP certificate.
     pub fingerprint: Option<String>,
     /// The SHA-256 fingerprint of the certificate it serves HTTPS with.
@@ -110,6 +114,13 @@ impl Local {
     #[must_use]
     pub fn with_push(mut self, push: Option<crate::runtime::push::Push>) -> Self {
         self.push = push;
+        self
+    }
+
+    /// The webhook outlet: `/v1/subscriptions` and `/v1/deliveries`.
+    #[must_use]
+    pub fn with_webhooks(mut self, webhooks: Option<crate::runtime::webhooks::Webhooks>) -> Self {
+        self.webhooks = webhooks;
         self
     }
 
@@ -173,6 +184,7 @@ impl Local {
             commissioning: crate::runtime::handover::Commissioning::default(),
             days: None,
             push: None,
+            webhooks: None,
         }
     }
 }
@@ -326,12 +338,33 @@ pub fn router(local: Local) -> axum::Router {
         .route("/v1/days", get(days))
         .route("/v1/days.csv", get(days_csv))
         .route("/v1/goals/{asset}", put(set_goal).delete(clear_goal))
+        .route("/v1/goals/{asset}/quote", axum::routing::post(quote_goal))
         .route(
             "/v1/push",
             get(push_overview).post(push_subscribe).delete(push_forget),
         )
         .route("/v1/push/test", axum::routing::post(push_test))
+        .route("/v1/subscriptions", get(list_subscriptions).post(subscribe))
+        .route(
+            "/v1/subscriptions/{id}/revoke",
+            axum::routing::post(revoke_subscription),
+        )
+        .route(
+            "/v1/subscriptions/{id}/test",
+            axum::routing::post(test_subscription),
+        )
+        .route("/v1/deliveries", get(deliveries))
+        // An unknown path under `/v1/` is a refusal like any other, so it passes
+        // the same layers: the router's own fallback would not.
+        .route("/v1/{*rest}", axum::routing::any(no_such_route))
         .with_state(local)
+}
+
+async fn no_such_route() -> (axum::http::StatusCode, &'static str) {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        "there is no such route; `GET /openapi.json` lists them",
+    )
 }
 
 /// The energy managers this household has connected.
@@ -539,10 +572,16 @@ async fn clear_override(
 async fn clear_overrides(
     State(local): State<Local>,
     who: Option<axum::Extension<hems_service::auth::Authority>>,
-) -> axum::http::StatusCode {
+) -> Result<axum::http::StatusCode, (axum::http::StatusCode, String)> {
     let n = local.overrides.clear_all().await;
+    if n == 0 {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "no override is in force".into(),
+        ));
+    }
     tracing::info!(withdrawn = n, subject = %subject(who.as_deref()), "every household override was withdrawn");
-    axum::http::StatusCode::NO_CONTENT
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// What is in force.
@@ -597,6 +636,100 @@ fn push_of(local: &Local) -> Result<&crate::runtime::push::Push, (StatusCode, St
 fn push_store(error: crate::store::StoreError) -> (StatusCode, String) {
     tracing::error!(%error, "the push subscriptions could not be read or written");
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+}
+
+// ── Events out ──────────────────────────────────────────────────────────────
+
+fn hooks_of(local: &Local) -> Result<&crate::runtime::webhooks::Webhooks, (StatusCode, String)> {
+    local.webhooks.as_ref().ok_or((
+        StatusCode::NOT_FOUND,
+        "this box sends no events to other systems".into(),
+    ))
+}
+
+#[allow(clippy::needless_pass_by_value)] // the `map_err` shape: it takes what it is handed
+fn hooks_refused(why: crate::runtime::webhooks::Refused) -> (StatusCode, String) {
+    use crate::runtime::webhooks::Refused;
+    let status = match &why {
+        Refused::Destination(_) | Refused::UnknownType(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        Refused::Full => StatusCode::CONFLICT,
+        Refused::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, why.to_string())
+}
+
+/// The systems this box tells about its events.
+async fn list_subscriptions(
+    State(local): State<Local>,
+) -> Result<Json<Vec<crate::runtime::webhooks::View>>, (StatusCode, String)> {
+    hooks_of(&local)?
+        .list()
+        .await
+        .map(Json)
+        .map_err(hooks_refused)
+}
+
+/// Tell one more system; its secret is in the answer and nowhere else.
+async fn subscribe(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    Json(asked): Json<crate::runtime::webhooks::Asked>,
+) -> Result<(StatusCode, Json<crate::runtime::webhooks::Created>), (StatusCode, String)> {
+    let created = hooks_of(&local)?
+        .subscribe(asked, OffsetDateTime::now_utc())
+        .await
+        .map_err(hooks_refused)?;
+    // The host and never the URL: a Home Assistant webhook id in the path is
+    // that receiver's only credential, and a log is read by more people.
+    let host = reqwest::Url::parse(&created.view.url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_default();
+    tracing::info!(
+        name = %created.view.name,
+        %host,
+        subject = %subject(who.as_deref()),
+        "a system will be told about this box's events"
+    );
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+/// Stop telling one.
+async fn revoke_subscription(
+    State(local): State<Local>,
+    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    if hooks_of(&local)?.revoke(&id).await.map_err(hooks_refused)? {
+        tracing::info!(%id, subject = %subject(who.as_deref()), "a system will no longer be told");
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, "no such subscription".into()))
+    }
+}
+
+/// Send it a `de.hems.test.ping` now, and say what it answered.
+async fn test_subscription(
+    State(local): State<Local>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<crate::runtime::webhooks::TestDelivery>, (StatusCode, String)> {
+    hooks_of(&local)?
+        .test(&id, OffsetDateTime::now_utc())
+        .await
+        .map_err(hooks_refused)?
+        .map(Json)
+        .ok_or((StatusCode::NOT_FOUND, "no such subscription".into()))
+}
+
+/// The last seven days of deliveries, newest first.
+async fn deliveries(
+    State(local): State<Local>,
+) -> Result<Json<Vec<crate::runtime::webhooks::Delivery>>, (StatusCode, String)> {
+    hooks_of(&local)?
+        .deliveries(OffsetDateTime::now_utc())
+        .await
+        .map(Json)
+        .map_err(hooks_refused)
 }
 
 /// The key a browser subscribes with, and the browsers subscribed.
@@ -770,6 +903,63 @@ fn not_kept(error: &crate::store::StoreError) -> (StatusCode, String) {
 /// The body follows the asset: `target_soc` and `by_minute` for a car,
 /// `target_c` and `by_minute` for a tank. The answer is the verdict, or `null`
 /// where the planner has not seen the device yet.
+/// What a goal would cost before it is set: the same plan solved with it.
+///
+/// Changes nothing. The verdict is the one `PUT` would answer, and the price
+/// the difference between the plan with the goal in force now and with this
+/// one.
+async fn quote_goal(
+    State(local): State<Local>,
+    Path(asset): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<crate::runtime::quote::Quote>, (StatusCode, String)> {
+    use crate::home::NewGoal;
+    let site = local
+        .home
+        .site
+        .as_ref()
+        .ok_or_else(|| refused(crate::home::GoalRefused::UnknownAsset))?;
+    let goal = crate::home::parse_goal(site, &asset, body).map_err(refused)?;
+    let Some(mut held) = crate::runtime::quote::slot() else {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "a quote is already being worked out; ask again in a moment".into(),
+        ));
+    };
+    let now = OffsetDateTime::now_utc();
+    let tank = site.assets.iter().find_map(|a| match a {
+        hems_core::prelude::Asset::Dhw(tank) => Some(tank.clone()),
+        _ => None,
+    });
+    let (last, car, tank_facts) = (
+        local.home.last.clone(),
+        local.home.car.clone(),
+        local.home.tank.clone(),
+    );
+    // Its own task, holding the slot until both solves are done: a caller that
+    // walks away drops this handler, and must not free the slot for two more
+    // solves while the first two still run.
+    let quote = tokio::spawn(async move {
+        let quote = match goal {
+            NewGoal::Car(g) => crate::runtime::quote::car(&last, &car, g, now).await,
+            NewGoal::Tank(g) => match &tank {
+                Some(tank) => crate::runtime::quote::tank(&last, &tank_facts, tank, g, now).await,
+                None => None,
+            },
+        };
+        *held = Some(std::time::Instant::now());
+        drop(held);
+        quote
+    })
+    .await
+    .ok()
+    .flatten();
+    quote.map(Json).ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the box has not planned yet, or cannot see this device".into(),
+    ))
+}
+
 async fn set_goal(
     State(local): State<Local>,
     who: Option<axum::Extension<hems_service::auth::Authority>>,
@@ -1085,19 +1275,35 @@ async fn forget_peer(
     State(local): State<Local>,
     who: Option<axum::Extension<hems_service::auth::Authority>>,
     axum::extract::Path(ski): axum::extract::Path<String>,
-) -> Result<Json<PairingBody>, (axum::http::StatusCode, String)> {
+) -> Result<axum::http::StatusCode, (axum::http::StatusCode, String)> {
     let Some(trust) = local.trust.as_ref() else {
         return Err((
             axum::http::StatusCode::NOT_FOUND,
             "this box has no EEBUS identity, so there is nothing to pair with".into(),
         ));
     };
+    let wanted = ski.parse::<eebus::ship::Ski>().map_err(|_| {
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("{ski} is not a SKI: forty hexadecimal digits"),
+        )
+    })?;
+    let known = trust
+        .peers()
+        .iter()
+        .any(|t| t.parse::<eebus::ship::Ski>().is_ok_and(|t| t == wanted));
+    if !known {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "this box does not trust that control box, so there is nothing to forget".into(),
+        ));
+    }
     trust
         .forget(&ski, OffsetDateTime::now_utc())
         .await
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     tracing::info!(?ski, subject = %subject(who.as_deref()), "a control box was forgotten");
-    Ok(list_trusted(State(local)).await)
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 // ── Commissioning: the codes, the sheet, discovery and the trust check ──────

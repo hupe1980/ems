@@ -499,14 +499,14 @@ pub enum ManagerError {
     Store(#[from] crate::store::StoreError),
 }
 
-/// Routes only the household's own credential reaches — its data, and its
-/// decisions about who may act on the box.
 /// Whether `path` is one only the household's own credential reaches.
 #[must_use]
 pub fn is_household_only(path: &str) -> bool {
     HOUSEHOLD_ONLY.iter().any(|p| path.starts_with(p))
 }
 
+/// Routes only the household's own credential reaches — its data, and its
+/// decisions about who may act on the box.
 const HOUSEHOLD_ONLY: &[&str] = &[
     "/v1/series",
     "/v1/pairing",
@@ -532,6 +532,11 @@ const HOUSEHOLD_ONLY: &[&str] = &[
     // and where the box sends it, is the household's to decide. A manager that
     // could subscribe would be told when the household's car will not be ready.
     "/v1/push",
+    // Events out, for the same reason: which systems hear about this house is
+    // the household's decision. An energy manager is added by the household
+    // like anyone else, never by itself.
+    "/v1/subscriptions",
+    "/v1/deliveries",
 ];
 
 /// The cookie the household page signs in with.

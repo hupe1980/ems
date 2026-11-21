@@ -7,6 +7,65 @@ break anything, and says so here.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-21
+
+The box talks to other systems, lets a household price a goal before setting
+it, and its battery loses what was measured.
+
+### Added
+
+- **Events out.** The box tells the systems a household names — Home
+  Assistant, Node-RED, an installer — what it tells the household: a § 14a
+  reduction begins or ends, failsafe, a goal at risk, a device not following,
+  the closed day. CloudEvents 1.0, signed per Standard Webhooks with a `whsec_`
+  secret shown once; retried with the same id for 24 hours; to private
+  addresses, or public ones over HTTPS when the household says so.
+  `GET/POST /v1/subscriptions`, `POST /v1/subscriptions/{id}/revoke|test`,
+  `GET /v1/deliveries`, *Other systems* on Setup, a `webhooks` section in the
+  contract, a Home Assistant automation in the docs. New catalogue types
+  `de.hems.site.day.closed`, `de.hems.site.goal.at-risk`,
+  `de.hems.device.deviation.detected`, `de.hems.test.ping`.
+- `hemsd house --run`: the virtual house and the box that manages it in one
+  command. The house answers for its day's prices and sky as `tariffd` and
+  `forecastd` would, so the box plans.
+- `GET /openapi.json`: the box serves its own contract.
+- **What a goal costs, before it is set.** `POST /v1/goals/{asset}/quote`
+  solves the plan in force again with the proposed goal and answers the
+  verdict and `extra_eur`; the goal card shows it on release, and only *Set*
+  commits.
+- **The plan in sentences.** Under the Plan strip: each device's next run
+  (*the car charges 21:00–01:00*) and the export-or-store decision with both
+  prices (*a kilowatt-hour in the battery is worth 43 ct to you now; exported
+  it earns 8 ct*), from `/v1/home`'s new `worth`.
+- During a § 14a reduction, Now shows each device's share of the budget, and
+  `/v1/home`'s `reduction.budget_kw` says what was shared.
+
+### Changed — breaking
+
+- Every refusal under `/v1/` is an RFC 9457 problem document
+  (`application/problem+json`), with a `type` per status on the API page.
+- `DELETE /v1/pairing/{ski}` answers `204`, or `404` for a control box that is
+  not trusted; `DELETE /v1/overrides` answers `404` when none is in force.
+- `/s2/{asset}` takes `GET` only.
+- `hems-sim`'s `BatterySim` has a part-load converter (`no_load_loss`,
+  `proportional_loss`, `cell_efficiency`) in place of `efficiency_charge` and
+  `efficiency_discharge`.
+
+### Changed
+
+- A notification opens Plan for a goal at risk and Setup for failsafe.
+- **The battery loses what was measured.** `hems-sim`'s converter follows
+  HTW Berlin's published part-load curve (30 W no-load, 2 % proportional, cells
+  √0.95, 8 W standby), and the planner — on the reference days and on the box —
+  prices storage at a 400-W night discharge rather than the rated 95 %. Every
+  reference day moved: the January day saves €1,10, €0,83 of it on the bill.
+
+### Fixed
+
+- A device whose driver refuses every command — a SunSpec battery — was
+  still planned as a store.
+- `hemsd house` ignored `SIGTERM`.
+
 ## [0.5.0] — 2026-11-21
 
 Three sibling crates move, and one of them closes a defect on the § 14a link.
@@ -210,7 +269,8 @@ hardware.
 - `rmcp` 3.11 (RUSTSEC-2026-0457, -0461) and `ctutils` 0.4.8 (RUSTSEC-2026-0385).
 - Every override and S2 instruction is logged with the credential that made it.
 
-[Unreleased]: https://github.com/hupe1980/hems/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/hupe1980/hems/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/hupe1980/hems/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hupe1980/hems/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hupe1980/hems/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hupe1980/hems/releases/tag/v0.3.0

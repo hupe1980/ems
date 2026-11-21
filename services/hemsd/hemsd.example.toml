@@ -90,8 +90,8 @@ solve_budget_s = 10.0
 #                day with no credit on the bad one.
 #
 # Measured over twenty seeded weathers on each of two days: three futures beat
-# the median where a service is at risk (€0,90 against €0,61 a day, the worst
-# day from -€1,01 to -€0,04) and cost €0,18 where nothing is; "hedged" beats
+# the median where a service is at risk (€0,84 against €0,46 a day, the worst
+# day from -€1,19 to -€0,26) and cost €0,08 where nothing is; "hedged" beats
 # the median on both days, on the mean and on the worst day, at about three
 # times the solve. The default stays "median" until that is measured on more
 # days than two — a household that wants the hedge sets it here.

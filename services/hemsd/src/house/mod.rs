@@ -10,6 +10,7 @@
 //! Real time only: the box reads the system clock, so the house does too, and
 //! [`Options::at`] chooses where in the reference day it starts.
 
+pub mod fleet;
 mod modbus;
 pub mod registers;
 pub mod steuerbox;
@@ -88,6 +89,12 @@ impl Clock {
     #[must_use]
     pub fn now(&self) -> OffsetDateTime {
         self.midnight + self.since_midnight()
+    }
+
+    /// The instant of the reference day the house lives at wall-clock `real`.
+    #[must_use]
+    pub fn scenario_at(&self, real: OffsetDateTime) -> OffsetDateTime {
+        self.midnight + self.offset + (real - self.started)
     }
 }
 
@@ -197,6 +204,9 @@ impl Physics {
 pub struct House {
     /// Where Modbus TCP is listening.
     pub modbus: SocketAddr,
+    /// Where the house answers for its day's prices and sky, as `tariffd` and
+    /// `forecastd` would.
+    pub fleet: SocketAddr,
     /// The Steuerbox's SKI, for the box to trust; `None` without a Steuerbox.
     pub steuerbox_ski: Option<String>,
     /// What the Steuerbox has seen of the household.
@@ -267,6 +277,11 @@ pub async fn start(options: Options) -> anyhow::Result<House> {
     let listener = tokio::net::TcpListener::bind(options.listen).await?;
     let modbus = listener.local_addr()?;
     let mut tasks = vec![tokio::spawn(modbus::serve(listener, Arc::clone(&physics)))];
+    // The day's prices and sky, where `tariffd` and `forecastd` would answer
+    // them, on the Modbus address's host and a port of its own.
+    let (fleet, prices_and_sky) =
+        fleet::serve(SocketAddr::new(modbus.ip(), 0), &options.scenario, clock).await?;
+    tasks.push(prices_and_sky);
 
     let stepped = Arc::clone(&physics);
     tasks.push(tokio::spawn(async move {
@@ -303,6 +318,7 @@ pub async fn start(options: Options) -> anyhow::Result<House> {
 
     Ok(House {
         modbus,
+        fleet,
         steuerbox_ski,
         steuerbox,
         clock,
@@ -330,8 +346,12 @@ pub fn configuration(
     let mut out = format!(
         "# A box that manages the virtual house on {modbus}.\n\
          # Written by `hemsd house`; start it with `hemsd run --config <this file>`.\n\n\
-         [service]\nlisten = \"{api}\"\n",
+         [service]\nlisten = \"{api}\"\n\n\
+         [fleet]\ntariffd_url = \"http://{fleet}\"\nforecastd_url = \"http://{fleet}\"\n\
+         location = \"{location}\"\n",
         modbus = house.modbus,
+        fleet = house.fleet,
+        location = fleet::LOCATION,
     );
     if let (Some(ship), Some(ski)) = (ship, &house.steuerbox_ski) {
         write!(
@@ -385,6 +405,50 @@ mod tests {
             identity: None,
             exposed: false,
         }
+    }
+
+    /// The box that manages the house is told the house's own day, so it
+    /// plans: the price of the slot the house lives in is the reference day's.
+    #[tokio::test]
+    async fn the_house_prices_the_slot_it_lives_in_from_its_own_day() {
+        let scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
+        let house = start(options("127.0.0.1:0")).await.expect("a house");
+        let now = Slot::containing(OffsetDateTime::now_utc()).start();
+        let from = now
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+            .replace('+', "%2B");
+        let prices: serde_json::Value = reqwest::get(format!(
+            "http://{}/v1/prices?from={from}&slots=2",
+            house.fleet
+        ))
+        .await
+        .expect("an answer")
+        .json()
+        .await
+        .expect("tariffd's shape");
+        // `options` puts the house at 12:00: the forty-ninth slot of its day.
+        assert_eq!(
+            prices["points"][0]["price_ct"],
+            scenario.prices_ct[48].to_string()
+        );
+        assert_eq!(prices["points"].as_array().map(Vec::len), Some(2));
+
+        let sky: serde_json::Value = reqwest::get(format!(
+            "http://{}/v1/weather/{}",
+            house.fleet,
+            fleet::LOCATION
+        ))
+        .await
+        .expect("an answer")
+        .json()
+        .await
+        .expect("forecastd's shape");
+        assert_eq!(sky["points"].as_array().map(Vec::len), Some(192));
+
+        let written = configuration(&house, &scenario, None, "127.0.0.1:8080".parse().unwrap())
+            .expect("a configuration");
+        assert!(written.contains(&format!("tariffd_url = \"http://{}\"", house.fleet)));
     }
 
     #[tokio::test]

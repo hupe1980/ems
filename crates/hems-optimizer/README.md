@@ -51,8 +51,8 @@ because of it.
   The unusual part is that the evaluation which can *falsify* it ships too: a
   single simulated day pays a hedge's premium every time and makes its claim
   never. `hemsd risk`, over twenty seeded weathers on each of two days, says three
-  futures are worth €0,29 a day where a service is at risk and take its worst
-  day from −€1,01 to −€0,04, cost €0,18 where nothing is, and that a CVaR tail
+  futures are worth €0,38 a day where a service is at risk and take its worst
+  day from −€1,19 to −€0,26, cost €0,08 where nothing is, and that a CVaR tail
   beats the single median on both days, on the mean and on the worst day.
 - ❄️ **A compressor's minimum runtime remembers the compressor.** The rows that
   state it constrain a *transition*, so each needs the slot before it — and none
@@ -80,9 +80,9 @@ because of it.
   time, the comfort band, the wear and tomorrow's reduction already in it. That
   is what weights the guard's allocation — one marginal value per *slot* weights
   nothing. The dual of the § 14a ceiling comes with it, and it is the honest
-  answer to "what is your flexibility worth": €3,93/kWh on a household whose car
-  will otherwise leave short, €0,16 on the same one with a battery to lend it
-  headroom.
+  answer to "what is your flexibility worth": €1,20/kWh on a household with no
+  store whose car the reduction squeezes, nothing on the same evening with a
+  battery to lend it headroom.
 - ⚙️ `good_lp` behind `microlp` (default, pure Rust — no C++ toolchain) or
   `highs` (production), with a relative gap and a time budget. The **dual pass
   always runs on Clarabel**, which is also pure Rust, so there is no backend

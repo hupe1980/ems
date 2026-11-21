@@ -365,7 +365,7 @@ throwing it away.
 
 What it *costs* needs a baseline that is capped too, because § 9 EEG does not ask
 whether there is an energy manager behind the meter: lifting the cap moves the
-managed household's own cost by seven cents and the unmanaged one's by twelve —
+managed household's own cost by six cents and the unmanaged one's by eleven —
 and most of those seven are the simulated day's one-minute control loop rather
 than the cap.
 
@@ -471,7 +471,7 @@ what one kilowatt-hour of relief from it would be worth to this household,
 computed from its own plan rather than assumed.
 
 ```console
-  relief from § 14a was worth            3.93 €/kWh
+  relief from § 14a was worth            1.20 €/kWh
 ```
 
 That is a house with no store whose car will otherwise leave short. The *same*

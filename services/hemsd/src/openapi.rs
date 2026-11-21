@@ -113,6 +113,14 @@ fn readiness(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
+fn openapi_document(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "description": "An OpenAPI 3.1 document",
+        "required": ["openapi", "info", "paths"]
+    })
+}
+
 fn version(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "object", "required": ["name", "version"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } } })
 }
@@ -203,6 +211,15 @@ pub fn routes() -> Vec<Route> {
         ),
         r(
             "GET",
+            "/openapi.json",
+            "This contract: the OpenAPI 3.1 document the box was built with",
+            Anyone,
+            &[],
+            None,
+            &[(200, "The document", Json(openapi_document))],
+        ),
+        r(
+            "GET",
             "/metrics",
             "Prometheus metrics",
             Anyone,
@@ -266,6 +283,34 @@ pub fn routes() -> Vec<Route> {
             &[(200, "The status", Json(of::<api::StatusBody>))],
         ),
         r(
+            "POST",
+            "/v1/goals/{asset}/quote",
+            "What a goal would cost, before it is set: the same plan solved with it",
+            Household,
+            &[],
+            Some(goal_body),
+            &[
+                (
+                    200,
+                    "The verdict and the price",
+                    Json(of::<crate::runtime::quote::Quote>),
+                ),
+                (400, "Out of range", Text),
+                (404, "No such device", Text),
+                (422, "The wrong goal for this kind of device", Text),
+                (
+                    429,
+                    "A quote is already running, or one ended under a second ago",
+                    Text,
+                ),
+                (
+                    503,
+                    "The box has not planned yet, or cannot see this device",
+                    Text,
+                ),
+            ],
+        ),
+        r(
             "PUT",
             "/v1/goals/{asset}",
             "Ask for a charge or a temperature by a time; answered with a verdict",
@@ -314,7 +359,10 @@ pub fn routes() -> Vec<Route> {
             HouseholdOrManager,
             &[],
             None,
-            &[(204, "Withdrawn", Empty)],
+            &[
+                (204, "Withdrawn", Empty),
+                (404, "No override was in force", Text),
+            ],
         ),
         r(
             "PUT",
@@ -424,13 +472,10 @@ pub fn routes() -> Vec<Route> {
             &[],
             None,
             &[
-                (
-                    200,
-                    "Trusted and waiting, afterwards",
-                    Json(of::<api::PairingBody>),
-                ),
-                (400, "Not an SKI, or it could not be kept", Text),
-                (404, "The box has no EEBUS identity", Text),
+                (204, "Forgotten", Empty),
+                (400, "Not an SKI", Text),
+                (404, "Not trusted, or the box has no EEBUS identity", Text),
+                (500, "It could not be kept", Text),
             ],
         ),
         r(
@@ -641,6 +686,75 @@ pub fn routes() -> Vec<Route> {
         ),
         r(
             "GET",
+            "/v1/subscriptions",
+            "The systems this box tells about its events",
+            Household,
+            &[],
+            None,
+            &[(
+                200,
+                "Each, without its secret",
+                Json(of::<Vec<crate::runtime::webhooks::View>>),
+            )],
+        ),
+        r(
+            "POST",
+            "/v1/subscriptions",
+            "Tell one more system: CloudEvents signed per Standard Webhooks",
+            Household,
+            &[],
+            Some(of::<crate::runtime::webhooks::Asked>),
+            &[
+                (
+                    201,
+                    "Subscribed; the secret is shown this once",
+                    Json(of::<crate::runtime::webhooks::Created>),
+                ),
+                (409, "Eight already", Text),
+                (422, "A destination or type the box does not deliver", Text),
+                (500, "It could not be kept", Text),
+            ],
+        ),
+        r(
+            "POST",
+            "/v1/subscriptions/{id}/revoke",
+            "Stop telling one, and forget what it was owed",
+            Household,
+            &[],
+            None,
+            &[(204, "Revoked", Empty), (404, "No such subscription", Text)],
+        ),
+        r(
+            "POST",
+            "/v1/subscriptions/{id}/test",
+            "Send it a de.hems.test.ping now",
+            Household,
+            &[],
+            None,
+            &[
+                (
+                    200,
+                    "What the receiver answered",
+                    Json(of::<crate::runtime::webhooks::TestDelivery>),
+                ),
+                (404, "No such subscription", Text),
+            ],
+        ),
+        r(
+            "GET",
+            "/v1/deliveries",
+            "The last seven days of deliveries, newest first",
+            Household,
+            &[],
+            None,
+            &[(
+                200,
+                "Every attempt",
+                Json(of::<Vec<crate::runtime::webhooks::Delivery>>),
+            )],
+        ),
+        r(
+            "GET",
             "/s2/{asset}",
             "S2 over WebSocket: a manager drives one device, narrowed by the guard",
             HouseholdOrManager,
@@ -671,6 +785,81 @@ fn content(body: Body, generator: &mut SchemaGenerator) -> Option<Value> {
     })
 }
 
+/// What the box sends to a subscribed system, one entry per event type: a
+/// CloudEvent whose `data` has the schema below, signed per Standard Webhooks.
+fn webhooks(generator: &mut SchemaGenerator) -> Value {
+    use crate::runtime::webhooks as w;
+    let data: [(&str, &str, Schema); 7] = [
+        (
+            hems_events::GRID_LPC_LIMIT_RECEIVED,
+            "The network operator reduced the connection (§ 14a)",
+            generator.subschema_for::<w::LimitReceived>(),
+        ),
+        (
+            hems_events::GRID_LPC_LIMIT_RELEASED,
+            "The reduction ended",
+            generator.subschema_for::<w::LimitReleased>(),
+        ),
+        (
+            hems_events::GRID_LPC_FAILSAFE_ENTERED,
+            "The control box fell silent; the failsafe value applies",
+            generator.subschema_for::<w::FailsafeEntered>(),
+        ),
+        (
+            hems_events::SITE_GOAL_AT_RISK,
+            "A goal turned tight or impossible",
+            generator.subschema_for::<w::GoalAtRisk>(),
+        ),
+        (
+            hems_events::DEVICE_DEVIATION_DETECTED,
+            "A device has not done what it was asked for ten minutes",
+            generator.subschema_for::<w::DeviationDetected>(),
+        ),
+        (
+            hems_events::SITE_DAY_CLOSED,
+            "A day closed: the receipt, in whole cents and Wh",
+            generator.subschema_for::<crate::month::ClosedDay>(),
+        ),
+        (
+            hems_events::TEST_PING,
+            "Sent on request, to check a receiver",
+            generator.subschema_for::<w::TestPing>(),
+        ),
+    ];
+    let mut out = serde_json::Map::new();
+    for (kind, summary, schema) in data {
+        out.insert(kind.to_owned(), json!({ "post": {
+            "summary": summary,
+            "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), \
+                            `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with \
+                            the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+            "requestBody": { "required": true, "content": { "application/cloudevents+json": { "schema": {
+                "type": "object",
+                "required": ["specversion", "id", "source", "type", "time", "data"],
+                "properties": {
+                    "specversion": { "const": "1.0" },
+                    "id": { "type": "string" },
+                    "source": { "type": "string" },
+                    "type": { "const": kind },
+                    "time": { "type": "string", "format": "date-time" },
+                    "subject": { "type": "string" },
+                    "datacontenttype": { "const": "application/json" },
+                    "data": schema
+                }
+            } } } },
+            "responses": { "200": { "description": "Received" } }
+        } }));
+    }
+    out.into()
+}
+
+/// A refusal's body: one schema, named once, for every route.
+fn problem(generator: &mut SchemaGenerator) -> Value {
+    json!({ crate::runtime::problem::MEDIA_TYPE: {
+        "schema": generator.subschema_for::<crate::runtime::problem::Problem>()
+    } })
+}
+
 /// The OpenAPI 3.1 document.
 ///
 /// # Panics
@@ -685,7 +874,14 @@ pub fn document() -> Value {
         let mut responses = serde_json::Map::new();
         for &(status, meaning, body) in route.answers {
             let mut answer = json!({ "description": meaning });
-            if let Some(content) = content(body, &mut generator) {
+            // Every refusal under `/v1/` is a problem document (`runtime::problem`),
+            // whatever the handler wrote; the table says what it means.
+            let content = if status >= 400 && route.path.starts_with("/v1/") {
+                Some(problem(&mut generator))
+            } else {
+                content(body, &mut generator)
+            };
+            if let Some(content) = content {
                 answer["content"] = content;
             }
             responses.insert(status.to_string(), answer);
@@ -693,12 +889,14 @@ pub fn document() -> Value {
         if route.who != Who::Anyone {
             responses.insert(
                 "401".into(),
-                json!({ "description": "No credential, or not one this box issued" }),
+                json!({ "description": "No credential, or not one this box issued",
+                        "content": problem(&mut generator) }),
             );
             if route.who != Who::HouseholdOrManager {
-                responses
-                    .entry("403")
-                    .or_insert(json!({ "description": "A manager's credential, on a route that is the household's" }));
+                responses.entry("403").or_insert(json!({
+                    "description": "A manager's credential, on a route that is the household's",
+                    "content": problem(&mut generator)
+                }));
             }
         }
         let mut parameters: Vec<Value> = route
@@ -737,6 +935,7 @@ pub fn document() -> Value {
             route.path
         );
     }
+    let webhooks = webhooks(&mut generator);
     let schemas: serde_json::Map<String, Value> =
         generator.take_definitions(true).into_iter().collect();
     json!({
@@ -748,6 +947,7 @@ pub fn document() -> Value {
                             changes anything must carry `Content-Type: application/json`."
         },
         "paths": paths,
+        "webhooks": webhooks,
         "components": {
             "securitySchemes": {
                 "household": { "type": "http", "scheme": "bearer", "description": "The household's token." },
@@ -847,6 +1047,14 @@ mod tests {
             .find("pub fn session_router")
             .expect("the session router")..];
         served.extend(mounted(&session[..session.find("\n}\n").expect("its end")]));
+        let runtime = include_str!("runtime/mod.rs");
+        let surfaces = &runtime[runtime.find("pub fn surfaces_over").expect("the surfaces")..];
+        served.extend(mounted(
+            &surfaces[..surfaces.find("\n}\n").expect("their end")],
+        ));
+        // The catch-all that turns an unknown path into a problem is not an
+        // operation; it is the absence of one.
+        served.retain(|(_, path)| !path.contains("{*"));
         let serve = include_str!("../../../crates/hems-service/src/serve.rs");
         let shared = &serve[serve.find("fn shared_routes").expect("the shared routes")..];
         served.extend(mounted(&shared[..shared.find("\n}\n").expect("their end")]));
@@ -897,6 +1105,10 @@ mod tests {
                 from: String::new(),
                 until: String::new(),
                 bill_eur: 0.0,
+            }),
+            worth: Some(crate::home::Worth {
+                battery_ct: 0.0,
+                export_ct: 0.0,
             }),
             receipt: None,
             goal: None,

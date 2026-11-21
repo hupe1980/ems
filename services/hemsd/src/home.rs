@@ -255,6 +255,10 @@ pub struct Reduction {
     /// `true` while the box is in failsafe: no heartbeat from the Steuerbox, so
     /// the stored failsafe value stands in for an instruction.
     pub failsafe: bool,
+    /// What the guard shared among the controllable devices, kW: the ceiling,
+    /// raised by what the roof and the battery already cover — § 14a limits
+    /// the draw from the grid, not the devices' own consumption.
+    pub budget_kw: Option<f64>,
     /// How each device's share of the allowance is being spent, kW.
     pub shares: BTreeMap<String, f64>,
 }
@@ -743,6 +747,32 @@ pub fn session_for(
     }
 }
 
+/// What a kilowatt-hour is worth kept, and what it earns sent away.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct Worth {
+    /// The battery's own marginal value now, ct/kWh — the dual of its state
+    /// equation in the plan in force.
+    pub battery_ct: f64,
+    /// What an exported kilowatt-hour earns now, ct/kWh.
+    pub export_ct: f64,
+}
+
+/// The battery's value and the export price in `slot`, where both are known.
+fn worth(input: &Live<'_>, slot: Slot) -> Option<Worth> {
+    let planned = input.plan?.slots.iter().find(|s| s.slot == slot)?;
+    let battery_ct = planned
+        .targets
+        .iter()
+        .find(|t| matches!(input.site.asset(&t.asset), Some(Asset::Battery(_))))?
+        .value_or(planned.marginal_eur_per_kwh)?
+        * 100.0;
+    let export_ct = input.prices?.at(slot)?.export_f64() * 100.0;
+    (battery_ct.is_finite() && export_ct.is_finite()).then_some(Worth {
+        battery_ct,
+        export_ct,
+    })
+}
+
 /// Everything the household page shows, in one document.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Home {
@@ -770,6 +800,12 @@ pub struct Home {
     /// plan carries no price.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ahead: Option<Ahead>,
+    /// The export-or-store decision, in the open: what a kilowatt-hour in the
+    /// battery is worth to this household now, against what exporting one
+    /// earns. Present only where the plan priced the battery and the export
+    /// price is known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worth: Option<Worth>,
     /// The day so far.
     pub receipt: Option<Receipt>,
     /// The car goal in force, and what it comes to.
@@ -866,6 +902,7 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         ceiling_kw: ceiling.kw(),
         minimum_kw: status.minimum.map(Power::kw),
         drawing_kw: status.netzwirksam.map(Power::kw),
+        budget_kw: status.steuve_budget.map(Power::kw),
         failsafe,
         shares: status
             .reasons
@@ -940,6 +977,7 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         devices,
         plan,
         ahead: input.plan.and_then(|p| ahead(p, now)),
+        worth: worth(input, slot),
         receipt: status.last_day.as_ref().map(receipt_of),
         goal,
         tank_goal,

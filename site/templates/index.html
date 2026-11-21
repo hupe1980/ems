@@ -62,9 +62,9 @@ $ cargo run -p hemsd -- simulate --day winter
 
   2026-01-15 — with a § 14a reduction
   …
-  electricity bill            20.64 €
-  without optimisation        22.69 €
-  saved                        1.12 €
+  electricity bill            20.50 €
+  without optimisation        22.70 €
+  saved                        1.10 €
   § 14a limit in force         90 min
   …against a minimum of       10.5 kW
   § 14a limit respected           yes
@@ -91,9 +91,10 @@ $ cargo run -p hemsd -- simulate --day winter
       <h2>One number, one sentence, and why</h2>
       <p>The box serves its own page on the household's network: what the house
       draws, the reason for every device, the cheap hours ahead, and a receipt
-      for the day against the same house without hems. It notifies a phone when
-      a reduction begins, stays awake on a wall, and prints the installer's
-      handover sheet. Every image here is the real page rendering a simulated day.</p>
+      for the day against the same house without hems. It prices a goal before
+      you set it, notifies a phone when a reduction begins, tells Home Assistant
+      the same, stays awake on a wall, and prints the installer's handover
+      sheet. Every image here is the real page rendering a simulated day.</p>
     </div>
     <figure class="screens">
       <img src="{{ get_url(path='screens/now-reduced.png') | safe }}" width="240" alt="Now: the network operator is reducing the connection and the battery carries the house" loading="lazy">
@@ -256,14 +257,14 @@ flowchart TB
           <span class="lamp"></span><span class="lamp"></span><span class="lamp"></span>
           <span class="name">hemsd simulate --day winter</span>
         </div>
-<pre><code>  electricity bill                     20.64 €
-  battery life spent                    0.63 €
-  comfort given up                      0.22 €
-  borrowed from the stores              0.09 €
-  cost of the day                      21.58 €
-  without optimisation                 22.69 €
-  saved                                 1.12 €
-  …of it on the bill                    0.66 €
+<pre><code>  electricity bill                     20.50 €
+  battery life spent                    0.58 €
+  comfort given up                      0.13 €
+  borrowed from the stores              0.39 €
+  cost of the day                      21.61 €
+  without optimisation                 22.70 €
+  saved                                 1.10 €
+  …of it on the bill                    0.83 €
 
   § 14a limit in force                  90 min
   …against a minimum of                10.5 kW
@@ -273,7 +274,7 @@ flowchart TB
   § 9 EEG ceiling respected                yes
 
   production forecast, CRPS  173 W (83 % of 30 lit)
-  load forecast, CRPS      18 W (85 % covered)</code></pre>
+  load forecast, CRPS      18 W (84 % covered)</code></pre>
       </div>
 
       <ul class="feature-list">

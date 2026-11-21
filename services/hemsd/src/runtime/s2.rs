@@ -326,7 +326,7 @@ impl Surface {
 /// box already binds.
 pub fn router(surface: Surface) -> axum::Router {
     axum::Router::new()
-        .route("/s2/{asset}", axum::routing::any(upgrade))
+        .route("/s2/{asset}", axum::routing::get(upgrade))
         .with_state(surface)
 }
 

@@ -345,10 +345,10 @@ under each policy:
 ```console
 $ just risk deadline 20
   policy                mean     worst      best    unserved     solve
-  one median           0.61€    -1.01€     1.45€       0.05€      227s
-  three futures        0.90€    -0.04€     1.48€       0.02€      700s
-  …and the tail        0.81€    -0.21€     1.46€       0.03€      688s
-  only when at risk     0.75€    -0.23€     1.45€       0.03€      814s
+  one median           0.46€    -1.19€     1.39€       0.14€      114s
+  three futures        0.84€    -0.26€     1.75€       0.03€      702s
+  …and the tail        0.78€    -0.20€     1.44€       0.02€      760s
+  only when at risk     0.67€    -0.23€     1.42€       0.02€      737s
 
   band               covered      CRPS    episodes
   production             80%      165W          20
@@ -358,15 +358,15 @@ $ just risk deadline 20
 ```
 
 Over twenty seeded weathers on each of two days, scenarios **pay where a service
-is at risk**: on the tight evening three futures save €0,90 against the median's
-€0,61, more than halve the undelivered charge, and take the worst weather from
-**−€1,01 to −€0,04** — the median plan does not merely save less on its worst
-day, it costs the household money. On an ordinary winter day they **cost
-eighteen cents** (€0,09 against −€0,09) and still lift the worst day.
+is at risk**: on the tight evening three futures save €0,84 against the median's
+€0,46, cut the undelivered charge from €0,14 to €0,03, and take the worst weather
+from **−€1,19 to −€0,26** — the median plan does not merely save less on its worst
+day, it costs the household money. On an ordinary winter day they **cost eight
+cents** (€0,14 against €0,22) and still lift the worst day.
 
 The tail is the better hedge to carry everywhere. With CVaR, the plan saves more
-than the median on **both** days — €0,81 against €0,61, €0,15 against €0,09 —
-and its worst day is better on both, at about three times the solve. `adaptive`,
+than the median on **both** days — €0,78 against €0,46, €0,28 against €0,22 —
+and its worst day is better on both, at three to five times the solve. `adaptive`,
 three futures only where a charging session is tight, is never better than the
 tail. The default is still one median; on this evidence that is a setting to
 change, not one to defend.
@@ -591,12 +591,13 @@ cent "free solar from the neighbours" implies.
 
 **The baseline joins the same community.** A household signs up and then does
 nothing about it; the key allocates it anyway. On the reference winter day that
-membership is worth **€0,88** to a household with no energy manager. What the
-planner adds on top — moving the dishwasher from +75 minutes to +15 and the heat
-pump into the neighbours' daylight — is **€0,19**, and the day settles
-**14,5 kWh** through the community from its own quarter-hour registers. Reporting
-the €0,88 as a planner saving would be the same asymmetry as measuring against a
-household that ignored the network operator.
+membership is worth **€0,21** to a household with no energy manager. What the
+planner adds on top — moving the dishwasher and the heat pump into the
+neighbours' daylight — is **€0,87**, and the day settles **11,2 kWh** through the
+community from its own quarter-hour registers, against the 1,4 kWh the member who
+does nothing is allocated. Reporting the €0,21 as a planner saving would be the
+same asymmetry as measuring against a household that ignored the network
+operator.
 
 ## What the plan carries
 

@@ -30,6 +30,13 @@ use time::{Duration, OffsetDateTime};
 use crate::forecasting::{Weather, WeatherSpec};
 use crate::site::{Household, HouseholdConfig};
 
+/// The power a household battery is typically discharged at, for a linear
+/// plan: the middle of the night loads HTW Berlin measured (160–500 W).
+pub const TYPICAL_DISCHARGE: Power = Power::new_const(400.0);
+
+/// The power a planned charge typically runs at.
+pub const TYPICAL_CHARGE: Power = Power::new_const(4_000.0);
+
 /// What a kilowatt-hour of hot water the household wanted and did not get is
 /// worth avoiding.
 ///
@@ -1909,8 +1916,14 @@ fn run_with(
                     soc_now: battery.soc(),
                     max_charge: battery.max_charge,
                     max_discharge: battery.max_discharge,
-                    efficiency_charge: battery.efficiency_charge,
-                    efficiency_discharge: battery.efficiency_discharge,
+                    // A linear plan prices a stored kilowatt-hour at one
+                    // efficiency, so it is the one at the power the house
+                    // actually draws: HTW measured night loads of 160–500 W
+                    // and 72 % of night flows under 300 W, where a datasheet's
+                    // rated-power figure overstates the round trip by ten
+                    // points (*Stromspeicher-Inspektion 2026*, p. 21–23).
+                    efficiency_charge: battery.charge_efficiency_at(TYPICAL_CHARGE),
+                    efficiency_discharge: battery.discharge_efficiency_at(TYPICAL_DISCHARGE),
                     soc_min: battery.soc_min,
                     soc_max: battery.soc_max,
                     reserve_soc: house.battery.reserve_soc,
@@ -2711,6 +2724,7 @@ fn run_with(
                     grid: Some(grid),
                     readings,
                     steuve_ceiling: limits.steuve_ceiling,
+                    steuve_budget: decision.verdict.steuve_budget,
                     minimum: Some(decision.verdict.minimum_power),
                     in_failsafe: limits.in_failsafe,
                     netzwirksam: Some(decision.verdict.netzwirksam),
@@ -3513,8 +3527,9 @@ fn baseline_cost(
             // from surplus, so it never draws through the connection point at
             // all.
             let spare = (baseline_battery.stored - baseline_battery_floor).max(Energy::ZERO);
-            let by_charge =
-                Power::new(spare.get() / hours.max(1e-9) * baseline_battery.efficiency_discharge);
+            let by_charge = Power::new(
+                spare.get() / hours.max(1e-9) * baseline_battery.discharge_efficiency_at(demand),
+            );
             -demand.min(baseline_battery.max_discharge).min(by_charge)
         };
         let battery_actual = baseline_battery.step(wanted, step);
