@@ -172,7 +172,9 @@ async fn a_steuerbox_over_tls_reduces_a_running_household() {
                     .expect("the household plays the Controllable System");
                 guard.attach(hub.engine_mut(), peer, now);
                 if let Some(limit) = required.take() {
-                    guard.require(&device, Some(limit), now);
+                    guard
+                        .require(&device, Some(limit), now)
+                        .expect("a finite, non-negative limit");
                 }
             }
             HubEvent::Spine(event) => {
@@ -184,7 +186,7 @@ async fn a_steuerbox_over_tls_reduces_a_running_household() {
         }
         for report in reports {
             if let GuardEvent::LimitAccepted { limit, .. } = report {
-                assert!((limit.watts - 4_200.0).abs() < 1.0);
+                assert!((limit.watts() - 4_200.0).abs() < 1.0);
                 accepted = true;
             }
         }

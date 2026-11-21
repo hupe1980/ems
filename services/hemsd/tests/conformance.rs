@@ -253,7 +253,9 @@ impl Wire {
             .expect("the household has been discovered")
             .device
             .clone();
-        self.guard.require(&device, Some(limit), elapsed(seconds));
+        self.guard
+            .require(&device, Some(limit), elapsed(seconds))
+            .expect("a finite, non-negative limit");
         for turn in 0..3 {
             self.advance_to(seconds + turn);
         }
@@ -266,7 +268,7 @@ impl Wire {
     /// Whether the box has answered a write since `from`.
     fn limit_accepted(&self) -> Option<f64> {
         self.answers.iter().rev().find_map(|event| match event {
-            GuardEvent::LimitAccepted { limit, .. } => Some(limit.watts),
+            GuardEvent::LimitAccepted { limit, .. } => Some(limit.watts()),
             _ => None,
         })
     }

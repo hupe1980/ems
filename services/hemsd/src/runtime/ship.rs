@@ -781,6 +781,10 @@ async fn session(
             std::time::Duration::try_from(at - now()).unwrap_or(std::time::Duration::ZERO)
         });
 
+        // `recv` is cancel-safe (eebus 0.13.1): a deadline that fires while it
+        // waits loses nothing. Before that it awaited a flush after taking a
+        // message off the socket, and a timer firing there lost the datagram —
+        // on this link, possibly the limit write the § 14a evidence is about.
         tokio::select! {
             biased;
             () = shutdown.clone().wait() => {

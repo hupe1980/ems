@@ -177,18 +177,20 @@ pub(super) async fn run(
         if let Some(device) = &attached
             && written != Some(limit.is_active)
         {
-            guard.require(device, Some(limit), now);
-            written = Some(limit.is_active);
+            match guard.require(device, Some(limit), now) {
+                Ok(()) => written = Some(limit.is_active),
+                Err(error) => tracing::warn!(%error, "the Steuerbox refused its own limit"),
+            }
         }
 
         for report in reports {
             if let GuardEvent::LimitAccepted { limit, .. } = report {
                 tracing::info!(
-                    watts = limit.watts,
+                    watts = limit.watts(),
                     active = limit.is_active,
                     "limit accepted"
                 );
-                seen.send_modify(|s| s.accepted_w = limit.is_active.then_some(limit.watts));
+                seen.send_modify(|s| s.accepted_w = limit.is_active.then_some(limit.watts()));
             }
         }
     }

@@ -39,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "agentd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "agentplane",
  "anyhow",
@@ -780,9 +780,9 @@ dependencies = [
 
 [[package]]
 name = "chronix"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b93545eaaab062710c984c4d0e8a99e5845aacf7bea9b1910d4998ec227cd1b5"
+checksum = "69215f34fb3b137061b939915609d62c52b01afed41dd268e703d1dd83a5b6e7"
 dependencies = [
  "arrow",
  "base64 0.23.1",
@@ -790,9 +790,9 @@ dependencies = [
  "chronix-encoding",
  "chronix-engine",
  "chronix-query",
- "chrono",
  "dashmap",
  "fs2",
+ "jiff",
  "metrics",
  "parking_lot",
  "parquet",
@@ -809,14 +809,13 @@ dependencies = [
 
 [[package]]
 name = "chronix-core"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a98795fe237424c2e8bbf0e767865c5fb7d2e29081133db80980ebe8bc7394e"
+checksum = "5e026b31fae9fa1047c84b8197319df83c69ca6751a780d9eec314d308676c20"
 dependencies = [
- "chrono",
- "chrono-tz",
  "dashmap",
  "fnv",
+ "jiff",
  "postcard",
  "serde",
  "thiserror 2.0.21",
@@ -826,9 +825,9 @@ dependencies = [
 
 [[package]]
 name = "chronix-encoding"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b69fd449c2e75eb36f155960d916b305bc18d5d4bb00e23ce07523941fe3ea64"
+checksum = "8b68868c2c652404ba612cf1aaa283b6b1399a69e45c25803c662bba11f7622b"
 dependencies = [
  "chronix-core",
  "pco",
@@ -837,9 +836,9 @@ dependencies = [
 
 [[package]]
 name = "chronix-engine"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0105b6b611ce28b06acf94dba58db45a2f3a9007c0bfeba6fa91205edefebcb4"
+checksum = "4e6b01b01c6c32a24c51e0a1e3e18a74af22e9ae0dc992fdcd92c4c2189bb72f"
 dependencies = [
  "aes-gcm",
  "arrow",
@@ -865,9 +864,9 @@ dependencies = [
 
 [[package]]
 name = "chronix-query"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28ba77520eccf23de1c7a49513dbb82d1fa5316b1a5cc5b55fd6f79519a543c5"
+checksum = "d9b3c66ae03a6fec91b33cfc5dc672e27672af35c0bf635125d6c724b44c00a0"
 dependencies = [
  "arrow",
  "chronix-core",
@@ -885,21 +884,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-link",
-]
-
-[[package]]
-name = "chrono-tz"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
-dependencies = [
- "chrono",
- "phf 0.12.1",
 ]
 
 [[package]]
@@ -1551,9 +1538,9 @@ dependencies = [
 
 [[package]]
 name = "eebus"
-version = "0.11.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "990ee27863af42b846391983078db28172c0d758a5cc3f25af1a8c1edd0c27bf"
+checksum = "8e3a590861b7126a1788e7687a539652b33f2f4aba3d94c4d2fdf5fd87ab3622"
 dependencies = [
  "futures-util",
  "mdns-sd",
@@ -1683,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "fleetd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1725,7 +1712,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "forecastd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1987,7 +1974,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hems-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "metering",
  "serde",
@@ -1999,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "hems-device"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hems-core",
  "serde",
@@ -2007,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "hems-drv"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "eebus",
  "hems-core",
@@ -2022,7 +2009,7 @@ dependencies = [
 
 [[package]]
 name = "hems-events"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "hmac",
@@ -2035,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "hems-flex"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hems-core",
  "hems-device",
@@ -2048,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "hems-forecast"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hems-core",
  "metering",
@@ -2061,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "hems-grid"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hems-core",
  "metering",
@@ -2073,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "hems-optimizer"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "good_lp",
  "hems-core",
@@ -2088,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "hems-realtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hems-core",
  "hems-device",
@@ -2099,7 +2086,7 @@ dependencies = [
 
 [[package]]
 name = "hems-service"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "deadpool-postgres",
@@ -2131,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "hems-sim"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hems-core",
  "serde",
@@ -2140,7 +2127,7 @@ dependencies = [
 
 [[package]]
 name = "hems-tariff"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hems-core",
  "hems-grid",
@@ -2155,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "hemsd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2228,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "histd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2579,6 +2566,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
 
 [[package]]
+name = "jiff"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed5d126d72eb017f10b302e73bdeca446bea405ee449af4d9e7866d6b082d83e"
+dependencies = [
+ "jiff-core",
+ "jiff-static",
+ "jiff-tzdb",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde_core",
+]
+
+[[package]]
+name = "jiff-core"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b46a105a9874634dd96231021526bf24ca04955a5998c59a9c7666e634b7b8"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "jiff-static"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0127e9bde3c6130d6169e7d8d68676e4be69c4bf7573c308b6f960a5089c428"
+dependencies = [
+ "jiff-core",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12e71a1b68a875a44a33bb7a1dd84392cb77145a3367a552a3cfe6a4f5cf3afc"
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2850,9 +2879,9 @@ dependencies = [
 
 [[package]]
 name = "metering"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1da563ccf392b1f489eff0cd949dfa98414c4f4535c24eb91134fd71c1e3e1e"
+checksum = "8b228d5aaf9630a880e08d8220ed812b784dfa8d3264a07ee3691162f9e57054"
 dependencies = [
  "rust_decimal",
  "serde",
@@ -3020,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "obsd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3179,15 +3208,6 @@ dependencies = [
 
 [[package]]
 name = "phf"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
-dependencies = [
- "phf_shared 0.12.1",
-]
-
-[[package]]
-name = "phf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
@@ -3221,15 +3241,6 @@ name = "phf_shared"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
-dependencies = [
- "siphasher",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
 dependencies = [
  "siphasher",
 ]
@@ -4525,7 +4536,7 @@ dependencies = [
 
 [[package]]
 name = "tariffd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5599,7 +5610,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "hems-events",

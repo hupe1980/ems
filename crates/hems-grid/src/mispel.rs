@@ -51,11 +51,12 @@ use std::collections::BTreeSet;
 
 use hems_core::prelude::Slot;
 use metering::eeg::EegError;
+use metering::eeg::mispel::geltung::{self as mg, Optionsart, Umstaende};
 use metering::eeg::mispel::{Einspeisung, Gate, abgrenzung as ma, pauschal as mp};
 use metering::{DayBoundary, MeterInterval, QualityFlag, Resolution, Series};
 use rust_decimal::Decimal;
 use thiserror::Error;
-use time::{Date, Month, OffsetDateTime};
+use time::{Date, OffsetDateTime};
 
 /// The storage round-trip efficiency the Festlegung *presumes* wherever a charge
 /// point makes a measured one impossible, `[MiSpeL A1 (14)]` for A2–A4.
@@ -100,11 +101,12 @@ impl RuleSet {
         }
     }
 
-    /// The day these rules take effect, `[MiSpeL Tenor 8]`.
+    /// The day these rules take effect, `[MiSpeL Tenor 8]` — `metering`'s
+    /// [`mg::WIRKSAM_AB`], held there to the Amtsblatt notice.
     #[must_use]
     pub const fn effective_from(self) -> Date {
         match self {
-            RuleSet::Festlegung20261001 => time::macros::date!(2026 - 10 - 21),
+            RuleSet::Festlegung20261001 => mg::WIRKSAM_AB,
         }
     }
 
@@ -119,7 +121,7 @@ impl RuleSet {
     #[must_use]
     pub const fn consent_required_until(self) -> Option<Date> {
         match self {
-            RuleSet::Festlegung20261001 => Some(time::macros::date!(2027 - 09 - 30)),
+            RuleSet::Festlegung20261001 => Some(mg::EINVERSTAENDNIS_BIS),
         }
     }
 
@@ -128,8 +130,20 @@ impl RuleSet {
     /// month, `[MiSpeL Tenor 9]` b). `None` while there is no approval.
     #[must_use]
     pub fn pauschal_applicable_from(self, approved_on: Option<Date>) -> Option<Date> {
-        // Never before the Festlegung itself took effect.
-        first_of_next_month(approved_on?).map(|d| d.max(self.effective_from()))
+        // `metering`'s `geltung`, asked with the consent condition met so that
+        // only Tenorziffer 8 and 9 b decide: never before the Festlegung itself
+        // took effect, and refused rather than dated without an approval.
+        match self {
+            RuleSet::Festlegung20261001 => mg::geltung(
+                Optionsart::Pauschal,
+                Umstaende {
+                    einverstaendnis: true,
+                    genehmigung: Some(approved_on?),
+                },
+            )
+            .ok()
+            .map(|g| g.ab),
+        }
     }
 }
 
@@ -137,14 +151,6 @@ impl fmt::Display for RuleSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.version())
     }
-}
-
-fn first_of_next_month(day: Date) -> Option<Date> {
-    let (year, month) = match day.month() {
-        Month::December => (day.year() + 1, Month::January),
-        m => (day.year(), m.next()),
-    };
-    Date::from_calendar_date(year, month, 1).ok()
 }
 
 // ── The governed window ─────────────────────────────────────────────────────
@@ -960,20 +966,15 @@ pub fn pauschal_period(
         zeitraum,
     }
     .jahr()?;
-    let (support_cap, indifference_band, settlement_threshold, rumpfjahr) = match &jahr.rumpfjahr {
-        Some(r) => (
-            r.p1,
-            r.p3,
-            r.p4,
-            Some(RumpfjahrDays {
-                first: r.erster_tag,
-                last: r.letzter_tag,
-                days: r.tr,
-                summer_days: r.trs,
-            }),
-        ),
-        None => (jahr.grenzen.p1, jahr.grenzen.p3, jahr.grenzen.p4, None),
-    };
+    // The limits that apply — the Rumpfjahr's in a Rumpfjahr — as `metering`
+    // states them; `kalenderjahr` holds the whole year's.
+    let (support_cap, indifference_band, settlement_threshold) = (jahr.p1, jahr.p3, jahr.p4);
+    let rumpfjahr = jahr.rumpfjahr.as_ref().map(|r| RumpfjahrDays {
+        first: r.erster_tag,
+        last: r.letzter_tag,
+        days: r.tr,
+        summer_days: r.trs,
+    });
     let feed_in_when_supported = jahr.anlagen.iter().map(|a| a.p14).sum();
 
     Ok(Pauschal {

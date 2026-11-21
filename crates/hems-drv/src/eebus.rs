@@ -318,7 +318,7 @@ impl Lpc {
     pub fn ceiling(&self) -> Option<Power> {
         match self.actor.system().effective_limit() {
             EffectiveLimit::None => None,
-            EffectiveLimit::Active(w) | EffectiveLimit::Failsafe(w) => Some(Power::new(w)),
+            EffectiveLimit::Active(w) | EffectiveLimit::Failsafe(w) => Some(watts(w)),
         }
     }
 
@@ -517,7 +517,7 @@ impl Lpc {
         };
         self.events.push(DriverEvent::Failsafe(crate::Failsafe {
             direction: self.which.direction(),
-            power: Power::new(config.failsafe_watts),
+            power: watts(config.failsafe),
             minimum,
             at: self.started_at + elapsed,
         }));
@@ -614,11 +614,11 @@ impl Lpc {
         self.last_reported = Some(current);
         let (ceiling, source) = match current {
             EffectiveLimit::None => (None, LimitSource::Operator),
-            EffectiveLimit::Active(w) => (Some(Power::new(w)), LimitSource::Operator),
+            EffectiveLimit::Active(w) => (Some(watts(w)), LimitSource::Operator),
             // Not the operator asking: the household restraining itself because
             // nobody is talking to it. The two look identical at the connection
             // point and are entirely different events in the evidence record.
-            EffectiveLimit::Failsafe(w) => (Some(Power::new(w)), LimitSource::Failsafe),
+            EffectiveLimit::Failsafe(w) => (Some(watts(w)), LimitSource::Failsafe),
         };
         self.events.push(DriverEvent::GridLimit(GridLimit {
             direction: self.which.direction(),
@@ -917,6 +917,16 @@ pub(crate) fn taken_at(
         }
         None => arrived,
     }
+}
+
+/// A limit `eebus` holds exactly, as the `f64` power the control path works in.
+///
+/// `eebus` refuses a limit no `f64` can hold before it is in force, so this is
+/// total in practice. Where it is not, nothing is the safe reading: the guard
+/// obeys a ceiling below the § 14a minimum and reports it as such, while a
+/// missing ceiling would let every device draw what it likes.
+fn watts(value: eebus::model::ScaledNumber) -> Power {
+    Power::new(value.to_f64().unwrap_or(0.0))
 }
 
 #[cfg(test)]

@@ -331,7 +331,8 @@ fn a_steuerbox_discovers_the_box_and_writes_a_limit_that_reaches_the_guard() {
         .device
         .clone();
     wire.guard
-        .require(&device, Some(LimitWrite::active(4_200.0)), elapsed(62));
+        .require(&device, Some(LimitWrite::active(4_200.0)), elapsed(62))
+        .expect("a finite, non-negative limit");
     wire.tick(62);
     wire.tick(63);
 
@@ -399,7 +400,8 @@ fn a_dropped_session_does_not_by_itself_restrain_the_household() {
         .device
         .clone();
     wire.guard
-        .require(&device, Some(LimitWrite::active(4_200.0)), elapsed(62));
+        .require(&device, Some(LimitWrite::active(4_200.0)), elapsed(62))
+        .expect("a finite, non-negative limit");
     wire.tick(62);
     wire.tick(63);
     assert_eq!(

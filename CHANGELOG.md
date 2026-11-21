@@ -7,6 +7,34 @@ break anything, and says so here.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-21
+
+Three sibling crates move, and one of them closes a defect on the § 14a link.
+
+### Changed — breaking
+
+- `hems-drv` re-exports `eebus` 0.13: `LimitWrite::watts` is a method, a
+  limit and the failsafe value are the exact `ScaledNumber` the Steuerbox
+  sent, and `require` returns a `Result`.
+
+### Changed
+
+- `eebus` 0.13.1: limits are written and read to three decimals rather than
+  whole watts; a limit the virtual house's Steuerbox could not write is
+  logged rather than recorded as sent.
+- `metering` 0.26: MiSpeL's effect date, consent deadline and state-aid month
+  come from `metering::eeg::mispel::geltung`, and a Pauschal year's limits
+  from the figures `metering` applies.
+- `chronix` 0.9: one time library (`jiff`); `chrono-tz` and RUSTSEC-2026-0555
+  are gone from the tree.
+
+### Fixed
+
+- The box's SHIP session could lose an incoming SPINE datagram — possibly the
+  Steuerbox's limit write — when its failsafe deadline fired while a reply
+  waited on a peer that had stopped reading. `eebus` 0.13.1 makes `recv`
+  cancel-safe, and hems requires it.
+
 ## [0.4.0] — 2026-11-20
 
 The box speaks first: it notifies, hangs on a wall, hands over on paper, and
@@ -182,6 +210,7 @@ hardware.
 - `rmcp` 3.11 (RUSTSEC-2026-0457, -0461) and `ctutils` 0.4.8 (RUSTSEC-2026-0385).
 - Every override and S2 instruction is logged with the credential that made it.
 
-[Unreleased]: https://github.com/hupe1980/hems/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hupe1980/hems/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hupe1980/hems/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hupe1980/hems/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hupe1980/hems/releases/tag/v0.3.0
