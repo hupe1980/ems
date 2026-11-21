@@ -178,6 +178,7 @@ A webhook trigger needs no integration. Home Assistant cannot check the
 signature without a template, so the webhook id is the secret: make it long
 and random, and keep `local_only`.
 
+{% raw %}
 ```yaml
 automation:
   - alias: "hems: the network operator reduces the connection"
@@ -197,6 +198,7 @@ automation:
             Reduced to {{ (trigger.json.data.limit_w / 1000) | round(1) }} kW;
             {{ (trigger.json.data.minimum_w / 1000) | round(1) }} kW stay guaranteed.
 ```
+{% endraw %}
 
 ## A commissioning record a field-service tool can verify
 
