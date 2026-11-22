@@ -278,11 +278,11 @@ enum Risk {
 
 impl Risk {
     /// The starting policy, before any re-solve.
-    fn model(self) -> hems_optimizer::Risk {
+    fn model(self) -> ems_optimizer::Risk {
         match self {
-            Risk::Median | Risk::Adaptive => hems_optimizer::Risk::deterministic(),
-            Risk::Expected => hems_optimizer::Risk::expected(),
-            Risk::Hedged => hems_optimizer::Risk::hedged(),
+            Risk::Median | Risk::Adaptive => ems_optimizer::Risk::deterministic(),
+            Risk::Expected => ems_optimizer::Risk::expected(),
+            Risk::Hedged => ems_optimizer::Risk::hedged(),
         }
     }
 
@@ -333,9 +333,9 @@ fn clock(minutes: u16) -> String {
 /// is never told about a reduction, which is the failure this daemon exists to
 /// make impossible.
 async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result<()> {
-    let settings: hemsd::Settings = hems_service::load(config, "HEMS_HEMSD")?;
-    hems_service::init_tracing(
-        hems_service::identity!(),
+    let settings: hemsd::Settings = ems_service::load(config, "HEMS_HEMSD")?;
+    ems_service::init_tracing(
+        ems_service::identity!(),
         &settings.service.log_filter,
         settings.service.log_json,
     );
@@ -383,9 +383,9 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
         }
         let now = time::OffsetDateTime::now_utc();
         let modes = std::collections::BTreeMap::new();
-        let described = hems_flex::describe_site(
+        let described = ems_flex::describe_site(
             &running.household.site,
-            &hems_flex::DescribeContext::new(now, now + time::Duration::hours(24), &modes),
+            &ems_flex::DescribeContext::new(now, now + time::Duration::hours(24), &modes),
         );
         println!(
             "✅ {} assets, {} drivers, {} resources described in S2{}",
@@ -420,10 +420,10 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
         return Ok(());
     }
 
-    let (signal, trigger) = hems_service::Shutdown::channel();
-    tokio::spawn(hems_service::shutdown::on_signal(trigger));
+    let (signal, trigger) = ems_service::Shutdown::channel();
+    tokio::spawn(ems_service::shutdown::on_signal(trigger));
 
-    let health = hems_service::Health::new();
+    let health = ems_service::Health::new();
     // Not ready until a driver has actually been heard from. A box that reported
     // itself ready while every device was silent would be reporting that the
     // *process* was up, which is what liveness is for.
@@ -521,8 +521,8 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
         https.is_some(),
     );
 
-    let server = hems_service::Server::new(
-        hems_service::identity!(),
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
         settings.service.clone(),
         health,
         router,
@@ -634,7 +634,7 @@ async fn main() -> anyhow::Result<()> {
                 // itself has been in since 2024 on both sides of the comparison,
                 // so § 51's negative quarter hours are held constant and what
                 // moves is the 60 % cap alone.
-                pv.para9.relief = hems_core::prelude::CapRelief::ImsysWithControl;
+                pv.para9.relief = ems_core::prelude::CapRelief::ImsysWithControl;
             }
             let mut scenario = scenario_for(day, config);
             if perfect_foresight {
@@ -654,7 +654,7 @@ async fn main() -> anyhow::Result<()> {
                     scenario
                         .config
                         .pv
-                        .map_or(hems_core::prelude::Power::ZERO, |pv| pv.kwp)
+                        .map_or(ems_core::prelude::Power::ZERO, |pv| pv.kwp)
                         * 3.0,
                 ));
                 // And on a day the rule reaches. § 42c Abs. 4 Nr. 1 obliges a
@@ -668,7 +668,7 @@ async fn main() -> anyhow::Result<()> {
                 if scenario.date != before {
                     println!(
                         "  § 42c reaches this household from {}, so the same day runs on {}",
-                        hems_grid::sharing::SHARING_START,
+                        ems_grid::sharing::SHARING_START,
                         scenario.date
                     );
                 }
@@ -702,7 +702,7 @@ async fn main() -> anyhow::Result<()> {
                     // defaults are the only trust decision available here: the
                     // platform's own store. A box on a wall reads its own
                     // `[service.http]` and may pin instead.
-                    &hems_service::HttpSettings::default(),
+                    &ems_service::HttpSettings::default(),
                     secret.as_bytes(),
                     &site,
                     &result.kpis(&site, scenario.date),
@@ -848,16 +848,16 @@ fn record_day(
 /// de-duplicates on the same string the signature covers.
 async fn report_day(
     url: &str,
-    http: &hems_service::HttpSettings,
+    http: &ems_service::HttpSettings,
     secret: &[u8],
     site: &str,
-    kpis: &hems_core::report::DayKpis,
+    kpis: &ems_core::report::DayKpis,
     store: Option<&std::path::Path>,
     now: time::OffsetDateTime,
 ) -> anyhow::Result<()> {
-    let event = hems_events::Event::new(
-        hems_events::SITE_DAY_REPORTED,
-        format!("hems://sites/{site}"),
+    let event = ems_events::Event::new(
+        ems_events::SITE_DAY_REPORTED,
+        format!("ems://sites/{site}"),
         format!("{site}:{}", kpis.date),
         now,
         kpis,
@@ -877,12 +877,12 @@ async fn report_day(
     let queued = match store {
         Some(path) => {
             let mut store = hemsd::store::Store::open(path)?;
-            Some(store.queue_event(&event.id, hems_events::SITE_DAY_REPORTED, &body, now)?)
+            Some(store.queue_event(&event.id, ems_events::SITE_DAY_REPORTED, &body, now)?)
         }
         None => None,
     };
 
-    let signature = hems_events::webhook::sign(secret, &event.id, now, &body);
+    let signature = ems_events::webhook::sign(secret, &event.id, now, &body);
     match hemsd::report::post_event(&endpoint, http, body, &signature.headers()).await {
         Ok(status) if (200..300).contains(&status) => {
             println!("\n  reported to {endpoint} — HTTP {status}");
@@ -1000,8 +1000,8 @@ async fn house(args: HouseArgs) -> anyhow::Result<()> {
 
     // SIGTERM as well as Ctrl-C: a house under a service manager or in a
     // container is stopped the way every other daemon here is.
-    let (stop, trigger) = hems_service::Shutdown::channel();
-    tokio::spawn(hems_service::shutdown::on_signal(trigger));
+    let (stop, trigger) = ems_service::Shutdown::channel();
+    tokio::spawn(ems_service::shutdown::on_signal(trigger));
     let report = async {
         let mut every = tokio::time::interval(std::time::Duration::from_secs(10));
         loop {
@@ -1089,7 +1089,7 @@ fn print_backtest(scenario: &Scenario, s: &hemsd::Spread) {
         "  {}\n",
         if s.is_well_calibrated() {
             "calibrated — over enough independent days to say so."
-        } else if s.pv_forecast.episodes < hems_forecast::CALIBRATION_DAYS {
+        } else if s.pv_forecast.episodes < ems_forecast::CALIBRATION_DAYS {
             "too few days to call it either way — try --days 20."
         } else {
             "not calibrated: the plan is hedging against a future of the wrong width."
@@ -1143,7 +1143,7 @@ fn print_risk(scenario: &Scenario, rows: &[(&str, hemsd::Spread)]) {
             "\n  a 10–90 band should cover 80 %. {}",
             if s.is_well_calibrated() {
                 "It does, over enough days to say so."
-            } else if pv.episodes < hems_forecast::CALIBRATION_DAYS {
+            } else if pv.episodes < ems_forecast::CALIBRATION_DAYS {
                 "Too few days to say — run --days 20."
             } else {
                 "It does not: the plan is hedging against a future that is the \

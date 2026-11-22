@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use hems_core::prelude::{Asset, AssetId, Site};
+use ems_core::prelude::{Asset, AssetId, Site};
 use hemsd::drivers::Registry;
 use hemsd::runtime::access::LocalAccess;
 use hemsd::runtime::api::{HomeSources, Local};
@@ -83,12 +83,12 @@ async fn a_box() -> (String, LocalAccess) {
 }
 
 /// The box serving HTTPS the way `main` does: `runtime::tls`'s certificate
-/// through `hems_service::Server::with_tls`.
+/// through `ems_service::Server::with_tls`.
 struct TlsBox {
     port: u16,
     fingerprint: String,
     site: Site,
-    _stop: hems_service::shutdown::ShutdownTrigger,
+    _stop: ems_service::shutdown::ShutdownTrigger,
 }
 
 async fn a_box_over_tls() -> TlsBox {
@@ -101,16 +101,16 @@ async fn a_box_over_tls() -> TlsBox {
         .and_then(|l| l.local_addr())
         .expect("a port")
         .port();
-    let settings = hems_service::Settings {
+    let settings = ems_service::Settings {
         listen: std::net::SocketAddr::from(([127, 0, 0, 1], port)),
         shutdown_grace_s: 1,
-        ..hems_service::Settings::default()
+        ..ems_service::Settings::default()
     };
-    let (signal, trigger) = hems_service::Shutdown::channel();
-    let server = hems_service::Server::new(
-        hems_service::identity!(),
+    let (signal, trigger) = ems_service::Shutdown::channel();
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
         settings,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         router,
     )
     .with_tls(config);
@@ -428,10 +428,10 @@ async fn the_handover_sheet_states_what_the_operators_registration_asks_for() {
     let site = hemsd::Household::build(&hemsd::HouseholdConfig::default())
         .expect("the reference household")
         .site;
-    let classified = hems_grid::classify_at(&site.assets, time::OffsetDateTime::now_utc());
+    let classified = ems_grid::classify_at(&site.assets, time::OffsetDateTime::now_utc());
     let expected =
-        hems_grid::para14a::minimum_power(&classified, hems_grid::para14a::ControlMode::Ems)
-            .max(hems_grid::para14a::MINDESTLEISTUNG)
+        ems_grid::para14a::minimum_power(&classified, ems_grid::para14a::ControlMode::Ems)
+            .max(ems_grid::para14a::MINDESTLEISTUNG)
             .get();
     assert_eq!(sheet["minimum_w"].as_f64(), Some(expected));
 
@@ -817,7 +817,7 @@ async fn every_refusal_is_a_problem_document() {
         assert!(
             problem["type"]
                 .as_str()
-                .is_some_and(|t| t.starts_with("https://hupe1980.github.io/hems/docs/api/#")),
+                .is_some_and(|t| t.starts_with("https://hupe1980.github.io/ems/docs/api/#")),
             "{what}: {problem}"
         );
         assert!(

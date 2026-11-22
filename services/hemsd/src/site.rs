@@ -1,15 +1,15 @@
 //! Building the household the daemon manages.
 
-use hems_core::asset::{
+use ems_core::asset::{
     AssetMeta, Battery, Capabilities, DhwTank, Evse, FlexibleLoad, HeatPump, HeatPumpControl,
     LegacyStatus, LoadKind, Programme, PvArray, SteuVeExemption,
 };
-use hems_core::prelude::*;
-use hems_optimizer::model::{PlanningLimits, SteuVeDevices, TimedLimit};
-use hems_optimizer::solve::AssetNames;
-use hems_realtime::guard::GridLimits;
-use hems_tariff::levies::Levies;
-use hems_tariff::tariff::{EnergyPrice, FeedIn, NetworkCharge, Tariff};
+use ems_core::prelude::*;
+use ems_optimizer::model::{PlanningLimits, SteuVeDevices, TimedLimit};
+use ems_optimizer::solve::AssetNames;
+use ems_realtime::guard::GridLimits;
+use ems_tariff::levies::Levies;
+use ems_tariff::tariff::{EnergyPrice, FeedIn, NetworkCharge, Tariff};
 use rust_decimal::Decimal;
 use std::collections::BTreeMap;
 use time::OffsetDateTime;
@@ -217,8 +217,8 @@ pub struct Declared {
     ///
     /// `None` leaves the device **in** the § 14a group (`[A1 3.1.b]`, the safe
     /// direction there) and **outside** every § 9 EEG limitation (the safe
-    /// direction here) — see `hems_grid::para14a::participation` and
-    /// `hems_grid::para9::GenerationProfile::statutory_limit`.
+    /// direction here) — see `ems_grid::para14a::participation` and
+    /// `ems_grid::para9::GenerationProfile::statutory_limit`.
     pub commissioned_at: Option<time::Date>,
     /// What the device brings with it from before 2024, `[A1 10]`.
     pub legacy_status: LegacyStatus,
@@ -280,7 +280,7 @@ pub struct HouseholdConfig {
     pub connection: ConnectionConfig,
     /// Which house this is, thermally, until the box has identified its own.
     ///
-    /// The prior `hems_forecast::building::Record` starts from. It changes the
+    /// The prior `ems_forecast::building::Record` starts from. It changes the
     /// **shape** of a heating plan rather than its inputs: the fabric capacity
     /// decides whether pre-heating into a cheap hour pays at all, and it differs
     /// by a factor of five across the archetypes.
@@ -635,9 +635,9 @@ fn assets_of(
             // part-load curve at the power the house actually draws — a 400-W
             // night, a 4-kW charge — and not a datasheet's rated 95 %, which
             // overstates a night's round trip by ten points.
-            efficiency_charge: hems_sim::BatterySim::new(battery.kwh, battery.power)
+            efficiency_charge: ems_sim::BatterySim::new(battery.kwh, battery.power)
                 .charge_efficiency_at(crate::scenario::TYPICAL_CHARGE),
-            efficiency_discharge: hems_sim::BatterySim::new(battery.kwh, battery.power)
+            efficiency_discharge: ems_sim::BatterySim::new(battery.kwh, battery.power)
                 .discharge_efficiency_at(crate::scenario::TYPICAL_DISCHARGE),
             soc_min: Soc::new(0.05)?,
             soc_max: Soc::FULL,
@@ -724,7 +724,7 @@ fn assets_of(
 /// It measures and nothing else. A meter is not a device the arbiter may
 /// command, and the capability set is what says so.
 fn grid_meter(circuit: &CircuitId, fuse: Current) -> anyhow::Result<Asset> {
-    Ok(Asset::Meter(hems_core::asset::Meter {
+    Ok(Asset::Meter(ems_core::asset::Meter {
         meta: AssetMeta::new(
             AssetId::new("netzanschluss-zaehler")?,
             circuit.clone(),
@@ -733,7 +733,7 @@ fn grid_meter(circuit: &CircuitId, fuse: Current) -> anyhow::Result<Asset> {
             Power::new(fuse.get() * 230.0 * 3.0),
         )
         .with_capabilities(Capabilities::MEASURE),
-        role: hems_core::asset::MeterRole::GridConnection,
+        role: ems_core::asset::MeterRole::GridConnection,
         subject: None,
     }))
 }
@@ -816,7 +816,7 @@ pub fn planning_limits(
         // `[A1 4.4.a]`, and may not take any of them below the minimum of
         // `[A1 4.5.1]`. The plan is unaffected — this bounds the comparison, not
         // the optimisation.
-        .with_direct_control_ceiling(hems_grid::para14a::MINDESTLEISTUNG);
+        .with_direct_control_ceiling(ems_grid::para14a::MINDESTLEISTUNG);
     if let Some(ceiling) = limits.steuve_ceiling {
         planning = planning.with_steuve(match ends_at {
             Some(end) => TimedLimit::until(ceiling, Slot::containing(end)),
@@ -830,7 +830,7 @@ pub fn planning_limits(
     // `site_feed_in_ceiling` folds the reported limit in and returns the
     // strictest, so an operator asking for less is still what binds.
     let feed_in =
-        hems_grid::para9::site_feed_in_ceiling(site, limits.mgcp_factor, limits.feed_in_ceiling)
+        ems_grid::para9::site_feed_in_ceiling(site, limits.mgcp_factor, limits.feed_in_ceiling)
             .map(|(p, _)| p)
             .or(limits.feed_in_ceiling);
     if let Some(ceiling) = feed_in {
@@ -840,7 +840,7 @@ pub fn planning_limits(
 }
 
 fn steuve_devices(site: &Site, now: OffsetDateTime) -> SteuVeDevices {
-    let classified = hems_grid::classify_at(&site.assets, now);
+    let classified = ems_grid::classify_at(&site.assets, now);
     let has = |fallgruppe| classified.iter().any(|s| s.fallgruppe == fallgruppe);
     SteuVeDevices {
         battery: has(Fallgruppe::Stromspeicher),
@@ -852,7 +852,7 @@ fn steuve_devices(site: &Site, now: OffsetDateTime) -> SteuVeDevices {
 /// The § 14a network-charge modules this household could choose between.
 ///
 /// The first is the reference — what it is on today — and the rest are what
-/// [`hems_tariff::compare_moduls`] prices against it.
+/// [`ems_tariff::compare_moduls`] prices against it.
 ///
 /// **Modul 3 appears only where the household has a calendar.** It is not a
 /// module anybody can be advised into in the abstract: its value is the shape of
@@ -863,14 +863,14 @@ fn steuve_devices(site: &Site, now: OffsetDateTime) -> SteuVeDevices {
 /// making, because shifting out of the Hochtarif is the one flexibility a
 /// household knows about a year in advance.
 #[must_use]
-pub fn modul_choices(current: &Tariff) -> Vec<hems_tariff::ModulChoice> {
+pub fn modul_choices(current: &Tariff) -> Vec<ems_tariff::ModulChoice> {
     let arbeitspreis = Decimal::new(1000, 2);
     let mut choices = vec![
-        hems_tariff::ModulChoice {
+        ems_tariff::ModulChoice {
             label: "Modul 1".into(),
             tariff: current.clone(),
         },
-        hems_tariff::ModulChoice {
+        ems_tariff::ModulChoice {
             label: "Modul 2".into(),
             tariff: Tariff {
                 network: NetworkCharge::Modul2 {
@@ -882,7 +882,7 @@ pub fn modul_choices(current: &Tariff) -> Vec<hems_tariff::ModulChoice> {
                 ..current.clone()
             },
         },
-        hems_tariff::ModulChoice {
+        ems_tariff::ModulChoice {
             label: "no module".into(),
             tariff: Tariff {
                 network: NetworkCharge::None { arbeitspreis },
@@ -896,12 +896,12 @@ pub fn modul_choices(current: &Tariff) -> Vec<hems_tariff::ModulChoice> {
     if let NetworkCharge::Modul3 { .. } = &current.network {
         choices.insert(
             0,
-            hems_tariff::ModulChoice {
+            ems_tariff::ModulChoice {
                 label: "Modul 3".into(),
                 tariff: current.clone(),
             },
         );
-        choices[1] = hems_tariff::ModulChoice {
+        choices[1] = ems_tariff::ModulChoice {
             label: "Modul 1".into(),
             tariff: Tariff {
                 network: NetworkCharge::Modul1 {
@@ -947,9 +947,9 @@ pub fn tariff_for(site: &Site, prices_ct: &[i64], horizon: Horizon) -> Tariff {
         // household roof is the first of January after its intelligent metering
         // system goes in, and not before (§ 51 Abs. 2 Nr. 1).
         feed_in: FeedIn::eeg(Decimal::new(786, 2)).under_para51_from(
-            hems_grid::para9::GenerationProfile::of_site(site)
+            ems_grid::para9::GenerationProfile::of_site(site)
                 .as_ref()
-                .and_then(hems_grid::para9::para51_applies_from),
+                .and_then(ems_grid::para9::para51_applies_from),
         ),
         sharing: None,
         carbon_g_per_kwh: german_grid_intensity(horizon),
@@ -966,7 +966,7 @@ pub fn tariff_for(site: &Site, prices_ct: &[i64], horizon: Horizon) -> Tariff {
 /// premium does**, because a constant intensity times a price is a constant
 /// adder on every imported kilowatt-hour. Two dials, one behaviour, and no way
 /// to tell whether either works. That was the state of this workspace for four
-/// versions: `hems-tariff::source::energy_charts_co2` parsed this series,
+/// versions: `ems-tariff::source::energy_charts_co2` parsed this series,
 /// nothing consumed it, and `SlotPrice::co2_g_per_kwh` was hard-coded `None`.
 ///
 /// # The shape, and why it is not the price curve

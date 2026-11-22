@@ -167,13 +167,13 @@ pub fn day(scenario: &Scenario, r: &DayResult) -> String {
             &mut out,
             "roof, is it still the roof it was",
             match r.roof_health {
-                hems_forecast::Health::Learning { days } => {
-                    format!("learning, {days}/{}", hems_forecast::health::SETTLED_DAYS)
+                ems_forecast::Health::Learning { days } => {
+                    format!("learning, {days}/{}", ems_forecast::health::SETTLED_DAYS)
                 }
-                hems_forecast::Health::Healthy { recent, baseline } => {
+                ems_forecast::Health::Healthy { recent, baseline } => {
                     format!("yes, {:.0} % of {:.0} %", recent * 100.0, baseline * 100.0)
                 }
-                hems_forecast::Health::Degraded {
+                ems_forecast::Health::Degraded {
                     recent,
                     baseline,
                     days,
@@ -227,9 +227,9 @@ pub fn day(scenario: &Scenario, r: &DayResult) -> String {
             format!(
                 "H25, {} ({:.0} % of the day)",
                 match basis {
-                    hems_forecast::PriorBasis::Declared => "your declared consumption",
-                    hems_forecast::PriorBasis::Fitted => "fitted to your own days",
-                    hems_forecast::PriorBasis::Anchored => "anchored on one reading",
+                    ems_forecast::PriorBasis::Declared => "your declared consumption",
+                    ems_forecast::PriorBasis::Fitted => "fitted to your own days",
+                    ems_forecast::PriorBasis::Anchored => "anchored on one reading",
                 },
                 r.load_prior_share * 100.0
             ),

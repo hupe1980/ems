@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::poller::Run;
-use hems_core::prelude::Power;
-use hems_service::mcp::{McpAuth, rfc3339};
+use ems_core::prelude::Power;
+use ems_service::mcp::{McpAuth, rfc3339};
 use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -173,7 +173,7 @@ impl Handler {
         let Some(run) = runs.get(&p.location) else {
             return Ok(not_found(&p.location));
         };
-        let model = hems_forecast::ArrayModel::new(
+        let model = ems_forecast::ArrayModel::new(
             Power::from_kw(p.kwp),
             Power::from_kw(p.ac_kw.unwrap_or(p.kwp * 0.8)),
             p.tilt.unwrap_or(35.0),
@@ -294,5 +294,5 @@ pub fn router(
     auth: McpAuth,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
-    hems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
+    ems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
 }

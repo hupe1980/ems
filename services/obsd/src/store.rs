@@ -14,9 +14,9 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::report::DayKpis;
-use hems_service::SiteScope;
-use hems_service::db::{Db, Migration};
+use ems_core::report::DayKpis;
+use ems_service::SiteScope;
+use ems_service::db::{Db, Migration};
 use thiserror::Error;
 use time::{Date, OffsetDateTime};
 

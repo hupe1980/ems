@@ -12,11 +12,11 @@ pub struct Settings {
     /// them. The environment override is unaffected either way — it goes through
     /// `AsMut<Settings>` rather than through the file's shape.
     #[serde(default)]
-    pub service: hems_service::Settings,
+    pub service: ems_service::Settings,
     /// How many days of reports to keep per site.
     ///
     /// Sixty: two months is long enough for a calibration figure to be
-    /// answerable ([`hems_forecast::CALIBRATION_DAYS`] is twenty) and short
+    /// answerable ([`ems_forecast::CALIBRATION_DAYS`] is twenty) and short
     /// enough that a fleet of ten thousand sites is a few tens of megabytes.
     /// The *record* is `histd`'s; this is a window — and now a window the
     /// retention sweep enforces with a `DELETE` rather than a `while` loop over
@@ -29,7 +29,7 @@ pub struct Settings {
     /// respect a network operator's reduction**; in memory that list did not
     /// survive a restart and could not be replicated (D157).
     #[serde(default)]
-    pub database: hems_service::DbSettings,
+    pub database: ems_service::DbSettings,
     /// How long after a site's last report it counts as silent, seconds.
     ///
     /// A box reports once a day, so two days is a box that has missed one and
@@ -47,7 +47,7 @@ pub struct Settings {
     /// The list per site is rotation, which is the reason a signature scheme has
     /// a version prefix: an operator publishes a new secret, both are accepted
     /// for a window, the old one is withdrawn. Order does not matter —
-    /// [`hems_events::webhook::verify`] tries all of them without
+    /// [`ems_events::webhook::verify`] tries all of them without
     /// short-circuiting, so how long a check takes says nothing about which one
     /// is live.
     ///
@@ -56,10 +56,10 @@ pub struct Settings {
     /// write endpoint onto that same list, and the deployment where somebody
     /// forgot the environment variable is exactly the one nobody would notice.
     ///
-    /// Each is a [`hems_service::Secret`], so the usual deployment writes
+    /// Each is a [`ems_service::Secret`], so the usual deployment writes
     /// `haus-1 = ["env:HEMS_OBSD_SECRET_HAUS_1"]` and the credential never
     /// enters the configuration file at all.
-    pub webhook_secrets: std::collections::BTreeMap<String, Vec<hems_service::Secret>>,
+    pub webhook_secrets: std::collections::BTreeMap<String, Vec<ems_service::Secret>>,
     /// Tokens that may **read** the fleet view.
     ///
     /// `/v1/fleet` and `/v1/sites/{site}` carry what every household spent,
@@ -82,7 +82,7 @@ pub struct Settings {
     pub tenants: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// The operator credentials, each scoped to a tenant.
     #[serde(default)]
-    pub operators: Vec<hems_service::OperatorCredential>,
+    pub operators: Vec<ems_service::OperatorCredential>,
     /// How far a report's signing timestamp may be from this service's clock,
     /// seconds.
     ///
@@ -95,29 +95,29 @@ pub struct Settings {
     /// switched on and the surface answers as whatever authority that token
     /// already carries here — an operator, or one site.
     #[serde(default)]
-    pub mcp: hems_service::McpSettings,
+    pub mcp: ems_service::McpSettings,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            service: hems_service::Settings::default(),
+            service: ems_service::Settings::default(),
             keep_days: 60,
-            database: hems_service::DbSettings::default(),
+            database: ems_service::DbSettings::default(),
             silent_after_s: 2 * 24 * 3600,
             webhook_secrets: std::collections::BTreeMap::new(),
             tenants: std::collections::BTreeMap::new(),
             operators: Vec::new(),
-            webhook_tolerance_s: hems_events::webhook::DEFAULT_TOLERANCE
+            webhook_tolerance_s: ems_events::webhook::DEFAULT_TOLERANCE
                 .whole_seconds()
                 .unsigned_abs(),
-            mcp: hems_service::McpSettings::default(),
+            mcp: ems_service::McpSettings::default(),
         }
     }
 }
 
-impl AsMut<hems_service::Settings> for Settings {
-    fn as_mut(&mut self) -> &mut hems_service::Settings {
+impl AsMut<ems_service::Settings> for Settings {
+    fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
     }
 }

@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use crate::registry::Registry;
-use hems_service::mcp::{McpAuth, rfc3339_opt};
+use ems_service::mcp::{McpAuth, rfc3339_opt};
 use http::request::Parts;
 use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -43,8 +43,8 @@ pub struct State {
     pub registry: Arc<RwLock<Registry>>,
     /// How long a box may be quiet before it is worth naming.
     pub silent_after: time::Duration,
-    /// How each caller is authorised. See `hems_service::mcp` and D111.
-    pub auth: hems_service::McpAuth,
+    /// How each caller is authorised. See `ems_service::mcp` and D111.
+    pub auth: ems_service::McpAuth,
 }
 
 /// Just a site.
@@ -137,7 +137,7 @@ impl Handler {
         Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<SiteParams>,
     ) -> Result<CallToolResult, McpError> {
-        let caller = hems_service::mcp::caller(&self.state.auth, &parts)?;
+        let caller = ems_service::mcp::caller(&self.state.auth, &parts)?;
         if !caller.may_read(&p.site) {
             return Err(McpError::invalid_params(
                 format!(
@@ -220,8 +220,8 @@ impl Handler {
     /// household's own reach, so this asks for the fleet capability by name
     /// rather than inferring it from a site check that a `None` site would pass
     /// (D112).
-    fn fleet_caller(&self, parts: &Parts) -> Result<hems_service::Authority, McpError> {
-        let caller = hems_service::mcp::caller(&self.state.auth, parts)?;
+    fn fleet_caller(&self, parts: &Parts) -> Result<ems_service::Authority, McpError> {
+        let caller = ems_service::mcp::caller(&self.state.auth, parts)?;
         if caller.may_read_the_fleet() {
             Ok(caller)
         } else {
@@ -326,5 +326,5 @@ pub fn router(
     auth: McpAuth,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
-    hems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
+    ems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
 }

@@ -39,7 +39,7 @@ use crate::upstream::Window;
 
 /// How many independent days a coverage figure needs before it is one.
 ///
-/// Twenty, which is `hems_forecast`'s own threshold and not a second opinion
+/// Twenty, which is `ems_forecast`'s own threshold and not a second opinion
 /// about it.
 pub const EPISODES_FOR_A_CALIBRATION: usize = 20;
 
@@ -152,7 +152,7 @@ pub fn review(input: &Window) -> Proposal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::report::Summary;
+    use ems_core::report::Summary;
 
     /// A window over a summary a test wrote.
     fn window(fleet: Summary) -> Window {

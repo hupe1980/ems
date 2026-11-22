@@ -1,6 +1,6 @@
 //! Where the weather comes from, and the seam that keeps it out of the tests.
 
-use hems_forecast::{WeatherSeries, weather::WeatherError};
+use ems_forecast::{WeatherSeries, weather::WeatherError};
 use thiserror::Error;
 
 /// Why a weather run did not arrive.
@@ -61,17 +61,17 @@ impl Http {
     /// carry this fleet's questions across a network in the clear (D85).
     pub fn new(
         endpoint: String,
-        http: &hems_service::HttpSettings,
+        http: &ems_service::HttpSettings,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Self> {
-        hems_service::http::confidential(&endpoint)?;
+        ems_service::http::confidential(&endpoint)?;
         Ok(Self {
             // The shared builder, so the trust anchors are the operator's
             // decision rather than seven call sites' separate accidents. This
             // one calls the **open web**, which is what `TlsRoots::Platform` is
             // for — and the image then has to carry a trust store.
-            client: hems_service::http::client(
-                hems_service::identity!(),
+            client: ems_service::http::client(
+                ems_service::identity!(),
                 &http.clone().with_timeout_s(timeout.as_secs().max(1)),
             )?,
             endpoint,
@@ -123,7 +123,7 @@ impl Upstream for Http {
                 location: location.id.clone(),
                 detail: e.to_string(),
             })?;
-        hems_forecast::open_meteo(&body).map_err(|source| UpstreamError::Unreadable {
+        ems_forecast::open_meteo(&body).map_err(|source| UpstreamError::Unreadable {
             location: location.id.clone(),
             source,
         })
@@ -138,7 +138,7 @@ mod tests {
     fn the_coordinates_are_appended_to_whatever_endpoint_was_configured() {
         let http = Http::new(
             crate::config::DEFAULT_ENDPOINT.into(),
-            &hems_service::HttpSettings::default(),
+            &ems_service::HttpSettings::default(),
             std::time::Duration::from_secs(5),
         )
         .unwrap();
@@ -157,7 +157,7 @@ mod tests {
     fn a_mirror_with_no_query_string_gets_a_question_mark() {
         let http = Http::new(
             "https://weather.local/v1".into(),
-            &hems_service::HttpSettings::default(),
+            &ems_service::HttpSettings::default(),
             std::time::Duration::from_secs(5),
         )
         .unwrap();

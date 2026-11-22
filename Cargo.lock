@@ -39,15 +39,15 @@ dependencies = [
 
 [[package]]
 name = "agentd"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "agentplane",
  "anyhow",
  "async-trait",
  "axum",
  "clap",
- "hems-core",
- "hems-service",
+ "ems-core",
+ "ems-service",
  "http",
  "obsd",
  "reqwest",
@@ -1578,6 +1578,174 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
+name = "ems-core"
+version = "0.7.0"
+dependencies = [
+ "metering",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "ems-device"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "serde",
+]
+
+[[package]]
+name = "ems-drv"
+version = "0.7.0"
+dependencies = [
+ "eebus",
+ "ems-core",
+ "ems-grid",
+ "ems-sim",
+ "serde",
+ "serde_json",
+ "sunspec",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
+name = "ems-events"
+version = "0.7.0"
+dependencies = [
+ "base64 0.23.1",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
+name = "ems-flex"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "ems-device",
+ "s2-kit",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "uuid",
+]
+
+[[package]]
+name = "ems-forecast"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "metering",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
+name = "ems-grid"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "metering",
+ "rust_decimal",
+ "serde",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
+name = "ems-optimizer"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "ems-forecast",
+ "ems-grid",
+ "ems-tariff",
+ "good_lp",
+ "rust_decimal",
+ "serde",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
+name = "ems-realtime"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "ems-device",
+ "ems-grid",
+ "serde",
+ "time",
+]
+
+[[package]]
+name = "ems-service"
+version = "0.7.0"
+dependencies = [
+ "axum",
+ "deadpool-postgres",
+ "ed25519-dalek",
+ "hex",
+ "http",
+ "hyper-util",
+ "prometheus",
+ "rcgen",
+ "reqwest",
+ "rmcp",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "tokio-rustls",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "webpki-roots",
+]
+
+[[package]]
+name = "ems-sim"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "serde",
+ "time",
+]
+
+[[package]]
+name = "ems-tariff"
+version = "0.7.0"
+dependencies = [
+ "ems-core",
+ "ems-grid",
+ "quick-xml",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1670,15 +1838,15 @@ dependencies = [
 
 [[package]]
 name = "fleetd"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
  "deadpool-postgres",
  "ed25519-dalek",
+ "ems-service",
  "getrandom 0.4.3",
- "hems-service",
  "hex",
  "http",
  "rmcp",
@@ -1712,14 +1880,14 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "forecastd"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
- "hems-core",
- "hems-forecast",
- "hems-service",
+ "ems-core",
+ "ems-forecast",
+ "ems-service",
  "http",
  "reqwest",
  "rmcp",
@@ -1736,9 +1904,9 @@ dependencies = [
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -1973,176 +2141,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hems-core"
-version = "0.6.0"
-dependencies = [
- "metering",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "hems-device"
-version = "0.6.0"
-dependencies = [
- "hems-core",
- "serde",
-]
-
-[[package]]
-name = "hems-drv"
-version = "0.6.0"
-dependencies = [
- "eebus",
- "hems-core",
- "hems-grid",
- "hems-sim",
- "serde",
- "serde_json",
- "sunspec",
- "thiserror 2.0.21",
- "time",
-]
-
-[[package]]
-name = "hems-events"
-version = "0.6.0"
-dependencies = [
- "base64 0.23.1",
- "hmac",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "thiserror 2.0.21",
- "time",
-]
-
-[[package]]
-name = "hems-flex"
-version = "0.6.0"
-dependencies = [
- "hems-core",
- "hems-device",
- "s2-kit",
- "serde_json",
- "thiserror 2.0.21",
- "time",
- "uuid",
-]
-
-[[package]]
-name = "hems-forecast"
-version = "0.6.0"
-dependencies = [
- "hems-core",
- "metering",
- "rust_decimal",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "time",
-]
-
-[[package]]
-name = "hems-grid"
-version = "0.6.0"
-dependencies = [
- "hems-core",
- "metering",
- "rust_decimal",
- "serde",
- "thiserror 2.0.21",
- "time",
-]
-
-[[package]]
-name = "hems-optimizer"
-version = "0.6.0"
-dependencies = [
- "good_lp",
- "hems-core",
- "hems-forecast",
- "hems-grid",
- "hems-tariff",
- "rust_decimal",
- "serde",
- "thiserror 2.0.21",
- "time",
-]
-
-[[package]]
-name = "hems-realtime"
-version = "0.6.0"
-dependencies = [
- "hems-core",
- "hems-device",
- "hems-grid",
- "serde",
- "time",
-]
-
-[[package]]
-name = "hems-service"
-version = "0.6.0"
-dependencies = [
- "axum",
- "deadpool-postgres",
- "ed25519-dalek",
- "hex",
- "http",
- "hyper-util",
- "prometheus",
- "rcgen",
- "reqwest",
- "rmcp",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "thiserror 2.0.21",
- "time",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "tokio-rustls",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "url",
- "webpki-roots",
-]
-
-[[package]]
-name = "hems-sim"
-version = "0.6.0"
-dependencies = [
- "hems-core",
- "serde",
- "time",
-]
-
-[[package]]
-name = "hems-tariff"
-version = "0.6.0"
-dependencies = [
- "hems-core",
- "hems-grid",
- "quick-xml",
- "rust_decimal",
- "rust_decimal_macros",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "time",
-]
-
-[[package]]
 name = "hemsd"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -2152,18 +2152,18 @@ dependencies = [
  "chronix",
  "clap",
  "eebus",
+ "ems-core",
+ "ems-drv",
+ "ems-events",
+ "ems-flex",
+ "ems-forecast",
+ "ems-grid",
+ "ems-optimizer",
+ "ems-realtime",
+ "ems-service",
+ "ems-sim",
+ "ems-tariff",
  "getrandom 0.4.3",
- "hems-core",
- "hems-drv",
- "hems-events",
- "hems-flex",
- "hems-forecast",
- "hems-grid",
- "hems-optimizer",
- "hems-realtime",
- "hems-service",
- "hems-sim",
- "hems-tariff",
  "hex",
  "if-addrs",
  "metering",
@@ -2215,15 +2215,15 @@ dependencies = [
 
 [[package]]
 name = "histd"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
  "deadpool-postgres",
- "hems-core",
- "hems-grid",
- "hems-service",
+ "ems-core",
+ "ems-grid",
+ "ems-service",
  "http",
  "metering",
  "rmcp",
@@ -3049,16 +3049,16 @@ dependencies = [
 
 [[package]]
 name = "obsd"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
  "deadpool-postgres",
- "hems-core",
- "hems-events",
- "hems-forecast",
- "hems-service",
+ "ems-core",
+ "ems-events",
+ "ems-forecast",
+ "ems-service",
  "http",
  "rmcp",
  "schemars",
@@ -4536,15 +4536,15 @@ dependencies = [
 
 [[package]]
 name = "tariffd"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
- "hems-core",
- "hems-grid",
- "hems-service",
- "hems-tariff",
+ "ems-core",
+ "ems-grid",
+ "ems-service",
+ "ems-tariff",
  "http",
  "reqwest",
  "rmcp",
@@ -5154,9 +5154,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -5610,10 +5610,10 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
- "hems-events",
+ "ems-events",
 ]
 
 [[package]]

@@ -19,7 +19,7 @@
 //!
 //! # Updates, and why the server is not the trust anchor
 //!
-//! `fleetd` publishes a [`hems_service::Release`] — a manifest and an Ed25519
+//! `fleetd` publishes a [`ems_service::Release`] — a manifest and an Ed25519
 //! signature over it. The box verifies the signature against a key **it was
 //! built with**, then verifies the artefact's digest against the manifest, and
 //! only then installs.

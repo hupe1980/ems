@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
+use ems_service::update::{Manifest, Release, SignedConfig};
 use fleetd::api::{Fleet, router};
 use fleetd::config::SiteEntry;
 use fleetd::registry::Registry;
-use hems_service::update::{Manifest, Release, SignedConfig};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
@@ -55,7 +55,7 @@ fn sites() -> BTreeMap<String, SiteEntry> {
     [(
         "site-1".to_owned(),
         SiteEntry {
-            enrolment_secret: hems_service::Secret::literal("installer-secret"),
+            enrolment_secret: ems_service::Secret::literal("installer-secret"),
             config: c.config,
             config_version: c.version,
             config_signature: c.signature,
@@ -65,20 +65,14 @@ fn sites() -> BTreeMap<String, SiteEntry> {
     .collect()
 }
 
-async fn start() -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
+async fn start() -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     start_with(sites()).await
 }
 
 async fn start_with(
     sites: BTreeMap<String, SiteEntry>,
-) -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
-    let fixture = hems_service::testdb::Postgres::start(fleetd::store::MIGRATIONS).await;
+) -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
+    let fixture = ems_service::testdb::Postgres::start(fleetd::store::MIGRATIONS).await;
     let db = fixture.db.clone();
     // Leaked on purpose: the pool outlives the server task, and a test process
     // ends when the test does.
@@ -92,18 +86,15 @@ async fn start_with(
 /// to test the property the store exists for.
 async fn start_on(
     sites: BTreeMap<String, SiteEntry>,
-    db: hems_service::Db,
-) -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
+    db: ems_service::Db,
+) -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bound = listener.local_addr().unwrap();
     drop(listener);
-    let settings = hems_service::Settings {
+    let settings = ems_service::Settings {
         listen: bound,
         shutdown_grace_s: 2,
-        ..hems_service::Settings::default()
+        ..ems_service::Settings::default()
     };
     let store = fleetd::store::Store::new(db);
     let registry = Arc::new(RwLock::new(Registry::restore(
@@ -112,15 +103,15 @@ async fn start_on(
         store.reports().await.unwrap(),
     )));
     let releases = [("hemsd".to_owned(), release())].into_iter().collect();
-    let (signal, trigger) = hems_service::Shutdown::channel();
-    let server = hems_service::Server::new(
-        hems_service::identity!(),
+    let (signal, trigger) = ems_service::Shutdown::channel();
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
         settings,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         router(Fleet::new(
             registry,
             releases,
-            hems_service::Credentials::default().with_operator(OPERATOR),
+            ems_service::Credentials::default().with_operator(OPERATOR),
             store,
         )),
     );
@@ -397,7 +388,7 @@ async fn a_restart_does_not_orphan_the_fleet() {
     // holding the other copy could not enrol again, because its single-use
     // secret was spent. This is that property, and it is the reason `fleetd`
     // has a database at all.
-    let fixture = hems_service::testdb::Postgres::start(fleetd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(fleetd::store::MIGRATIONS).await;
 
     let (address, trigger) = start_on(sites(), fixture.db.clone()).await;
     let (status, body) = request(

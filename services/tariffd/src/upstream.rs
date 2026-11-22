@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use hems_tariff::source::{PriceSeries, Source, SourceError};
+use ems_tariff::source::{PriceSeries, Source, SourceError};
 use thiserror::Error;
 
 /// Why an upstream did not produce a price list.
@@ -58,7 +58,7 @@ pub struct Fetched {
     /// The prices.
     pub series: PriceSeries,
     /// The carbon intensity, where the source publishes one instead of a price.
-    pub co2_g_per_kwh: BTreeMap<hems_core::prelude::Slot, f64>,
+    pub co2_g_per_kwh: BTreeMap<ems_core::prelude::Slot, f64>,
 }
 
 /// Something that can be asked for a day-ahead curve.
@@ -92,19 +92,19 @@ impl Http {
     /// which is a deployment fault rather than a runtime one.
     pub fn new(
         endpoints: BTreeMap<Source, crate::config::Endpoint>,
-        http: &hems_service::HttpSettings,
+        http: &ems_service::HttpSettings,
         timeout: std::time::Duration,
     ) -> anyhow::Result<Self> {
         for endpoint in endpoints.values() {
-            hems_service::http::confidential(&endpoint.url)?;
+            ems_service::http::confidential(&endpoint.url)?;
         }
         Ok(Self {
             // The shared builder — which also names this daemon in its
             // `User-Agent`, the courtesy that gets an operator a mail rather
             // than a block. This one calls the **open web**, so the platform's
             // own trust store is the question being asked.
-            client: hems_service::http::client(
-                hems_service::identity!(),
+            client: ems_service::http::client(
+                ems_service::identity!(),
                 &http.clone().with_timeout_s(timeout.as_secs().max(1)),
             )?,
             endpoints,
@@ -149,7 +149,7 @@ impl Upstream for Http {
     }
 }
 
-/// Turn a body into a [`Fetched`], through `hems-tariff`'s own parsers.
+/// Turn a body into a [`Fetched`], through `ems-tariff`'s own parsers.
 ///
 /// Public because it is the whole of what a captured response has to go through
 /// in a test, and a test that re-implemented the dispatch would be testing a
@@ -164,19 +164,19 @@ pub fn parse(source: Source, body: &str) -> Result<Fetched, UpstreamError> {
     };
     match source {
         Source::Entsoe => Ok(Fetched {
-            series: hems_tariff::source::entsoe_a44(body).map_err(unparseable)?,
+            series: ems_tariff::source::entsoe_a44(body).map_err(unparseable)?,
             co2_g_per_kwh: BTreeMap::new(),
         }),
         Source::Smard => Ok(Fetched {
-            series: hems_tariff::source::smard(body).map_err(unparseable)?,
+            series: ems_tariff::source::smard(body).map_err(unparseable)?,
             co2_g_per_kwh: BTreeMap::new(),
         }),
         Source::Awattar => Ok(Fetched {
-            series: hems_tariff::source::awattar(body).map_err(unparseable)?,
+            series: ems_tariff::source::awattar(body).map_err(unparseable)?,
             co2_g_per_kwh: BTreeMap::new(),
         }),
         Source::Tibber => Ok(Fetched {
-            series: hems_tariff::source::tibber(body).map_err(unparseable)?,
+            series: ems_tariff::source::tibber(body).map_err(unparseable)?,
             co2_g_per_kwh: BTreeMap::new(),
         }),
         // Energy-Charts publishes carbon rather than price, so it contributes a
@@ -186,10 +186,10 @@ pub fn parse(source: Source, body: &str) -> Result<Fetched, UpstreamError> {
             series: PriceSeries {
                 points: BTreeMap::new(),
                 source,
-                basis: hems_tariff::source::PriceBasis::Wholesale,
+                basis: ems_tariff::source::PriceBasis::Wholesale,
                 published_minutes: 15,
             },
-            co2_g_per_kwh: hems_tariff::source::energy_charts_co2(body).map_err(unparseable)?,
+            co2_g_per_kwh: ems_tariff::source::energy_charts_co2(body).map_err(unparseable)?,
         }),
     }
 }

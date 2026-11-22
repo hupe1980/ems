@@ -1,14 +1,14 @@
 //! The database, and the only place SQL is written.
 //!
-//! PostgreSQL, through the pool [`hems_service::db`] builds: a fleet's writes do
+//! PostgreSQL, through the pool [`ems_service::db`] builds: a fleet's writes do
 //! not queue behind one lock, the service can run more than one replica, and a
 //! settlement quantity is a `NUMERIC` the database adds up itself (D156). The
 //! schema is `migrations/0001_schema.sql`.
 
-use hems_core::prelude::{GuardRule, Power, Slot};
-use hems_grid::evidence::{ComplianceSample, ControlEvent};
-use hems_grid::mispel::QuarterHour;
-use hems_service::db::{Db, Migration};
+use ems_core::prelude::{GuardRule, Power, Slot};
+use ems_grid::evidence::{ComplianceSample, ControlEvent};
+use ems_grid::mispel::QuarterHour;
+use ems_service::db::{Db, Migration};
 use rust_decimal::Decimal;
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -50,7 +50,7 @@ const FOREVER: OffsetDateTime = time::macros::datetime!(9999-12-31 23:59:59 UTC)
 ///
 /// `include_str!` rather than a path read at run time, so the container needs no
 /// files beside the binary and a revision cannot be edited between the build and
-/// the deployment. `hems_service::db::migrate` checksums each one, so an edit to
+/// the deployment. `ems_service::db::migrate` checksums each one, so an edit to
 /// a file already applied is refused rather than skipped.
 pub const MIGRATIONS: &[Migration] = &[Migration {
     version: 1,
@@ -605,10 +605,10 @@ fn rule_name(rule: GuardRule) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::prelude::{AssetId, Power, Slot};
-    use hems_grid::evidence::Action;
-    use hems_grid::para14a::ControlMode;
-    use hems_service::testdb::Postgres;
+    use ems_core::prelude::{AssetId, Power, Slot};
+    use ems_grid::evidence::Action;
+    use ems_grid::para14a::ControlMode;
+    use ems_service::testdb::Postgres;
     use rust_decimal::Decimal;
     use time::macros::datetime;
 
@@ -684,7 +684,7 @@ mod tests {
     #[tokio::test]
     async fn the_storage_system_s_own_registers_survive_the_round_trip() {
         // `Z3V¼`/`Z3E¼`, the pair Basisfall A4 is *defined* by. They were
-        // modelled in `hems-grid`, required by `abgrenzung_month`, configurable
+        // modelled in `ems-grid`, required by `abgrenzung_month`, configurable
         // in this daemon — and had no column, so every A4 site read back `None`
         // and was refused a settlement it had declared. A round trip that fills
         // only the fields it happens to care about cannot notice that: this one

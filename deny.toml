@@ -33,13 +33,13 @@ allow = [
     # `webpki-roots`: Mozilla's CA root list, which is *data* rather than code
     # and carries a data licence.
     #
-    # It reaches this workspace through **`hems_service::db`**, which builds the
+    # It reaches this workspace through **`ems_service::db`**, which builds the
     # `rustls::RootCertStore` a managed PostgreSQL instance is verified against.
     # That is the fleet's database link and nothing else. It is *not* what the
     # HTTP client verifies against — `reqwest` 0.13.0 removed its rustls root
     # features in favour of `rustls-platform-verifier`, and this comment claimed
     # otherwise for months. Where an outbound client's anchors come from is now
-    # `hems_service::http::TlsRoots`, written down by an operator.
+    # `ems_service::http::TlsRoots`, written down by an operator.
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
@@ -82,7 +82,7 @@ allow-wildcard-paths = true
 # on the state it names and on nothing else, which is the difference between a
 # rule and a proxy for one.
 #
-# The defence in depth is `hems_service::db`, which builds its `ClientConfig` on
+# The defence in depth is `ems_service::db`, which builds its `ClientConfig` on
 # an explicitly named `aws_lc_rs` provider rather than on whatever the process
 # default happens to be — so even a graph that acquired two would not panic
 # there.

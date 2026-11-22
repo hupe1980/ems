@@ -4,11 +4,11 @@
 //! be written — it is that it is still there after the process that wrote it has
 //! gone. Every test here reopens the database to check that.
 
-use hems_core::prelude::GuardRule;
-use hems_core::prelude::{AssetId, Power, Slot};
-use hems_grid::evidence::{Action, ComplianceSample, ControlEvent};
-use hems_grid::mispel::QuarterHour;
-use hems_grid::para14a::ControlMode;
+use ems_core::prelude::GuardRule;
+use ems_core::prelude::{AssetId, Power, Slot};
+use ems_grid::evidence::{Action, ComplianceSample, ControlEvent};
+use ems_grid::mispel::QuarterHour;
+use ems_grid::para14a::ControlMode;
 use histd::Store;
 use histd::export::{data_act, nachweis};
 use rust_decimal::Decimal;
@@ -48,7 +48,7 @@ fn winter_event() -> ControlEvent {
 
 #[tokio::test]
 async fn a_reduction_is_still_there_after_the_process_has_gone() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
 
     {
         // One handle writes, and is then dropped along with its pool.
@@ -103,7 +103,7 @@ async fn the_data_act_export_is_everything_and_the_quantities_are_exact() {
     // machine-readable, free. And the settlement quantities travel as decimal
     // strings, because a JSON number is a double to every reader that has ever
     // parsed one.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     store
         .put_control_event("site-1", &winter_event())
@@ -134,7 +134,7 @@ async fn the_data_act_export_is_everything_and_the_quantities_are_exact() {
 
 #[tokio::test]
 async fn an_operator_can_ask_about_one_window_rather_than_the_whole_record() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     store
         .put_control_event("site-1", &winter_event())
@@ -166,7 +166,7 @@ async fn an_operator_can_ask_about_one_window_rather_than_the_whole_record() {
 async fn one_households_export_never_contains_anothers() {
     // The whole of the multi-tenancy a box needs, and the thing that would be
     // most embarrassing to get wrong in a document a household is entitled to.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     store
         .put_control_event("site-1", &winter_event())

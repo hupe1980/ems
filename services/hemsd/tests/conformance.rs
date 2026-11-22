@@ -23,7 +23,7 @@
 //! # No socket
 //!
 //! Datagrams move as the JSON a SHIP data frame carries, as in
-//! `hems-drv/tests/eebus_spine.rs` — both ends are the real engines, and a
+//! `ems-drv/tests/eebus_spine.rs` — both ends are the real engines, and a
 //! message either side refuses to encode does not arrive. `steuerbox_session.rs`
 //! is what puts TCP, TLS and the handshake under the same seam. A virtual clock
 //! is what makes a two-hour failsafe window and a 120-second heartbeat timeout
@@ -38,9 +38,9 @@ use eebus::model::{DeviceType, EntityType};
 use eebus::spine::{Engine, LocalDevice, LocalEntity};
 use eebus::usecases::limitation::{self, EnergyGuardActor, GuardEvent, LimitWrite};
 use eebus::usecases::lpc;
-use hems_core::prelude::{AssetId, Power};
-use hems_drv::eebus::{Lpc, Use};
-use hems_drv::{Driver, DriverEvent, LinkState};
+use ems_core::prelude::{AssetId, Power};
+use ems_drv::eebus::{Lpc, Use};
+use ems_drv::{Driver, DriverEvent, LinkState};
 use hemsd::runtime::{FAILSAFE_CONSUMPTION, failsafe_in_force};
 use hemsd::store::{Store, StoredFailsafe};
 use time::OffsetDateTime;

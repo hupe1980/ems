@@ -13,7 +13,7 @@ makes “what does a kilowatt-hour cost at 17:15 on Thursday?” a question with
 answer — and the answer is the input the [planner](@/docs/optimizer.md) spends
 most of its objective on.
 
-`hems-tariff` is that answer. Like every domain crate it does **no I/O**: the
+`ems-tariff` is that answer. Like every domain crate it does **no I/O**: the
 parsers are `&str` in, a series out, and the fetching lives in
 [`tariffd`](@/docs/services.md#tariffd-the-price-stack).
 
@@ -66,7 +66,7 @@ through a `double` is one nobody can reproduce.
 ## Levies change on 1 January, and a plan runs across it
 
 Three of the levies are set nationally and published every October for the
-year that follows. They are a dated table in `hems_tariff::levies`, held to
+year that follows. They are a dated table in `ems_tariff::levies`, held to
 the publication by a test:
 
 | ct/kWh, net | 2025 | 2026 | 2027 |
@@ -94,7 +94,7 @@ konzessionsabgabe = 1.32
 
 ## The five sources, and what is a decision in each
 
-`hems-tariff::source` parses what ENTSO-E, SMARD, aWATTar, Tibber and
+`ems-tariff::source` parses what ENTSO-E, SMARD, aWATTar, Tibber and
 Energy-Charts actually publish. Each is a pure function tested against a
 **captured response**, on a machine with no network, including the two days a
 year with 92 and 100 quarter hours.

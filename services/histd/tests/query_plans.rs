@@ -19,7 +19,7 @@
 //! parameter values a generic plan cannot tell which is more selective, and it
 //! picks the wrong one — so there is no SQL that is right under every plan mode.
 //! The answer is `plan_cache_mode = force_custom_plan` on every pooled
-//! connection (`hems_service::db::prepare_session`), and the last test here
+//! connection (`ems_service::db::prepare_session`), and the last test here
 //! asserts that setting is present so removing it breaks the pair visibly.
 //!
 //! # The query under test is the daemon's own, columns and all
@@ -32,7 +32,7 @@
 //! which is a plan the daemon never runs. So the statement below carries the
 //! whole column list.
 
-use hems_service::testdb::Postgres;
+use ems_service::testdb::Postgres;
 
 /// Enough rows, across enough sites, that a sequential scan is not the cheapest
 /// plan by accident. A planner given a hundred rows will read them all whatever

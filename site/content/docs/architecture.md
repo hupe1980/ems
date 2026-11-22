@@ -14,9 +14,9 @@ wrong.
 
 | Plane | Cadence | Authority | Where |
 |---|---|---|---|
-| **Guard** | every tick | absolute | `hems-grid` + `hems-realtime::guard` |
-| **Arbiter** | about a second | inside the guard's bounds | `hems-realtime::arbiter` |
-| **Planner** | 15-minute slots, re-planned every 15 minutes or on event | advisory | `hems-optimizer` |
+| **Guard** | every tick | absolute | `ems-grid` + `ems-realtime::guard` |
+| **Arbiter** | about a second | inside the guard's bounds | `ems-realtime::arbiter` |
+| **Planner** | 15-minute slots, re-planned every 15 minutes or on event | advisory | `ems-optimizer` |
 
 <pre class="mermaid">
 flowchart TB
@@ -188,7 +188,7 @@ visible, and a test pins it at zero.
 **And a device may not be able to hold what it was told.** A charge point is off
 or above the 6 A of IEC 61851 with nothing in between; a hot-water relay is on or
 off. So the arbiter routinely decides a value a device cannot hold, and
-`hems_device::realisable` resolves it — correctly, and *silently*. Every layer
+`ems_device::realisable` resolves it — correctly, and *silently*. Every layer
 above then believes the decided value: the energy tracker counts it as delivered,
 the plan falls behind by exactly that much and compensates in the next slot, and
 the only place the truth appears is the meter. `DayKpis::clipped_ticks` and
@@ -325,7 +325,7 @@ out**. `hemsd` owns the socket.
 The § 14a failsafe is a sixty-second heartbeat and a two-hour minimum. A driver
 that read a clock could only be tested by waiting; one that takes time as a
 parameter makes *"the Steuerbox goes quiet at 17:04 and comes back at 19:11"* an
-ordinary assertion — and `hems-drv/eebus` runs a whole day of it in
+ordinary assertion — and `ems-drv/eebus` runs a whole day of it in
 milliseconds: a reduction, its own expiry, heartbeat loss, the failsafe, and the
 release.
 
@@ -433,7 +433,7 @@ Six daemons sit around the box and none of them is a trust anchor. `tariffd`
 fetches prices, `forecastd` fetches the sky, `histd` keeps everybody's two years
 of § 14a evidence, `fleetd` enrols boxes and serves **signed** configuration
 and release manifests (the box-side client is not built yet), `obsd` is the fleet view, and `agentd` is an advisory plane that
-proposes and cannot act. They share one shell, `hems-service`, which owns
+proposes and cannot act. They share one shell, `ems-service`, which owns
 configuration, logging, a health surface, a shutdown and the credential model —
 and owns nothing about energy.
 

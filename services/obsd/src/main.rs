@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use hems_service::{Health, Server, Shutdown, shutdown};
+use ems_service::{Health, Server, Shutdown, shutdown};
 use obsd::Settings;
 use obsd::api::{Observed, router};
 
@@ -19,17 +19,17 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = hems_service::load(cli.config.as_deref(), "HEMS_OBSD")?;
-    hems_service::init_tracing(
-        hems_service::identity!(),
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_OBSD")?;
+    ems_service::init_tracing(
+        ems_service::identity!(),
         &settings.service.log_filter,
         settings.service.log_json,
     );
 
     // Eagerly, so a database this service cannot reach stops it here rather than
     // letting it accept days it silently drops.
-    let db = hems_service::db::connect(&settings.database, hems_service::identity!().name).await?;
-    hems_service::db::migrate(&db, obsd::store::MIGRATIONS).await?;
+    let db = ems_service::db::connect(&settings.database, ems_service::identity!().name).await?;
+    ems_service::db::migrate(&db, obsd::store::MIGRATIONS).await?;
     let store = obsd::store::Store::new(db);
     let health = Health::new();
     // Not a refusal to start: a fleet view that cannot yet accept a report can
@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let readers = hems_service::Credentials::resolve(
+    let readers = ems_service::Credentials::resolve(
         &std::collections::BTreeMap::new(),
         &settings.tenants,
         &settings.operators,
@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
     health.vital(
         "collector",
         signal.clone(),
-        hems_service::db::watch(
+        ems_service::db::watch(
             store.db().clone(),
             health.clone(),
             "collector",
@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
     // The series a probe cannot answer: a saturated pool serves `503`s while
     // `/livez` and `/readyz` both stay green, because the process is alive and
     // the database is reachable and there is simply no connection to be had.
-    hems_service::metrics::publish_pool(store.db());
+    ems_service::metrics::publish_pool(store.db());
 
     // **Vital**: a retention sweep that has died lets the fleet's days grow
     // without bound, and the only symptom is a disk filling up months later
@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
         readers.clone(),
     ));
     if settings.mcp.enabled {
-        let auth = hems_service::McpAuth::per_caller(&settings.mcp, &readers)?;
+        let auth = ems_service::McpAuth::per_caller(&settings.mcp, &readers)?;
         app = app.merge(obsd::mcp_server::router(
             Arc::new(obsd::mcp_server::State {
                 store: store.clone(),
@@ -142,13 +142,13 @@ async fn main() -> anyhow::Result<()> {
                 auth: auth.clone(),
             }),
             auth,
-            hems_service::mcp::cancel_on(&signal),
+            ems_service::mcp::cancel_on(&signal),
         ));
         tracing::info!("the Model Context Protocol surface is mounted at /mcp");
     }
 
     Server::new(
-        hems_service::identity!(),
+        ems_service::identity!(),
         settings.service.clone(),
         health,
         app,

@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::get;
-use hems_core::prelude::{Measurement, Power, Rc2, Slot, Soc};
-use hems_service::Shutdown;
+use ems_core::prelude::{Measurement, Power, Rc2, Slot, Soc};
+use ems_service::Shutdown;
 use hemsd::drivers::Registry;
 use hemsd::runtime::planner::{Learned, Planner};
 use tokio::sync::{Mutex, RwLock};
@@ -154,41 +154,41 @@ fn registry_with_a_battery_at(soc: f64) -> (Arc<Mutex<Registry>>, hemsd::Househo
 /// A driver that reports one measurement and never changes its mind.
 #[derive(Debug)]
 struct Reporting {
-    asset: hems_core::prelude::AssetId,
-    events: Vec<hems_drv::DriverEvent>,
+    asset: ems_core::prelude::AssetId,
+    events: Vec<ems_drv::DriverEvent>,
 }
 
 impl Reporting {
-    fn new(asset: hems_core::prelude::AssetId) -> Self {
+    fn new(asset: ems_core::prelude::AssetId) -> Self {
         Self {
             asset,
-            events: vec![hems_drv::DriverEvent::Link(hems_drv::LinkState::Up)],
+            events: vec![ems_drv::DriverEvent::Link(ems_drv::LinkState::Up)],
         }
     }
     fn say(&mut self, m: Measurement) {
-        self.events.push(hems_drv::DriverEvent::Measured(m));
+        self.events.push(ems_drv::DriverEvent::Measured(m));
     }
 }
 
-impl hems_drv::Driver for Reporting {
-    fn asset(&self) -> &hems_core::prelude::AssetId {
+impl ems_drv::Driver for Reporting {
+    fn asset(&self) -> &ems_core::prelude::AssetId {
         &self.asset
     }
-    fn capabilities(&self) -> hems_drv::DriverCapabilities {
-        hems_drv::DriverCapabilities::device()
+    fn capabilities(&self) -> ems_drv::DriverCapabilities {
+        ems_drv::DriverCapabilities::device()
     }
-    fn on_bytes(&mut self, _: &[u8], _: time::OffsetDateTime) -> Result<(), hems_drv::DriverError> {
+    fn on_bytes(&mut self, _: &[u8], _: time::OffsetDateTime) -> Result<(), ems_drv::DriverError> {
         Ok(())
     }
     fn on_timeout(&mut self, _: time::OffsetDateTime) {}
     fn command(
         &mut self,
-        _: &hems_core::setpoint::Command,
+        _: &ems_core::setpoint::Command,
         _: time::OffsetDateTime,
-    ) -> Result<(), hems_drv::DriverError> {
+    ) -> Result<(), ems_drv::DriverError> {
         Ok(())
     }
-    fn poll_event(&mut self) -> Option<hems_drv::DriverEvent> {
+    fn poll_event(&mut self) -> Option<ems_drv::DriverEvent> {
         if self.events.is_empty() {
             None
         } else {
@@ -204,7 +204,7 @@ impl hems_drv::Driver for Reporting {
 }
 
 /// A box that has been running long enough to know its own household.
-fn learned_household(land: hems_core::calendar::Bundesland) -> Learned {
+fn learned_household(land: ems_core::calendar::Bundesland) -> Learned {
     let mut learned = Learned::new(land, Rc2::house());
     // Three weeks of a flat six hundred watts. Enough support for the profile to
     // answer, and deliberately dull: what is being tested is that a *forecast*
@@ -220,7 +220,7 @@ fn learned_household(land: hems_core::calendar::Bundesland) -> Learned {
 async fn a_box_with_a_fleet_plans_against_real_prices_and_a_real_sky() {
     let (fleet_url, _keep) = fleet_on_loopback().await;
     let (registry, household) = registry_with_a_battery_at(0.5);
-    let land = hems_core::calendar::Bundesland::Be;
+    let land = ems_core::calendar::Bundesland::Be;
 
     let settings = hemsd::Settings {
         fleet: hemsd::config::FleetSettings {
@@ -242,13 +242,13 @@ async fn a_box_with_a_fleet_plans_against_real_prices_and_a_real_sky() {
     let plan = Arc::new(RwLock::new(None));
     let modelled = Arc::new(RwLock::new(BTreeMap::new()));
     let learned = Arc::new(Mutex::new(learned_household(land)));
-    let health = hems_service::Health::new();
+    let health = ems_service::Health::new();
     let (signal, trigger) = Shutdown::channel();
 
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
             household: household.clone(),
-            array: hems_forecast::ArrayModel::new(
+            array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
                 Power::from_kw(8.0),
                 35.0,
@@ -266,7 +266,7 @@ async fn a_box_with_a_fleet_plans_against_real_prices_and_a_real_sky() {
             wear_eur_per_kwh: 0.08,
         },
         Arc::clone(&registry),
-        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &hems_service::HttpSettings::default())
+        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &ems_service::HttpSettings::default())
             .expect("a client"),
         Arc::clone(&plan),
         // The price stack the plan was made against, which a running box hands
@@ -391,14 +391,14 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
     let plan = Arc::new(RwLock::new(None));
     let modelled = Arc::new(RwLock::new(BTreeMap::new()));
     let learned = Arc::new(Mutex::new(learned_household(
-        hems_core::calendar::Bundesland::Be,
+        ems_core::calendar::Bundesland::Be,
     )));
     let (signal, trigger) = Shutdown::channel();
 
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
             household: household.clone(),
-            array: hems_forecast::ArrayModel::new(
+            array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
                 Power::from_kw(8.0),
                 35.0,
@@ -416,7 +416,7 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
             wear_eur_per_kwh: 0.08,
         },
         registry,
-        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &hems_service::HttpSettings::default())
+        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &ems_service::HttpSettings::default())
             .expect("a client"),
         Arc::clone(&plan),
         Arc::new(RwLock::new(None)),
@@ -428,7 +428,7 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
         },
         learned,
         None,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         signal,
     ));
 
@@ -456,7 +456,7 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
 async fn a_box_installed_this_morning_plans_from_persistence() {
     // A household should get a plan on its first evening, not its second.
     //
-    // `hems-forecast` has had a persistence fallback since the beginning —
+    // `ems-forecast` has had a persistence fallback since the beginning —
     // "the next hours look like the last one", with a band that widens the
     // further out it reaches — and until now nothing called it: the planner
     // refused outright where the profile had no support. A module that is built,
@@ -489,7 +489,7 @@ async fn a_box_installed_this_morning_plans_from_persistence() {
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
             household: household.clone(),
-            array: hems_forecast::ArrayModel::new(
+            array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
                 Power::from_kw(8.0),
                 35.0,
@@ -507,7 +507,7 @@ async fn a_box_installed_this_morning_plans_from_persistence() {
             wear_eur_per_kwh: 0.08,
         },
         registry,
-        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &hems_service::HttpSettings::default())
+        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &ems_service::HttpSettings::default())
             .expect("a client"),
         Arc::clone(&plan),
         Arc::new(RwLock::new(None)),
@@ -519,11 +519,11 @@ async fn a_box_installed_this_morning_plans_from_persistence() {
         },
         // A box that has learned nothing at all — switched on this morning.
         Arc::new(Mutex::new(Learned::new(
-            hems_core::calendar::Bundesland::Be,
+            ems_core::calendar::Bundesland::Be,
             Rc2::house(),
         ))),
         None,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         signal,
     ));
 
@@ -596,7 +596,7 @@ fn every_risk_policy_a_household_can_configure_reaches_the_planner() {
 async fn plan_with(
     registry: Arc<Mutex<Registry>>,
     household: &hemsd::Household,
-) -> Option<hems_core::prelude::Plan> {
+) -> Option<ems_core::prelude::Plan> {
     plan_keeping(
         registry,
         household,
@@ -610,7 +610,7 @@ async fn plan_keeping(
     registry: Arc<Mutex<Registry>>,
     household: &hemsd::Household,
     last: hemsd::runtime::planner::LastInputs,
-) -> Option<hems_core::prelude::Plan> {
+) -> Option<ems_core::prelude::Plan> {
     let (fleet_url, _keep) = fleet_on_loopback().await;
     let settings = hemsd::Settings {
         fleet: hemsd::config::FleetSettings {
@@ -631,7 +631,7 @@ async fn plan_keeping(
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
             household: household.clone(),
-            array: hems_forecast::ArrayModel::new(
+            array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
                 Power::from_kw(8.0),
                 35.0,
@@ -649,7 +649,7 @@ async fn plan_keeping(
             wear_eur_per_kwh: 0.08,
         },
         registry,
-        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &hems_service::HttpSettings::default())
+        hemsd::runtime::fleet::Fleet::new(&settings.fleet, &ems_service::HttpSettings::default())
             .expect("a client"),
         Arc::clone(&plan),
         Arc::new(RwLock::new(None)),
@@ -660,10 +660,10 @@ async fn plan_keeping(
             window: Arc::new(RwLock::new(BTreeMap::new())),
         },
         Arc::new(Mutex::new(learned_household(
-            hems_core::calendar::Bundesland::Be,
+            ems_core::calendar::Bundesland::Be,
         ))),
         None,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         signal,
     ));
     let mut published = None;
@@ -767,11 +767,11 @@ async fn a_goal_is_priced_by_solving_the_same_plan_with_it() {
         .expect("the inputs are kept")
         .at();
     // A car parked with 20 of 60 kWh, the box's view of it with a full target.
-    let departure = hems_core::prelude::Slot::containing(at + time::Duration::hours(14));
-    let full = hems_optimizer::model::EvSession {
-        energy_now: hems_core::prelude::Energy::from_kwh(20.0),
-        energy_target: hems_core::prelude::Energy::from_kwh(60.0),
-        capacity: hems_core::prelude::Energy::from_kwh(60.0),
+    let departure = ems_core::prelude::Slot::containing(at + time::Duration::hours(14));
+    let full = ems_optimizer::model::EvSession {
+        energy_now: ems_core::prelude::Energy::from_kwh(20.0),
+        energy_target: ems_core::prelude::Energy::from_kwh(60.0),
+        capacity: ems_core::prelude::Energy::from_kwh(60.0),
         max_charge: Power::from_kw(11.0),
         min_charge: Power::from_kw(4.2),
         efficiency: 0.9,
@@ -781,7 +781,7 @@ async fn a_goal_is_priced_by_solving_the_same_plan_with_it() {
     let car = hemsd::home::CarFacts::default();
     *car.lock().await = Some(full);
     let by_minute =
-        hems_core::prelude::Slot::containing(at + time::Duration::hours(14)).local_minute_of_day();
+        ems_core::prelude::Slot::containing(at + time::Duration::hours(14)).local_minute_of_day();
     let seventy = CarGoal {
         target_soc: 0.7,
         by_minute,

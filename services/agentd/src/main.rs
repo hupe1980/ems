@@ -10,7 +10,7 @@ use std::sync::Arc;
 use agentplane::prelude::{JournalStore, RedbStore};
 use anyhow::Context as _;
 use clap::Parser;
-use hems_service::{Authority, Health, Server, Shutdown, shutdown};
+use ems_service::{Authority, Health, Server, Shutdown, shutdown};
 
 #[derive(Parser)]
 #[command(name = "agentd", version, about = "The hems advisory plane")]
@@ -27,9 +27,9 @@ const PRINCIPAL: &str = "principal";
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: agentd::Settings = hems_service::load(cli.config.as_deref(), "HEMS_AGENTD")?;
-    hems_service::init_tracing(
-        hems_service::identity!(),
+    let settings: agentd::Settings = ems_service::load(cli.config.as_deref(), "HEMS_AGENTD")?;
+    ems_service::init_tracing(
+        ems_service::identity!(),
         &settings.service.log_filter,
         settings.service.log_json,
     );
@@ -47,10 +47,10 @@ async fn main() -> anyhow::Result<()> {
     // The operator this daemon acts for, and the attenuated authority every
     // specialist runs under. `advisory` is the only constructor and it cannot
     // widen, so "nothing an agent says moves a watt" is settled here (D118).
-    let scope = if settings.tenant == hems_service::auth::EVERY_TENANT {
-        hems_service::SiteScope::Every
+    let scope = if settings.tenant == ems_service::auth::EVERY_TENANT {
+        ems_service::SiteScope::Every
     } else {
-        hems_service::SiteScope::Tenant {
+        ems_service::SiteScope::Tenant {
             sites: settings
                 .tenants
                 .get(&settings.tenant)
@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Who may read the queue. It names households that did not respect a network
     // operator's reduction, so it is the fleet credential and not a site's.
-    let readers = hems_service::Credentials::resolve(
+    let readers = ems_service::Credentials::resolve(
         &std::collections::BTreeMap::new(),
         &settings.tenants,
         &settings.operators,
@@ -143,20 +143,20 @@ async fn main() -> anyhow::Result<()> {
     // The two surfaces answer from the same queue, so they cannot disagree.
     let mut app = agentd::router(agentd::Advisory::new(Arc::clone(&queue), readers.clone()));
     if settings.mcp.enabled {
-        let auth = hems_service::McpAuth::per_caller(&settings.mcp, &readers)?;
+        let auth = ems_service::McpAuth::per_caller(&settings.mcp, &readers)?;
         app = app.merge(agentd::mcp_server::router(
             Arc::new(agentd::mcp_server::State {
                 queue,
                 auth: auth.clone(),
             }),
             auth,
-            hems_service::mcp::cancel_on(&signal),
+            ems_service::mcp::cancel_on(&signal),
         ));
         tracing::info!("the Model Context Protocol surface is mounted at /mcp");
     }
 
     Server::new(
-        hems_service::identity!(),
+        ems_service::identity!(),
         settings.service.clone(),
         health,
         app,

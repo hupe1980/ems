@@ -4,7 +4,7 @@
 //! device is doing right now, `/v1/series` is the Data Act's local API over the
 //! one-second history, `/v1/overrides` decides what the arbiter wants, and
 //! `/s2/{asset}` lets an external energy manager drive the house. Every one of
-//! them authenticates its caller through `hems_service::auth`, the same model
+//! them authenticates its caller through `ems_service::auth`, the same model
 //! the fleet daemons use (D108, D112).
 //!
 //! # A token the box issues itself
@@ -32,7 +32,7 @@
 //! # What it is not
 //!
 //! It is **not** a second authorisation model. The token resolves to the same
-//! `hems_service::auth::Authority` a fleet service would issue — `box_at(site)`,
+//! `ems_service::auth::Authority` a fleet service would issue — `box_at(site)`,
 //! the household's own — so the capability names, the attenuation rules and the
 //! constant-time comparison are the workspace's one implementation rather than a
 //! second opinion written for the edge.
@@ -41,12 +41,12 @@
 //! `/metrics` stay open, because an orchestrator that has to hold a household's
 //! credential in order to restart a crashed box is an orchestrator that will be
 //! given one too widely. They carry no household data — that is the property
-//! that makes it safe, and it is `hems_service`'s to keep.
+//! that makes it safe, and it is `ems_service`'s to keep.
 
 use std::sync::Arc;
 
-use hems_service::auth::{Authority, Capabilities, Credentials, SiteScope, bearer};
-use hems_service::config::Secret;
+use ems_service::auth::{Authority, Capabilities, Credentials, SiteScope, bearer};
+use ems_service::config::Secret;
 use tokio::sync::RwLock;
 
 use crate::store::Store;
@@ -63,10 +63,10 @@ use crate::store::Store;
 /// (`hems.flex.drive`) rather than a special case here; `Capabilities` attenuate
 /// by containment, so that is a new pattern rather than a new mechanism.
 fn manager_capabilities() -> Capabilities {
-    Capabilities::of(hems_service::auth::ALL_CAPABILITIES.iter().copied())
+    Capabilities::of(ems_service::auth::ALL_CAPABILITIES.iter().copied())
         .attenuate(&Capabilities::of([
-            hems_service::auth::RECORD_READ,
-            hems_service::auth::RECORD_WRITE,
+            ems_service::auth::RECORD_READ,
+            ems_service::auth::RECORD_WRITE,
         ]))
         .unwrap_or_else(|_| Capabilities::none())
 }

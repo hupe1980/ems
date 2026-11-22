@@ -571,13 +571,13 @@ function notifications() {
 async function loadHooks() { try { hooks = await api("/v1/subscriptions"); } catch { hooks = null; } render(); }
 function otherSystems() {
   if (!hooks) return "";
-  const what = (h) => (h.types.includes("de.hems.*") ? t("hookAll") : t("hookGrid"));
+  const what = (h) => (h.types.includes("de.ems.*") ? t("hookAll") : t("hookGrid"));
   const rows = hooks.map((h) => `<div class="slot"><b>${esc(h.name)}</b><small style="display:block;color:var(--ink2);word-break:break-all">${esc(h.url)} · ${what(h)}${h.owed ? ` · ${t("hookOwed", { n: h.owed })}` : ""}</small>
     <div class="peerbtns"><button data-hook-test="${esc(h.id)}" type="button">${t("hookTest")}</button><button data-hook-remove="${esc(h.id)}" type="button">${t("hookRemove")}</button></div></div>`).join("");
   const secret = hookSecret ? `<div class="slot"><p>${t("hookSecret")}</p><code class="secret">${esc(hookSecret)}</code><button class="link" id="hookCopy" type="button">${t("hookCopy")}</button></div>` : "";
   const form = hooks.length < 8 ? `<form class="slot" id="hookAdd"><label class="sec" for="hookName">${t("hookName")}</label><input id="hookName" required maxlength="64" placeholder="Home Assistant">
     <label class="sec" for="hookUrl">${t("hookUrl")}</label><input id="hookUrl" type="url" required inputmode="url" placeholder="homeassistant.local:8123/api/webhook/…">
-    <label class="sec" for="hookWhat">${t("hookWhat")}</label><select id="hookWhat"><option value="de.hems.grid.*">${t("hookGrid")}</option><option value="de.hems.*">${t("hookAll")}</option></select>
+    <label class="sec" for="hookWhat">${t("hookWhat")}</label><select id="hookWhat"><option value="de.ems.grid.*">${t("hookGrid")}</option><option value="de.ems.*">${t("hookAll")}</option></select>
     <label class="row sw"><span><small>${t("hookPublic")}</small></span><input type="checkbox" role="switch" id="hookPublic"></label>
     <button class="primary" type="submit">${t("hookAdd")}</button></form>` : "";
   return `<h2 class="sec">${t("hooks")}</h2><div class="group">${secret}${rows || (hookSecret ? "" : `<div class="slot"><p>${t("hookNone")}</p></div>`)}${form}</div><p class="cap" style="margin:8px 16px 0">${t("hooksHelp")}</p>`;

@@ -26,7 +26,7 @@
 //! socket underneath it is a new one, and the first bytes of a fresh connection
 //! look exactly like the continuation of the old one — so a half-frame left over
 //! from before the drop makes the whole stream decode at an offset. That is what
-//! [`hems_drv::Driver::on_link`] is for, and it is why the transport calls it on
+//! [`ems_drv::Driver::on_link`] is for, and it is why the transport calls it on
 //! both edges rather than only on failure.
 //!
 //! **A deadline that has already passed is not a sleep.** `poll_deadline` is a
@@ -44,9 +44,9 @@
 
 use std::sync::Arc;
 
-use hems_core::prelude::AssetId;
-use hems_drv::LinkState;
-use hems_service::Shutdown;
+use ems_core::prelude::AssetId;
+use ems_drv::LinkState;
+use ems_service::Shutdown;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;

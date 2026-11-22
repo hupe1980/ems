@@ -35,12 +35,12 @@
 //! the last cent. Determinism was never what had to go; being *told the answer*
 //! was.
 
-use hems_core::prelude::{Energy, GeoPoint, Horizon, Power, Slot};
-use hems_forecast::{
+use ems_core::prelude::{Energy, GeoPoint, Horizon, Power, Slot};
+use ems_forecast::{
     ArrayModel, Band, Calibration, Forecast, LoadProfile, Prior, ResidualModel, Session,
     SessionForecast, SessionHistory, StandardProfile,
 };
-use hems_sim::Realisation;
+use ems_sim::Realisation;
 use time::{Duration, OffsetDateTime};
 
 /// How far the day that happens may stray from the day that was forecast.
@@ -233,7 +233,7 @@ impl Weather {
     /// The irradiance that actually falls on the building's glazing, W/m².
     ///
     /// The realised cloud, on a vertical plane at `facade_azimuth_deg` — what
-    /// [`hems_core::thermal::Rc2::free_heat_kw`] turns into the heat the house
+    /// [`ems_core::thermal::Rc2::free_heat_kw`] turns into the heat the house
     /// gets whether or not anything asked for it.
     ///
     /// It goes through the **global horizontal** value and is then transposed,
@@ -250,9 +250,9 @@ impl Weather {
         facade_azimuth_deg: f64,
     ) -> f64 {
         let slot = Slot::containing(at);
-        let sun = hems_forecast::solar::sun_position(location, slot);
-        let ghi = hems_forecast::clear_sky_ghi(sun) * (1.0 - self.cloud_at(at)).max(0.0);
-        hems_forecast::solar::window_irradiance(sun, ghi, facade_azimuth_deg)
+        let sun = ems_forecast::solar::sun_position(location, slot);
+        let ghi = ems_forecast::clear_sky_ghi(sun) * (1.0 - self.cloud_at(at)).max(0.0);
+        ems_forecast::solar::window_irradiance(sun, ghi, facade_azimuth_deg)
     }
 
     /// The same, as the *forecast* sees it — the mean cloud rather than this
@@ -267,9 +267,9 @@ impl Weather {
         if self.spec.oracle_forecast {
             return self.window_at(location, slot_middle(slot), facade_azimuth_deg);
         }
-        let sun = hems_forecast::solar::sun_position(location, slot);
-        let ghi = hems_forecast::clear_sky_ghi(sun) * (1.0 - self.mean_cloud).max(0.0);
-        hems_forecast::solar::window_irradiance(sun, ghi, facade_azimuth_deg)
+        let sun = ems_forecast::solar::sun_position(location, slot);
+        let ghi = ems_forecast::clear_sky_ghi(sun) * (1.0 - self.mean_cloud).max(0.0);
+        ems_forecast::solar::window_irradiance(sun, ghi, facade_azimuth_deg)
     }
 
     /// What the roof actually produces, as a positive magnitude in watts.
@@ -307,10 +307,10 @@ impl Weather {
 }
 
 /// The middle of a slot — where a quarter hour is sampled when one instant has
-/// to stand for it, the same convention [`hems_forecast::solar::sun_position`]
+/// to stand for it, the same convention [`ems_forecast::solar::sun_position`]
 /// uses and for the same reason.
 fn slot_middle(slot: Slot) -> OffsetDateTime {
-    slot.start() + hems_core::slot::SLOT / 2_i32
+    slot.start() + ems_core::slot::SLOT / 2_i32
 }
 
 /// What the box has learned from the days before this one.
@@ -331,7 +331,7 @@ pub struct Learned {
     /// running box because a module the reference days never reach is a module
     /// whose KPI cannot move, which is R20 exactly — and D199's own monitor was
     /// built, wired into `hemsd run`, and never given a simulated day.
-    pub health: hems_forecast::PlantHealth,
+    pub health: ems_forecast::PlantHealth,
     /// How many days of history it rests on.
     pub days: usize,
 }
@@ -360,7 +360,7 @@ pub const WARM_UP_DAYS: usize = 42;
 /// perturbs, and the thing the box cannot see directly.
 ///
 /// There is deliberately **no hot-water draw here**. The tank's usual draw is a
-/// fixed prior shared by the box and the days (`hems_forecast::hotwater::draw`),
+/// fixed prior shared by the box and the days (`ems_forecast::hotwater::draw`),
 /// so a warm-up has nothing about it to learn. The day it becomes something the
 /// box learns, it belongs on `Learned` rather than in a closure passed through
 /// here.
@@ -381,7 +381,7 @@ pub fn warm_up(
         load: LoadProfile::default(),
         roof: ResidualModel::default(),
         sessions: SessionHistory::new(),
-        health: hems_forecast::PlantHealth::new(),
+        health: ems_forecast::PlantHealth::new(),
         days,
     };
 
@@ -399,8 +399,8 @@ pub fn warm_up(
             // The same two numbers to the monitor watching for the array to
             // move, as watts over a quarter hour turned into kilowatt-hours.
             learned.health.observe_slot(
-                modelled.get() * hems_core::prelude::SLOT_HOURS / 1000.0,
-                actual.get() * hems_core::prelude::SLOT_HOURS / 1000.0,
+                modelled.get() * ems_core::prelude::SLOT_HOURS / 1000.0,
+                actual.get() * ems_core::prelude::SLOT_HOURS / 1000.0,
             );
             // The household: what it drew.
             learned
@@ -484,7 +484,7 @@ pub fn load_forecast(
     if !profile.is_empty() {
         return Some(profile.forecast(horizon));
     }
-    measured_now.map(|recent| hems_forecast::naive::persistence(recent, horizon, 0.9))
+    measured_now.map(|recent| ems_forecast::naive::persistence(recent, horizon, 0.9))
 }
 
 /// BDEW's H25 scaled to this household, by the best basis the box has.

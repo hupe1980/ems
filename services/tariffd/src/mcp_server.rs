@@ -25,9 +25,9 @@
 
 use std::sync::Arc;
 
-use hems_core::prelude::Horizon;
-use hems_service::mcp::{McpAuth, rfc3339};
-use hems_tariff::cache::PriceCache;
+use ems_core::prelude::Horizon;
+use ems_service::mcp::{McpAuth, rfc3339};
+use ems_tariff::cache::PriceCache;
 use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -326,5 +326,5 @@ pub fn router(
     auth: McpAuth,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
-    hems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
+    ems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
 }

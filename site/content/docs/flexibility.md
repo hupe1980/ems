@@ -24,12 +24,12 @@ A battery, a hot water tank and a parked car are all *storage with a fill level*
 Once they say so in the same words, a planner can plan all three without knowing
 what any of them is. A device that arrives next year works with no new driver.
 
-That is not only an argument. The hot-water tank in `hems-optimizer` is a fill
+That is not only an argument. The hot-water tank in `ems-optimizer` is a fill
 level, a fill rate and a leakage — S2's own view of a tank, and deliberately not
 a second RC model — which is why adding it was a variable and a constraint rather
 than a device class.
 
-So hems plans in S2's terms internally and translates at the edge. `hems-flex`
+So hems plans in S2's terms internally and translates at the edge. `ems-flex`
 is that internal model.
 
 ## The five control types
@@ -191,7 +191,7 @@ a device can sit inside the count for versions with nothing to send.
 ## Describing is half of it
 
 A device that says what it can do and then ignores the answer has made S2's
-argument and declined the consequence. The other half is `hems_flex::session` —
+argument and declined the consequence. The other half is `ems_flex::session` —
 the Resource Manager's whole side of a conversation:
 
 1. the RM speaks first, and its `Handshake` is the one that must list versions

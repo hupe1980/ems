@@ -162,7 +162,7 @@ impl Registry {
         }
         // A constant-time comparison, because the alternative leaks the secret
         // one byte at a time to anybody willing to measure.
-        if !hems_service::auth::constant_time_eq(entry.enrolment_secret.expose(), secret.as_bytes())
+        if !ems_service::auth::constant_time_eq(entry.enrolment_secret.expose(), secret.as_bytes())
         {
             return Err(EnrolmentError::WrongSecret);
         }
@@ -284,7 +284,7 @@ mod tests {
                 (
                     "site-1".to_owned(),
                     SiteEntry {
-                        enrolment_secret: hems_service::Secret::literal("s3cret"),
+                        enrolment_secret: ems_service::Secret::literal("s3cret"),
                         config: "listen = \"0.0.0.0:8080\"\n".into(),
                         config_version: "7".into(),
                         config_signature: "00".repeat(64),
@@ -293,7 +293,7 @@ mod tests {
                 (
                     "site-2".to_owned(),
                     SiteEntry {
-                        enrolment_secret: hems_service::Secret::literal("other"),
+                        enrolment_secret: ems_service::Secret::literal("other"),
                         config: String::new(),
                         config_version: "1".into(),
                         config_signature: "00".repeat(64),

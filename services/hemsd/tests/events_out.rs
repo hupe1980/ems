@@ -4,7 +4,7 @@
 //! sent and answers what the test tells it to. Every signature is checked by an
 //! implementation of the Standard Webhooks rule written here from the
 //! specification — HMAC-SHA256 over `id.timestamp.body`, keyed with the bytes
-//! behind `whsec_` — and not by `hems-events`' own `verify`, so a mistake in
+//! behind `whsec_` — and not by `ems-events`' own `verify`, so a mistake in
 //! the signer cannot be agreed with by its twin.
 
 use std::sync::Arc;
@@ -89,7 +89,7 @@ async fn a_reduction_reaches_a_receiver_signed_and_nothing_else_does() {
             Asked {
                 name: "Home Assistant".into(),
                 url,
-                types: vec!["de.hems.grid.*".into()],
+                types: vec!["de.ems.grid.*".into()],
                 subjects: vec![],
                 public: false,
             },
@@ -121,8 +121,8 @@ async fn a_reduction_reaches_a_receiver_signed_and_nothing_else_does() {
     assert_eq!(
         types,
         [
-            "de.hems.grid.lpc.limit.received",
-            "de.hems.grid.lpc.limit.released"
+            "de.ems.grid.lpc.limit.received",
+            "de.ems.grid.lpc.limit.released"
         ],
         "the reduction's two events, and not the goal it did not ask for"
     );
@@ -149,7 +149,7 @@ async fn a_receiver_that_fails_gets_the_same_event_again_later() {
             Asked {
                 name: "Node-RED".into(),
                 url,
-                types: vec!["de.hems.grid.lpc.limit.received".into()],
+                types: vec!["de.ems.grid.lpc.limit.received".into()],
                 subjects: vec![],
                 public: false,
             },
@@ -202,7 +202,7 @@ async fn a_test_ping_says_what_the_receiver_answered() {
             Asked {
                 name: "the installer".into(),
                 url,
-                types: vec!["de.hems.test.ping".into()],
+                types: vec!["de.ems.test.ping".into()],
                 subjects: vec![],
                 public: false,
             },
@@ -235,17 +235,17 @@ async fn the_box_refuses_to_send_where_the_household_did_not_point_it() {
     for (what, asked) in [
         (
             "loopback",
-            to("http://127.0.0.1:9/hook", &["de.hems.grid.*"]),
+            to("http://127.0.0.1:9/hook", &["de.ems.grid.*"]),
         ),
         (
             "link-local",
-            to("http://169.254.10.1/hook", &["de.hems.grid.*"]),
+            to("http://169.254.10.1/hook", &["de.ems.grid.*"]),
         ),
         (
             "an unknown type",
             to(
                 "http://192.168.1.20/hook",
-                &[format!("{}weather.*", hems_events::PREFIX).as_str()],
+                &[format!("{}weather.*", ems_events::PREFIX).as_str()],
             ),
         ),
         ("no type", to("http://192.168.1.20/hook", &[])),
@@ -265,7 +265,7 @@ async fn a_ninth_system_is_refused() {
                 Asked {
                     name: format!("system {i}"),
                     url: format!("http://192.168.1.{}/hook", 10 + i),
-                    types: vec!["de.hems.*".into()],
+                    types: vec!["de.ems.*".into()],
                     subjects: vec![],
                     public: false,
                 },
@@ -279,7 +279,7 @@ async fn a_ninth_system_is_refused() {
             Asked {
                 name: "one too many".into(),
                 url: "http://192.168.1.99/hook".into(),
-                types: vec!["de.hems.*".into()],
+                types: vec!["de.ems.*".into()],
                 subjects: vec![],
                 public: false,
             },
@@ -313,7 +313,7 @@ async fn a_revoke_during_a_slow_delivery_holds() {
             Asked {
                 name: "slow".into(),
                 url,
-                types: vec!["de.hems.grid.*".into()],
+                types: vec!["de.ems.grid.*".into()],
                 subjects: vec![],
                 public: false,
             },

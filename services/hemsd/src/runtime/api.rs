@@ -72,11 +72,11 @@ pub struct Local {
 #[derive(Clone, Default)]
 pub struct HomeSources {
     /// The house, so the page can name its devices.
-    pub site: Option<Arc<hems_core::prelude::Site>>,
+    pub site: Option<Arc<ems_core::prelude::Site>>,
     /// The plan in force.
-    pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
+    pub plan: Arc<tokio::sync::RwLock<Option<ems_core::prelude::Plan>>>,
     /// The prices it was made against.
-    pub prices: Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    pub prices: Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     /// The household's goals, shared with the planner.
     pub goal: crate::home::Goals,
     /// The car as the planner last saw it.
@@ -244,7 +244,7 @@ pub struct StatusBody {
     /// that would notice: its own forecast corrector is built to learn a lower
     /// roof and carry on planning well (D199).
     #[schemars(schema_with = "crate::openapi::roof_health")]
-    pub roof_health: Option<hems_forecast::Health>,
+    pub roof_health: Option<ems_forecast::Health>,
     /// The § 14a ceiling in force, kW.
     pub steuve_ceiling_kw: Option<f64>,
     /// What the controllable devices may draw in total, surplus included, kW.
@@ -496,7 +496,7 @@ async fn series(
 pub struct OverrideBody {
     /// `boost`, `pause` or `away`.
     #[schemars(schema_with = "crate::openapi::user_override")]
-    pub what: hems_core::setpoint::UserOverride,
+    pub what: ems_core::setpoint::UserOverride,
     /// How long, in minutes. Absent takes the default; anything over a day is
     /// clamped, because longer than that is a statement about the house rather
     /// than about this afternoon.
@@ -511,7 +511,7 @@ pub struct OverrideView {
     pub asset: String,
     /// What was asked for.
     #[schemars(schema_with = "crate::openapi::user_override")]
-    pub what: hems_core::setpoint::UserOverride,
+    pub what: ems_core::setpoint::UserOverride,
     /// When it stops applying, RFC 3339.
     pub until: String,
 }
@@ -519,12 +519,12 @@ pub struct OverrideView {
 /// Ask for one.
 async fn set_override(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     axum::extract::Path(asset): axum::extract::Path<String>,
     Json(body): Json<OverrideBody>,
 ) -> Result<Json<OverrideView>, axum::http::StatusCode> {
-    let asset = hems_core::prelude::AssetId::new(&asset)
-        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let asset =
+        ems_core::prelude::AssetId::new(&asset).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     let now = time::OffsetDateTime::now_utc();
     let held = local
         .overrides
@@ -554,10 +554,10 @@ async fn set_override(
 /// Withdraw one.
 async fn clear_override(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     axum::extract::Path(asset): axum::extract::Path<String>,
 ) -> axum::http::StatusCode {
-    let Ok(asset) = hems_core::prelude::AssetId::new(&asset) else {
+    let Ok(asset) = ems_core::prelude::AssetId::new(&asset) else {
         return axum::http::StatusCode::BAD_REQUEST;
     };
     if local.overrides.clear(&asset).await {
@@ -571,7 +571,7 @@ async fn clear_override(
 /// Withdraw all of them — the "back to normal" button.
 async fn clear_overrides(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
 ) -> Result<axum::http::StatusCode, (axum::http::StatusCode, String)> {
     let n = local.overrides.clear_all().await;
     if n == 0 {
@@ -603,7 +603,7 @@ async fn list_overrides(State(local): State<Local>) -> Json<Vec<OverrideView>> {
 }
 
 /// Who made a request, for the audit line (SR-007): `cem:<name>` or the site.
-fn subject(who: Option<&hems_service::auth::Authority>) -> String {
+fn subject(who: Option<&ems_service::auth::Authority>) -> String {
     who.map_or_else(|| "unknown".into(), |a| a.subject().to_string())
 }
 
@@ -672,7 +672,7 @@ async fn list_subscriptions(
 /// Tell one more system; its secret is in the answer and nowhere else.
 async fn subscribe(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     Json(asked): Json<crate::runtime::webhooks::Asked>,
 ) -> Result<(StatusCode, Json<crate::runtime::webhooks::Created>), (StatusCode, String)> {
     let created = hooks_of(&local)?
@@ -697,7 +697,7 @@ async fn subscribe(
 /// Stop telling one.
 async fn revoke_subscription(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     if hooks_of(&local)?.revoke(&id).await.map_err(hooks_refused)? {
@@ -708,7 +708,7 @@ async fn revoke_subscription(
     }
 }
 
-/// Send it a `de.hems.test.ping` now, and say what it answered.
+/// Send it a `de.ems.test.ping` now, and say what it answered.
 async fn test_subscription(
     State(local): State<Local>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -751,7 +751,7 @@ async fn push_overview(
 /// the box the way this browser reaches it.
 async fn push_subscribe(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     headers: axum::http::HeaderMap,
     Json(asked): Json<crate::runtime::push::Asked>,
 ) -> Result<Json<crate::runtime::push::View>, (StatusCode, String)> {
@@ -794,7 +794,7 @@ pub struct PushEndpoint {
 /// Unsubscribe a browser.
 async fn push_forget(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     Json(which): Json<PushEndpoint>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let existed = push_of(&local)?
@@ -928,7 +928,7 @@ async fn quote_goal(
     };
     let now = OffsetDateTime::now_utc();
     let tank = site.assets.iter().find_map(|a| match a {
-        hems_core::prelude::Asset::Dhw(tank) => Some(tank.clone()),
+        ems_core::prelude::Asset::Dhw(tank) => Some(tank.clone()),
         _ => None,
     });
     let (last, car, tank_facts) = (
@@ -962,7 +962,7 @@ async fn quote_goal(
 
 async fn set_goal(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     Path(asset): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
@@ -988,12 +988,12 @@ async fn set_goal(
         NewGoal::Car(g) => local.home.car.lock().await.map(|facts| {
             serde_json::json!(crate::home::judge_goal(
                 &crate::home::session_for(&facts, g, now),
-                hems_core::prelude::Slot::containing(now),
+                ems_core::prelude::Slot::containing(now),
             ))
         }),
         NewGoal::Tank(g) => {
             let tank = site.assets.iter().find_map(|a| match a {
-                hems_core::prelude::Asset::Dhw(tank) => Some(tank),
+                ems_core::prelude::Asset::Dhw(tank) => Some(tank),
                 _ => None,
             });
             let facts = *local.home.tank.lock().await;
@@ -1071,10 +1071,10 @@ async fn status(State(local): State<Local>) -> Json<StatusBody> {
             .collect(),
         undriven: held.undriven.iter().map(ToString::to_string).collect(),
         roof_health: held.roof_health,
-        steuve_ceiling_kw: held.steuve_ceiling.map(hems_core::prelude::Power::kw),
-        steuve_budget_kw: held.steuve_budget.map(hems_core::prelude::Power::kw),
-        netzwirksam_kw: held.netzwirksam.map(hems_core::prelude::Power::kw),
-        balance_residual_w: held.balance_residual.map(hems_core::prelude::Power::get),
+        steuve_ceiling_kw: held.steuve_ceiling.map(ems_core::prelude::Power::kw),
+        steuve_budget_kw: held.steuve_budget.map(ems_core::prelude::Power::kw),
+        netzwirksam_kw: held.netzwirksam.map(ems_core::prelude::Power::kw),
+        balance_residual_w: held.balance_residual.map(ems_core::prelude::Power::get),
         // `i64::MAX` is the sentinel for "never planned", and it must not reach
         // a screen as a number: nine quintillion minutes is not a duration
         // anybody can act on, and `null` is the honest JSON for "there has not
@@ -1222,7 +1222,7 @@ async fn list_trusted(State(local): State<Local>) -> Json<PairingBody> {
 /// live, with no restart and no edited file.
 async fn approve_peer(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     Json(approval): Json<Approval>,
 ) -> Result<Json<PairingBody>, (axum::http::StatusCode, String)> {
     let Some(trust) = local.trust.as_ref() else {
@@ -1249,7 +1249,7 @@ async fn approve_peer(
 /// ask again — and nothing at all about a peer that is not currently waiting.
 async fn refuse_peer(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     axum::extract::Path(ski): axum::extract::Path<String>,
 ) -> Result<Json<PairingBody>, (axum::http::StatusCode, String)> {
     let Some(trust) = local.trust.as_ref() else {
@@ -1273,7 +1273,7 @@ async fn refuse_peer(
 /// reconnect, which is what revocation means.
 async fn forget_peer(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     axum::extract::Path(ski): axum::extract::Path<String>,
 ) -> Result<axum::http::StatusCode, (axum::http::StatusCode, String)> {
     let Some(trust) = local.trust.as_ref() else {
@@ -1522,7 +1522,7 @@ async fn handover(
 /// Narrow by construction — see [`crate::runtime::handover`].
 async fn discover(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     Json(ask): Json<crate::runtime::handover::Ask>,
 ) -> Result<Json<crate::runtime::handover::Discovered>, (StatusCode, String)> {
     use crate::runtime::handover;
@@ -1569,7 +1569,7 @@ pub struct NewToken {
 /// cookie is `HttpOnly` precisely so the page's scripts never hold one.
 async fn replace_token(
     State(local): State<Local>,
-    who: Option<axum::Extension<hems_service::auth::Authority>>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     headers: axum::http::HeaderMap,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
     use crate::runtime::access::ReplaceError;
@@ -1674,7 +1674,7 @@ mod series_tests {
         store
             .record(
                 at,
-                &[(crate::series::GRID, hems_core::prelude::Power::from_kw(2.5))],
+                &[(crate::series::GRID, ems_core::prelude::Power::from_kw(2.5))],
             )
             .expect("a tick");
 

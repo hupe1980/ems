@@ -1,6 +1,6 @@
-base_url = "https://hupe1980.github.io/hems"
-title = "hems"
-description = "Open-source home energy management for German households: § 14a, § 9 EEG and MiSpeL as cited code, a grid guard nothing overrides, and honest savings."
+base_url = "https://hupe1980.github.io/ems"
+title = "ems"
+description = "Open-source energy management for the German grid — hems, for households: § 14a, § 9 EEG and MiSpeL as cited code, a grid guard nothing overrides, and honest savings."
 default_language = "en"
 compile_sass = false
 build_search_index = true
@@ -28,12 +28,12 @@ include_description = true
 include_path = true
 
 [extra]
-repository = "https://github.com/hupe1980/hems"
+repository = "https://github.com/hupe1980/ems"
 author     = "hupe1980"
 # The documentation sidebar's groups, in order; each page names its own in
 # `[extra] group`.
 doc_groups = ["Start", "The box", "Running it"]
-tagline    = "open-source home energy management for the German grid"
+tagline    = "open-source energy management for the German grid"
 
 # The landing page's five numbers. They are here rather than in the template so
 # that changing one is a one-line diff against the thing that produced it, and

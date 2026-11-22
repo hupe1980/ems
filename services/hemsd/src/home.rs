@@ -24,8 +24,8 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::prelude::{Asset, AssetId, Power, Site, Slot};
-use hems_core::setpoint::{FallbackCause, GuardRule, RealtimeCause, Reason, UserOverride};
+use ems_core::prelude::{Asset, AssetId, Power, Site, Slot};
+use ems_core::setpoint::{FallbackCause, GuardRule, RealtimeCause, Reason, UserOverride};
 use serde::Serialize;
 
 /// Who is responsible for what a device is doing — the colour the page gives it.
@@ -236,7 +236,7 @@ pub fn kind_of(asset: &Asset) -> Option<&'static str> {
         Asset::Dhw(_) => "hot_water",
         // The house's own uninstrumented load is the house, not a device a
         // household can do anything about.
-        Asset::Load(load) if matches!(load.kind, hems_core::asset::LoadKind::Fixed) => return None,
+        Asset::Load(load) if matches!(load.kind, ems_core::asset::LoadKind::Fixed) => return None,
         Asset::Load(_) => "appliance",
         Asset::Meter(_) | Asset::Relay(_) => return None,
     })
@@ -354,7 +354,7 @@ pub const TIGHT_ABOVE: f64 = 0.8;
 /// `session` is the session the planner would plan: what is in the car, the goal
 /// as target and departure, the charge point's limits.
 #[must_use]
-pub fn judge_goal(session: &hems_optimizer::model::EvSession, now: Slot) -> GoalAnswer {
+pub fn judge_goal(session: &ems_optimizer::model::EvSession, now: Slot) -> GoalAnswer {
     let needed = (session.energy_target - session.energy_now).kwh().max(0.0);
     if needed <= 0.0 {
         return GoalAnswer {
@@ -391,7 +391,7 @@ pub fn judge_goal(session: &hems_optimizer::model::EvSession, now: Slot) -> Goal
 /// planner, which only asks how much of the window a promise uses, and blind
 /// above one, which is exactly where a goal becomes impossible. The same
 /// arithmetic, unclamped; the test holds the two together below one.
-fn demand_ratio(session: &hems_optimizer::model::EvSession, now: Slot) -> f64 {
+fn demand_ratio(session: &ems_optimizer::model::EvSession, now: Slot) -> f64 {
     let owed = (session.energy_target - session.energy_now).kwh().max(0.0);
     let from = session.arrival.unwrap_or(now).max(now);
     let slots = from.distance_to(session.departure).max(0) as f64;
@@ -443,7 +443,7 @@ pub struct TankAnswer {
 
 /// The tank as the planner last saw it, published so a new goal can be judged
 /// at once, without a solve.
-pub type TankFacts = std::sync::Arc<tokio::sync::Mutex<Option<hems_optimizer::model::DhwModel>>>;
+pub type TankFacts = std::sync::Arc<tokio::sync::Mutex<Option<ems_optimizer::model::DhwModel>>>;
 
 /// Judge a hot-water goal with the planner's own tank model.
 ///
@@ -453,8 +453,8 @@ pub type TankFacts = std::sync::Arc<tokio::sync::Mutex<Option<hems_optimizer::mo
 /// not guessed at: the verdict says whether the *heater* can get there.
 #[must_use]
 pub fn judge_tank(
-    tank: &hems_core::asset::DhwTank,
-    facts: &hems_optimizer::model::DhwModel,
+    tank: &ems_core::asset::DhwTank,
+    facts: &ems_optimizer::model::DhwModel,
     goal: TankGoal,
     now: time::OffsetDateTime,
 ) -> TankAnswer {
@@ -502,11 +502,11 @@ pub fn judge_tank(
 /// The planner's target for a hot-water goal.
 #[must_use]
 pub fn tank_target(
-    tank: &hems_core::asset::DhwTank,
+    tank: &ems_core::asset::DhwTank,
     goal: TankGoal,
     now: time::OffsetDateTime,
-) -> hems_optimizer::model::DhwTarget {
-    hems_optimizer::model::DhwTarget {
+) -> ems_optimizer::model::DhwTarget {
+    ems_optimizer::model::DhwTarget {
         stored: tank.stored_heat(goal.target_c),
         by: Slot::containing(next_wall_clock(goal.by_minute, now)),
     }
@@ -690,7 +690,7 @@ pub struct Ahead {
 /// where it is not a number, or where the plan has run out: a wrong figure
 /// here is worse than none.
 #[must_use]
-pub fn ahead(plan: &hems_core::prelude::Plan, now: time::OffsetDateTime) -> Option<Ahead> {
+pub fn ahead(plan: &ems_core::prelude::Plan, now: time::OffsetDateTime) -> Option<Ahead> {
     let bill = plan.expected_cost?.billed_eur();
     let until = plan.horizon.end();
     let from = plan.horizon.first.start();
@@ -707,7 +707,7 @@ pub fn ahead(plan: &hems_core::prelude::Plan, now: time::OffsetDateTime) -> Opti
 /// The car as the planner last saw it — what is in it, its capacity, the charge
 /// point's limits — published so a new goal can be judged at once, without a
 /// solve. Its target and departure are placeholders; [`session_for`] sets them.
-pub type CarFacts = std::sync::Arc<tokio::sync::Mutex<Option<hems_optimizer::model::EvSession>>>;
+pub type CarFacts = std::sync::Arc<tokio::sync::Mutex<Option<ems_optimizer::model::EvSession>>>;
 
 /// The next instant the Berlin wall clock reads `by_minute` after `now`.
 ///
@@ -715,7 +715,7 @@ pub type CarFacts = std::sync::Arc<tokio::sync::Mutex<Option<hems_optimizer::mod
 /// hours after midnight, not seven.
 #[must_use]
 pub fn next_wall_clock(by_minute: u16, now: time::OffsetDateTime) -> time::OffsetDateTime {
-    use hems_core::calendar::{day_start_utc, local_day, to_berlin};
+    use ems_core::calendar::{day_start_utc, local_day, to_berlin};
     let at = |day: time::Date| {
         let start = day_start_utc(day);
         let naive = start + time::Duration::minutes(i64::from(by_minute));
@@ -735,11 +735,11 @@ pub fn next_wall_clock(by_minute: u16, now: time::OffsetDateTime) -> time::Offse
 /// The session the planner would plan for `goal`, from the car as last seen.
 #[must_use]
 pub fn session_for(
-    facts: &hems_optimizer::model::EvSession,
+    facts: &ems_optimizer::model::EvSession,
     goal: CarGoal,
     now: time::OffsetDateTime,
-) -> hems_optimizer::model::EvSession {
-    hems_optimizer::model::EvSession {
+) -> ems_optimizer::model::EvSession {
+    ems_optimizer::model::EvSession {
         energy_target: facts.capacity * goal.target_soc.clamp(0.0, 1.0),
         departure: Slot::containing(next_wall_clock(goal.by_minute, now)),
         arrival: None,
@@ -833,7 +833,7 @@ pub struct Home {
 #[must_use]
 pub fn stale_levies_year(now: time::OffsetDateTime) -> Option<i32> {
     let year = Slot::containing(now).local_date().year();
-    let (published, _) = hems_tariff::Levies::latest_published(year);
+    let (published, _) = ems_tariff::Levies::latest_published(year);
     (published != year).then_some(published)
 }
 
@@ -844,15 +844,15 @@ pub struct Live<'a> {
     /// What the last tick decided and saw.
     pub status: &'a crate::runtime::control::Status,
     /// The plan in force.
-    pub plan: Option<&'a hems_core::prelude::Plan>,
+    pub plan: Option<&'a ems_core::prelude::Plan>,
     /// The prices it was made against.
-    pub prices: Option<&'a hems_tariff::PriceStack>,
+    pub prices: Option<&'a ems_tariff::PriceStack>,
     /// The household's goals.
     pub goals: GoalSet,
     /// The car as the planner last saw it.
-    pub car: Option<hems_optimizer::model::EvSession>,
+    pub car: Option<ems_optimizer::model::EvSession>,
     /// The tank as the planner last saw it.
-    pub tank: Option<hems_optimizer::model::DhwModel>,
+    pub tank: Option<ems_optimizer::model::DhwModel>,
     /// The box's SKI and certificate fingerprint.
     pub ski: Option<String>,
     /// The SHA-256 fingerprint of its certificate.
@@ -1046,7 +1046,7 @@ fn devices_now(
 /// When the plan next runs `asset`, and at what price: the local wall-clock
 /// time of the first later quarter hour it draws in, and that slot's ct/kWh.
 fn next_use(
-    plan: &hems_core::prelude::Plan,
+    plan: &ems_core::prelude::Plan,
     asset: &AssetId,
     now: Slot,
     price_of: &dyn Fn(Slot) -> Option<f64>,
@@ -1061,7 +1061,7 @@ fn next_use(
                 .any(|t| t.asset == *asset && t.power.kw() > 0.05)
         })?
         .slot;
-    let local = hems_core::calendar::to_berlin(slot.start());
+    let local = ems_core::calendar::to_berlin(slot.start());
     Some((
         format!("{:02}:{:02}", local.hour(), local.minute()),
         price_of(slot)?,
@@ -1111,7 +1111,7 @@ fn relative(mut e: Explanation, price_ct: Option<f64>, horizon: &[f64]) -> Expla
 }
 
 /// The page's word for the roof's verdict.
-fn roof_word(health: &hems_forecast::Health) -> String {
+fn roof_word(health: &ems_forecast::Health) -> String {
     let debug = format!("{health:?}").to_lowercase();
     if debug.starts_with("degraded") {
         "degraded".into()
@@ -1124,15 +1124,15 @@ fn roof_word(health: &hems_forecast::Health) -> String {
 
 /// A closed day, as a receipt.
 #[must_use]
-pub fn receipt_of(day: &hems_core::report::DayKpis) -> Receipt {
+pub fn receipt_of(day: &ems_core::report::DayKpis) -> Receipt {
     let (cost, without) = day.economics.as_ref().map_or(
         (
-            hems_core::prelude::CostBreakdown::default(),
-            hems_core::prelude::CostBreakdown::default(),
+            ems_core::prelude::CostBreakdown::default(),
+            ems_core::prelude::CostBreakdown::default(),
         ),
         |e| (e.cost, e.baseline),
     );
-    let total = |c: &hems_core::prelude::CostBreakdown| c.total();
+    let total = |c: &ems_core::prelude::CostBreakdown| c.total();
     Receipt {
         day: day.date.to_string(),
         priced: day.economics.is_some(),
@@ -1186,7 +1186,7 @@ pub fn devices_of(site: &Site) -> Vec<(AssetId, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::setpoint::Reason;
+    use ems_core::setpoint::Reason;
 
     fn every_reason() -> Vec<Reason> {
         let mut out = vec![Reason::Cem];
@@ -1265,7 +1265,7 @@ mod tests {
         let plan = |kw| {
             explain(
                 &Reason::Plan {
-                    plan: hems_core::prelude::PlanId::new(),
+                    plan: ems_core::prelude::PlanId::new(),
                     slot: Slot::containing(time::macros::datetime!(2026-01-15 03:30 UTC)),
                     marginal_eur_per_kwh: None,
                 },
@@ -1283,15 +1283,15 @@ mod tests {
         now_kwh: f64,
         target_kwh: f64,
         slots: i64,
-    ) -> (hems_optimizer::model::EvSession, Slot) {
-        use hems_core::prelude::Energy;
+    ) -> (ems_optimizer::model::EvSession, Slot) {
+        use ems_core::prelude::Energy;
         let now = Slot::containing(time::macros::datetime!(2026-01-14 21:00 UTC));
         let mut departure = now;
         for _ in 0..slots {
             departure = departure.next();
         }
         (
-            hems_optimizer::model::EvSession {
+            ems_optimizer::model::EvSession {
                 energy_now: Energy::from_kwh(now_kwh),
                 energy_target: Energy::from_kwh(target_kwh),
                 capacity: Energy::from_kwh(60.0),
@@ -1359,7 +1359,7 @@ mod tests {
         );
     }
 
-    fn reference_tank() -> (hems_core::asset::DhwTank, hems_optimizer::model::DhwModel) {
+    fn reference_tank() -> (ems_core::asset::DhwTank, ems_optimizer::model::DhwModel) {
         let site = crate::site::Household::build(&crate::HouseholdConfig::default())
             .expect("the reference household")
             .site;
@@ -1371,12 +1371,12 @@ mod tests {
                 _ => None,
             })
             .expect("the reference tank");
-        let facts = hems_optimizer::model::DhwModel {
+        let facts = ems_optimizer::model::DhwModel {
             // Lukewarm: 48 °C in a tank that holds 45 to 60.
             stored_now: tank.stored_heat(48.0),
             cop: tank.cop,
             standing_loss: tank.standing_loss,
-            ..hems_optimizer::model::DhwModel::tank(tank.usable_heat(), tank.heater)
+            ..ems_optimizer::model::DhwModel::tank(tank.usable_heat(), tank.heater)
         };
         (tank, facts)
     }
@@ -1526,7 +1526,7 @@ mod tests {
 
     #[test]
     fn the_bill_ahead_is_shown_only_where_the_plan_prices_it() {
-        use hems_core::prelude::{CostBreakdown, Horizon, Plan};
+        use ems_core::prelude::{CostBreakdown, Horizon, Plan};
         let now = time::macros::datetime!(2026-01-15 16:30 UTC);
         let mut plan = Plan::empty(Horizon::new(now, 96), now);
         assert_eq!(ahead(&plan, now), None, "a plan with no cost shows none");

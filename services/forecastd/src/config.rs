@@ -1,6 +1,6 @@
 //! What `forecastd` is told.
 
-use hems_core::prelude::GeoPoint;
+use ems_core::prelude::GeoPoint;
 
 /// One place to forecast for.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -18,7 +18,7 @@ pub struct Location {
 }
 
 impl Location {
-    /// The geometry `hems-forecast` wants.
+    /// The geometry `ems-forecast` wants.
     #[must_use]
     pub const fn point(&self) -> GeoPoint {
         GeoPoint {
@@ -39,14 +39,14 @@ pub struct Settings {
     /// environment override is unaffected — it goes through `AsMut<Settings>`
     /// rather than through the file's shape.
     #[serde(default)]
-    pub service: hems_service::Settings,
+    pub service: ems_service::Settings,
     /// Where to fetch from.
     ///
     /// The default is Open-Meteo's public endpoint, already carrying
     /// `timeformat=unixtime` — which is not a convenience. Open-Meteo's default
     /// format is a local wall-clock string with no offset, and reading one of
     /// those without knowing the timezone that was asked for is an hour wrong
-    /// twice a year. `hems_forecast::open_meteo` refuses it rather than
+    /// twice a year. `ems_forecast::open_meteo` refuses it rather than
     /// guessing, so the query has to ask for the other one.
     pub endpoint: String,
     /// The places to forecast for.
@@ -67,7 +67,7 @@ pub struct Settings {
     ///
     /// Open like the REST routes when it is switched on: a location's sky is public weather, not a household's data.
     #[serde(default)]
-    pub mcp: hems_service::McpSettings,
+    pub mcp: ems_service::McpSettings,
 }
 
 /// Open-Meteo's forecast endpoint, with the variables and the time format this
@@ -81,20 +81,20 @@ pub const DEFAULT_ENDPOINT: &str = "https://api.open-meteo.com/v1/forecast\
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            service: hems_service::Settings::default(),
+            service: ems_service::Settings::default(),
             endpoint: DEFAULT_ENDPOINT.into(),
             locations: Vec::new(),
             poll_interval_s: 3600,
             request_timeout_s: 20,
             max_backoff_s: 3600 * 4,
             ready_slots: 96,
-            mcp: hems_service::McpSettings::default(),
+            mcp: ems_service::McpSettings::default(),
         }
     }
 }
 
-impl AsMut<hems_service::Settings> for Settings {
-    fn as_mut(&mut self) -> &mut hems_service::Settings {
+impl AsMut<ems_service::Settings> for Settings {
+    fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
     }
 }

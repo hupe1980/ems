@@ -6,7 +6,7 @@
 //! answers for one household, with the WAN cut.
 //!
 //! The two do not share code, and they share the **types** instead —
-//! `hems_grid::ControlEvent` and `QuarterHour` travel between them. That is the
+//! `ems_grid::ControlEvent` and `QuarterHour` travel between them. That is the
 //! same mechanism that keeps `DayKpis` honest between here and `obsd`: a renamed
 //! field is a compile error rather than a column that quietly stops matching.
 //!
@@ -51,9 +51,9 @@
 
 use std::path::Path;
 
-use hems_core::prelude::{Power, Slot};
-use hems_grid::evidence::{ComplianceSample, ControlEvent};
-use hems_grid::mispel::QuarterHour;
+use ems_core::prelude::{Power, Slot};
+use ems_grid::evidence::{ComplianceSample, ControlEvent};
+use ems_grid::mispel::QuarterHour;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -857,7 +857,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError`] where the write fails, or where the model cannot be
-    /// serialised — which would be a defect in `hems-forecast` rather than a
+    /// serialised — which would be a defect in `ems-forecast` rather than a
     /// runtime condition, and is worth an error rather than a silent skip
     /// because a box that quietly stopped remembering its roof would look
     /// exactly like one that had just been installed.
@@ -1584,9 +1584,9 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::prelude::{AssetId, GuardRule};
-    use hems_grid::evidence::Action;
-    use hems_grid::para14a::ControlMode;
+    use ems_core::prelude::{AssetId, GuardRule};
+    use ems_grid::evidence::Action;
+    use ems_grid::para14a::ControlMode;
     use rust_decimal::Decimal;
     use time::macros::datetime;
 
@@ -1681,7 +1681,7 @@ mod tests {
     #[test]
     fn a_box_with_no_battery_meter_records_no_storage_register() {
         // The null is the load-bearing half: it means "not separately metered",
-        // and `hems_grid::mispel` refuses Basisfall A4 on it. A zero would be a
+        // and `ems_grid::mispel` refuses Basisfall A4 on it. A zero would be a
         // settlement claiming the battery stood still.
         let store = Store::in_memory().unwrap();
         store.put_quarter_hour(&quarter(NOW), NOW).unwrap();
@@ -2145,7 +2145,7 @@ mod outbound_tests {
         store
             .queue_event(
                 "haus-1:2026-01-14",
-                "de.hems.site.day.reported",
+                "de.ems.site.day.reported",
                 b"first",
                 NOW,
             )
@@ -2154,7 +2154,7 @@ mod outbound_tests {
         store
             .queue_event(
                 "haus-1:2026-01-14",
-                "de.hems.site.day.reported",
+                "de.ems.site.day.reported",
                 b"corrected",
                 NOW + time::Duration::hours(1),
             )
@@ -2174,7 +2174,7 @@ mod outbound_tests {
     fn a_queued_day_survives_until_the_fleet_takes_it() {
         let mut store = Store::in_memory().unwrap();
         store
-            .queue_event("haus-1:2026-01-14", "de.hems.site.day.reported", b"{}", NOW)
+            .queue_event("haus-1:2026-01-14", "de.ems.site.day.reported", b"{}", NOW)
             .unwrap();
         assert_eq!(store.backlog().unwrap().outbound, 1);
 
@@ -2200,7 +2200,7 @@ mod outbound_tests {
         // disappeared with no account of why.
         let mut store = Store::in_memory().unwrap();
         store
-            .queue_event("haus-1:2026-01-14", "de.hems.site.day.reported", b"{}", NOW)
+            .queue_event("haus-1:2026-01-14", "de.ems.site.day.reported", b"{}", NOW)
             .unwrap();
         store.abandon_event(1, "HTTP 400", NOW).unwrap();
 

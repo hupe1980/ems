@@ -1,13 +1,13 @@
 //! The session a § 14a limit actually arrives over.
 //!
-//! `hems-drv/eebus` is the Controllable System: it runs the LPC state machine,
+//! `ems-drv/eebus` is the Controllable System: it runs the LPC state machine,
 //! owns a SPINE engine, and takes and gives SPINE datagrams as bytes — which is
 //! exactly what a SHIP data frame carries. This is the layer underneath: TCP,
 //! TLS 1.2 with mutual authentication, the WebSocket upgrade, the SHIP
 //! handshake, and the framing.
 //!
 //! Nothing about the protocol is decided here. What crosses the seam is a
-//! datagram, so a limit that arrives in `crates/hems-drv/tests/eebus_spine.rs`
+//! datagram, so a limit that arrives in `crates/ems-drv/tests/eebus_spine.rs`
 //! arrives on a real box, and there is exactly one copy of the § 14a state
 //! machine in the product.
 //!
@@ -37,9 +37,9 @@ use eebus::cert::{self, CertParams, Identity};
 use eebus::runtime::{Node, TrustStore, TrustedPeer};
 use eebus::ship::Ski;
 use eebus::tls::ShipTls;
-use hems_core::prelude::AssetId;
-use hems_drv::LinkState;
-use hems_service::Shutdown;
+use ems_core::prelude::AssetId;
+use ems_drv::LinkState;
+use ems_service::Shutdown;
 use tokio::sync::Mutex;
 
 use crate::drivers::{Attached, DriverId};

@@ -1,6 +1,6 @@
 //! The Modbus TCP far end: `tokio-modbus`'s server over the register images.
 //!
-//! Deliberately not `hems-drv`'s codec turned round — a server and a client by
+//! Deliberately not `ems-drv`'s codec turned round — a server and a client by
 //! one hand agree by construction. What is ours here is only which registers
 //! exist.
 

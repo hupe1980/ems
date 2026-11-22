@@ -1,0 +1,31 @@
+[package]
+name        = "ems-flex"
+description = "Expressing a household's flexibility in S2 (EN 50491-12-2) — which control type each asset belongs to, the descriptions a Customer Energy Manager exchanges, and the translation of an S2 instruction back into a command"
+keywords    = ["energy", "s2", "flexibility", "hems", "en50491"]
+categories  = ["science", "api-bindings"]
+readme      = "README.md"
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+rust-version.workspace = true
+
+[dependencies]
+ems-core = { workspace = true }
+# S2's data model and its rule-numbered semantic validator, proven against the
+# standard's own JSON schemas in the crate's own CI. Writing our own would be a
+# second opinion about a wire format, which is the one thing a standard exists to
+# prevent.
+s2-kit    = { workspace = true }
+ems-device = { workspace = true }
+time        = { workspace = true }
+uuid        = { version = "1", default-features = false, features = ["v5"] }
+thiserror   = { workspace = true }
+
+[dev-dependencies]
+time = { workspace = true, features = ["macros"] }
+# Every description is checked against the standard's own JSON schema by
+# round-tripping it: a description that cannot be serialised cannot be sent.
+serde_json = { workspace = true }

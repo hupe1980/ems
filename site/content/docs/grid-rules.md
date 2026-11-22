@@ -7,7 +7,7 @@ weight = 6
 group = "The box"
 +++
 
-Every rule in `hems-grid` names the document it comes from. `[A1 4.5.2]` is
+Every rule in `ems-grid` names the document it comes from. `[A1 4.5.2]` is
 Anlage 1 to BNetzA decision BK6-22-300; `[LPC-031]` is the EEBUS *Limitation of
 Power Consumption* use-case specification. A rule without a citation is a bug,
 and `cargo xtask check-citations` fails the build if a cited document is not one
@@ -172,7 +172,7 @@ evenings a reduction actually happens; counting it out when it is in **overstate
 the surplus** and therefore understates the netzwirksamer Leistungsbezug, which
 is the one direction a compliance record may never be wrong in.
 
-So there is exactly one function that answers it — `hems_grid::classify_at`, from
+So there is exactly one function that answers it — `ems_grid::classify_at`, from
 the site's own assets and the day — and everything asks it: the guard every tick,
 the planner through
 [`PlanningLimits::steuve_devices`](@/docs/optimizer.md#the-ss-14a-constraint-is-on-the-netzwirksamer-leistungsbezug-per-slot),
@@ -706,7 +706,7 @@ Re-offering them to whoever still has unmet consumption shares more — but it i
 *different allocation*, and Abs. 3 Nr. 2 makes the Aufteilungsschlüssel a written
 agreement between the parties.
 
-So `hems-grid::sharing` takes an `Aufteilung`. `Statisch` applies the key once
+So `ems-grid::sharing` takes an `Aufteilung`. `Statisch` applies the key once
 and reports the remainder as unallocated — generation that went to the public
 grid and is settled the ordinary way. `Dynamisch` cascades, and is the default
 because it is what an energy-sharing community is *for*. Choosing between them

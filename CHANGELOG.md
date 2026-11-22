@@ -7,6 +7,27 @@ break anything, and says so here.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-22
+
+The project is **ems**: the workspace of grid rules, guard, planner, simulator
+and protocols that **hems**, the household product, is built on — and that a
+building product can be.
+
+### Changed — breaking
+
+- The crates are `ems-*`: `ems-core`, `ems-device`, `ems-drv`, `ems-events`,
+  `ems-flex`, `ems-forecast`, `ems-grid`, `ems-optimizer`, `ems-realtime`,
+  `ems-service`, `ems-sim` and `ems-tariff` replace their `hems-*` names, with
+  no other change. The `hems-*` crates stay at 0.6.0.
+- Event types are `de.ems.*` and an event's source is `ems://sites/<site>`.
+- The repository is `hupe1980/ems` and the documentation
+  `hupe1980.github.io/ems`. `hemsd` keeps its name.
+
+### Security
+
+- `url` 2.5.9 (RUSTSEC-2026-0592: a stack overflow in `Url::origin()` on
+  nested `blob:` URLs).
+
 ## [0.6.0] — 2026-11-21
 
 The box talks to other systems, lets a household price a goal before setting
@@ -269,8 +290,9 @@ hardware.
 - `rmcp` 3.11 (RUSTSEC-2026-0457, -0461) and `ctutils` 0.4.8 (RUSTSEC-2026-0385).
 - Every override and S2 instruction is logged with the credential that made it.
 
-[Unreleased]: https://github.com/hupe1980/hems/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/hupe1980/hems/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/hupe1980/hems/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/hupe1980/hems/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/hupe1980/hems/releases/tag/v0.3.0
+[Unreleased]: https://github.com/hupe1980/ems/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hupe1980/ems/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/hupe1980/ems/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/hupe1980/ems/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/hupe1980/ems/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/hupe1980/ems/releases/tag/v0.3.0

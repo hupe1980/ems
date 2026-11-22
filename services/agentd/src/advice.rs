@@ -18,14 +18,14 @@
 //!
 //! **The principal cannot hold a capability that writes.** A specialist runs
 //! under an authority derived from an operator's by
-//! [`hems_service::Authority::attenuate`], which refuses to widen either axis,
+//! [`ems_service::Authority::attenuate`], which refuses to widen either axis,
 //! and [`advisory`] is the only constructor here. A test asserts what is not
 //! reachable from it.
 //!
 //! # And it may not read the household's Data Act export
 //!
 //! The sharper of the two exclusions, and the one worth stating on its own.
-//! `hems_service::auth::EXPORT_READ` opens everything the product generated:
+//! `ems_service::auth::EXPORT_READ` opens everything the product generated:
 //! when the shower ran, when the car charged, which fortnight nobody was in.
 //! Article 4 of Regulation (EU) 2023/2854 is a right of the **user**, and an
 //! advisory agent is not one — so it is absent from [`ADVISORY`] deliberately
@@ -43,8 +43,8 @@
 //! to respect a network operator's reduction is an incident with a name, and
 //! "99,99 %" is the same fact and reads as success.
 
-use hems_service::auth::{FLEET_READ, RECORD_READ};
-use hems_service::{Authority, Capabilities};
+use ems_service::auth::{FLEET_READ, RECORD_READ};
+use ems_service::{Authority, Capabilities};
 use serde::{Deserialize, Serialize};
 
 /// What is at stake in a finding, in the workspace's own units.
@@ -205,7 +205,7 @@ pub const ADVISORY: &[&str] = &[RECORD_READ, FLEET_READ];
 ///
 /// This is where "advisory only" stops being a promise. An agent that wanted to
 /// write a household's § 14a record would need an authority holding
-/// `hems_service::auth::RECORD_WRITE`, and the only constructor in this daemon
+/// `ems_service::auth::RECORD_WRITE`, and the only constructor in this daemon
 /// is this one.
 #[must_use]
 pub fn advisory(operator: &Authority) -> Option<Authority> {
@@ -221,8 +221,8 @@ pub fn advisory(operator: &Authority) -> Option<Authority> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_service::SiteScope;
-    use hems_service::auth::{EXPORT_READ, RECORD_WRITE};
+    use ems_service::SiteScope;
+    use ems_service::auth::{EXPORT_READ, RECORD_WRITE};
 
     fn operator() -> Authority {
         Authority::operator(SiteScope::Every)

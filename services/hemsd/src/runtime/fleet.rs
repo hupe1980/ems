@@ -3,7 +3,7 @@
 //!
 //! `tariffd` serves a reconciled day-ahead curve and says how much of a horizon
 //! it covers; `forecastd` serves ICON-D2 irradiance and temperature per quarter
-//! hour. The reference days supply their own from `hems-sim`, which is right for
+//! hour. The reference days supply their own from `ems-sim`, which is right for
 //! a *test* and is why this is the only caller.
 //!
 //! # Neither is a trust anchor, and the design says so twice
@@ -25,13 +25,13 @@
 //! sky. This module asks for `/v1/weather` instead and models the roof locally,
 //! because the correction that turns a *model* into a *forecast* is a property
 //! of **this** roof and only the box's own meter can teach it
-//! (`hems_forecast::residual`). A route called `/forecast` is one somebody
+//! (`ems_forecast::residual`). A route called `/forecast` is one somebody
 //! eventually plans against uncorrected; asking for the sky makes that mistake
 //! unavailable.
 
 use std::collections::BTreeMap;
 
-use hems_core::prelude::{Horizon, Slot};
+use ems_core::prelude::{Horizon, Slot};
 use rust_decimal::Decimal;
 
 /// What a fetch could not do.
@@ -115,7 +115,7 @@ pub struct PricePoint {
     /// JSON number that had already lost digits.
     pub price_ct: String,
     /// Which of the five sources it came from.
-    pub source: hems_tariff::source::Source,
+    pub source: ems_tariff::source::Source,
 }
 
 /// The answer to a price question.
@@ -132,7 +132,7 @@ pub struct Prices {
 }
 
 impl Prices {
-    /// The spot curve, as `hems_tariff::EnergyPrice::Dynamic` wants it.
+    /// The spot curve, as `ems_tariff::EnergyPrice::Dynamic` wants it.
     ///
     /// A point whose price is not an exact decimal is **dropped** rather than
     /// rounded into one: the tariff already knows what to do with a slot it has
@@ -170,7 +170,7 @@ pub struct CarbonPoint {
 }
 
 impl Carbon {
-    /// The series, as [`hems_tariff::tariff::Tariff::carbon_g_per_kwh`] wants
+    /// The series, as [`ems_tariff::tariff::Tariff::carbon_g_per_kwh`] wants
     /// it.
     ///
     /// A non-finite or negative figure is dropped rather than carried: it would
@@ -203,7 +203,7 @@ impl Fleet {
     /// this box's questions across a network in the clear (D85).
     pub fn new(
         settings: &crate::config::FleetSettings,
-        http: &hems_service::HttpSettings,
+        http: &ems_service::HttpSettings,
     ) -> anyhow::Result<Self> {
         for url in [&settings.tariffd_url, &settings.forecastd_url]
             .into_iter()
@@ -216,8 +216,8 @@ impl Fleet {
             // trust decision. `pool_max_idle_per_host` is the shell's too — a
             // box asking `tariffd` and `forecastd` something every five minutes
             // keeps one socket each and saves a TLS handshake on a slow link.
-            client: hems_service::http::client(
-                hems_service::identity!(),
+            client: ems_service::http::client(
+                ems_service::identity!(),
                 &http
                     .clone()
                     .with_timeout_s(settings.request_timeout_s.max(1)),
@@ -452,7 +452,7 @@ mod tests {
         // box with no WAN still keeps the house safe and lawful.
         let fleet = Fleet::new(
             &crate::config::FleetSettings::default(),
-            &hems_service::HttpSettings::default(),
+            &ems_service::HttpSettings::default(),
         )
         .expect("a client");
         assert!(!fleet.is_configured());

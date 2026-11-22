@@ -103,7 +103,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # HiGHS needs cmake and a C++ toolchain; microlp needs neither, which is
       # why it is the default and why both have to keep working.
-      - run: cargo test -p hems-optimizer --no-default-features --features ${{ matrix.backend }},serde
+      - run: cargo test -p ems-optimizer --no-default-features --features ${{ matrix.backend }},serde
 
   guards:
     name: Workspace guards

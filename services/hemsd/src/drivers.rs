@@ -7,7 +7,7 @@
 //! [`GridLimits`], what the network operator is asking for.
 //!
 //! That is this. It is the last seam between a simulated day and a managed
-//! house, and it lives in `hemsd` rather than in `hems-drv` for one reason: it
+//! house, and it lives in `hemsd` rather than in `ems-drv` for one reason: it
 //! is the layer where a socket becomes legitimate. The drivers stay sans-I/O and
 //! the purity gate keeps them that way; the registry is where a real box's
 //! `tokio` loop hands bytes in and takes bytes out.
@@ -15,7 +15,7 @@
 //! # Registration is a check, not a formality
 //!
 //! A declaration nothing validates is a comment with a type, so
-//! [`Registry::register`] is what gives [`hems_drv::DriverCapabilities`] its
+//! [`Registry::register`] is what gives [`ems_drv::DriverCapabilities`] its
 //! meaning. It refuses four mismatches that would otherwise be discovered months
 //! later by a limit that never arrived:
 //!
@@ -33,12 +33,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hems_core::prelude::{AssetId, Measurement, Power, Site};
-use hems_core::setpoint::Setpoint;
-use hems_drv::{
+use ems_core::prelude::{AssetId, Measurement, Power, Site};
+use ems_core::setpoint::Setpoint;
+use ems_drv::{
     CommandOutcome, Driver, DriverError, DriverEvent, LimitDirection, LimitSource, LinkState,
 };
-use hems_realtime::guard::{GridLimits, SiteState};
+use ems_realtime::guard::{GridLimits, SiteState};
 use time::{Duration, OffsetDateTime};
 
 /// Which registered driver, as distinct from which asset.
@@ -128,7 +128,7 @@ pub struct Registry {
     /// carry one, and `[LPC-021]` makes it the operator's to change. The guard
     /// never reads it — the driver enforces it — so the only reason it is here
     /// is that something has to write it down before the next power cut.
-    failsafe: BTreeMap<hems_drv::LimitDirection, hems_drv::Failsafe>,
+    failsafe: BTreeMap<ems_drv::LimitDirection, ems_drv::Failsafe>,
     /// Assets whose driver has said it cannot express a command it was given.
     refused: BTreeSet<AssetId>,
     /// Assets whose driver has taken at least one command.
@@ -139,7 +139,7 @@ struct Entry {
     /// Which driver this is, for the transport that owns its socket.
     id: DriverId,
     /// `Send`, because on a real box a driver lives in a task that owns its
-    /// socket. The bound belongs **here** rather than on `hems_drv::Driver`: a
+    /// socket. The bound belongs **here** rather than on `ems_drv::Driver`: a
     /// driver is a state machine and a state machine has no business declaring
     /// which runtime will hold it, and a conformance harness that drove one on a
     /// single thread would be no less legitimate for it.
@@ -159,7 +159,7 @@ struct Entry {
     /// household with no battery in it.
     pending: Vec<DriverEvent>,
     /// The conductors it reports, for a switchable charge point.
-    phases: Option<hems_core::prelude::PhaseMode>,
+    phases: Option<ems_core::prelude::PhaseMode>,
     /// Whether a car is plugged into this charge point, and what it has said.
     ///
     /// `None` on a driver that cannot tell — every charge point hems speaks to
@@ -167,7 +167,7 @@ struct Entry {
     /// the cable. Absence is therefore "nobody knows" and not "no car", and the
     /// planner has to treat the two differently: an unknown session is one to
     /// leave out, and an empty one is a socket to stop reserving energy for.
-    vehicle: Option<hems_drv::VehiclePresence>,
+    vehicle: Option<ems_drv::VehiclePresence>,
     /// How the last command to this device turned out.
     ///
     /// A device that answered a setpoint and did not act on it is the one
@@ -183,7 +183,7 @@ struct Entry {
     /// "nobody knows" rather than "no flexibility" — the same distinction
     /// [`Entry::vehicle`] draws. A planner reads it to replace its configured
     /// minimum runtimes with the appliance's own.
-    flex: Option<hems_drv::Flexibility>,
+    flex: Option<ems_drv::Flexibility>,
 }
 
 impl Entry {
@@ -371,7 +371,7 @@ impl Registry {
         // checked.
         for asset in &site.assets {
             let id = asset.meta().id.clone();
-            if !hems_realtime::guard::is_controllable(asset) {
+            if !ems_realtime::guard::is_controllable(asset) {
                 continue;
             }
             let spoken_for = self.entries.iter().any(|e| e.asset == id);
@@ -385,7 +385,7 @@ impl Registry {
             // January that is invisible because both agree; in July it heats the
             // house and the day report claims the saving. Loud at start-up is
             // the only place this can be caught.
-            if matches!(asset, hems_core::asset::Asset::HeatPump(hp) if hp.is_reversible())
+            if matches!(asset, ems_core::asset::Asset::HeatPump(hp) if hp.is_reversible())
                 && spoken_for
                 && !self
                     .entries
@@ -395,7 +395,7 @@ impl Registry {
                 return Err(RegistryError::CannotSetThermalMode(id.to_string()));
             }
         }
-        let participates = !hems_grid::classify_at(&site.assets, now).is_empty();
+        let participates = !ems_grid::classify_at(&site.assets, now).is_empty();
         let hears = self
             .entries
             .iter()
@@ -656,7 +656,7 @@ impl Registry {
     /// Empty until an operator writes one, which is the ordinary case: the
     /// configured value stands until somebody changes it.
     #[must_use]
-    pub fn failsafe(&self) -> &BTreeMap<hems_drv::LimitDirection, hems_drv::Failsafe> {
+    pub fn failsafe(&self) -> &BTreeMap<ems_drv::LimitDirection, ems_drv::Failsafe> {
         &self.failsafe
     }
 
@@ -713,8 +713,8 @@ impl Registry {
     pub fn undriven<'a>(&'a self, site: &'a Site) -> impl Iterator<Item = &'a AssetId> {
         site.assets
             .iter()
-            .filter(|a| hems_realtime::guard::is_controllable(a))
-            .map(hems_core::prelude::Asset::id)
+            .filter(|a| ems_realtime::guard::is_controllable(a))
+            .map(ems_core::prelude::Asset::id)
             .filter(|id| !self.entries.iter().any(|e| e.asset == **id))
     }
 
@@ -784,9 +784,9 @@ pub struct Observed {
     /// Devices whose driver cannot express the commands they are given.
     pub uncommandable: BTreeSet<AssetId>,
     /// Charge points that can say whether a car is on them, and what it said.
-    pub vehicles: BTreeMap<AssetId, hems_drv::VehiclePresence>,
+    pub vehicles: BTreeMap<AssetId, ems_drv::VehiclePresence>,
     /// Appliances that can announce what they could do, and what they announced.
-    pub flexibility: BTreeMap<AssetId, hems_drv::Flexibility>,
+    pub flexibility: BTreeMap<AssetId, ems_drv::Flexibility>,
 }
 
 impl Registry {
@@ -857,10 +857,10 @@ pub fn household_load(observed: &Observed) -> Option<Power> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::prelude::{Current, PhaseConnection};
-    use hems_drv::DriverCapabilities;
-    use hems_drv::eebus::{Lpc, Use};
-    use hems_drv::modbus::{Cadence, SunSpec};
+    use ems_core::prelude::{Current, PhaseConnection};
+    use ems_drv::DriverCapabilities;
+    use ems_drv::eebus::{Lpc, Use};
+    use ems_drv::modbus::{Cadence, SunSpec};
     use time::macros::datetime;
 
     const NOW: OffsetDateTime = datetime!(2026-01-15 12:00:00 UTC);
@@ -898,7 +898,7 @@ mod tests {
         fn on_timeout(&mut self, _: OffsetDateTime) {}
         fn command(
             &mut self,
-            _: &hems_core::setpoint::Command,
+            _: &ems_core::setpoint::Command,
             _: OffsetDateTime,
         ) -> Result<(), DriverError> {
             Ok(())
@@ -921,7 +921,7 @@ mod tests {
     #[derive(Debug)]
     struct Nodding {
         asset: AssetId,
-        pending: Option<hems_drv::CommandOutcome>,
+        pending: Option<ems_drv::CommandOutcome>,
     }
 
     impl Driver for Nodding {
@@ -937,10 +937,10 @@ mod tests {
         fn on_timeout(&mut self, _: OffsetDateTime) {}
         fn command(
             &mut self,
-            _: &hems_core::setpoint::Command,
+            _: &ems_core::setpoint::Command,
             at: OffsetDateTime,
         ) -> Result<(), DriverError> {
-            self.pending = Some(hems_drv::CommandOutcome {
+            self.pending = Some(ems_drv::CommandOutcome {
                 accepted: false,
                 confirmed: None,
                 at,
@@ -979,7 +979,7 @@ mod tests {
         fn on_timeout(&mut self, _: OffsetDateTime) {}
         fn command(
             &mut self,
-            c: &hems_core::setpoint::Command,
+            c: &ems_core::setpoint::Command,
             _: OffsetDateTime,
         ) -> Result<(), DriverError> {
             Err(DriverError::Unsupported(format!("{c:?}")))
@@ -1024,7 +1024,7 @@ mod tests {
 
     #[test]
     fn the_curtailment_factor_reaches_the_guard_as_a_fraction() {
-        // `[MGCP-011]` crosses the wire as a *percentage* and `hems-grid` reads
+        // `[MGCP-011]` crosses the wire as a *percentage* and `ems-grid` reads
         // a *fraction*, because that is what multiplies an inverter rating.
         // A factor of 70 arriving where 0,7 was meant is a roof allowed
         // seventy times what the connection point permits, and both numbers
@@ -1034,7 +1034,7 @@ mod tests {
         r.register(
             Box::new(Announcing {
                 asset: id("netzanschluss"),
-                pending: vec![DriverEvent::FeedInFactor(hems_drv::FeedInFactor {
+                pending: vec![DriverEvent::FeedInFactor(ems_drv::FeedInFactor {
                     percent: 70.0,
                     at: NOW,
                 })],
@@ -1076,9 +1076,9 @@ mod tests {
         r.command(
             &Setpoint {
                 asset: id("wallbox"),
-                command: hems_core::setpoint::Command::ChargingCurrent(Current::new(10.0)),
-                reason: hems_core::setpoint::Reason::Fallback(
-                    hems_core::setpoint::FallbackCause::NoPlan,
+                command: ems_core::setpoint::Command::ChargingCurrent(Current::new(10.0)),
+                reason: ems_core::setpoint::Reason::Fallback(
+                    ems_core::setpoint::FallbackCause::NoPlan,
                 ),
                 at: NOW,
             },
@@ -1232,7 +1232,7 @@ mod tests {
         // screen goes red after the guard has already stopped believing rather
         // than before.
         assert!(
-            SILENCE < hems_realtime::GuardConfig::default().max_measurement_age,
+            SILENCE < ems_realtime::GuardConfig::default().max_measurement_age,
             "the registry has to stop believing a device before the guard does"
         );
 
@@ -1334,7 +1334,7 @@ mod tests {
     struct Chatty {
         asset: AssetId,
         caps: DriverCapabilities,
-        events: Vec<hems_drv::DriverEvent>,
+        events: Vec<ems_drv::DriverEvent>,
     }
 
     impl Chatty {
@@ -1342,7 +1342,7 @@ mod tests {
             Self {
                 asset,
                 caps: DriverCapabilities::device(),
-                events: vec![hems_drv::DriverEvent::Link(LinkState::Up)],
+                events: vec![ems_drv::DriverEvent::Link(LinkState::Up)],
             }
         }
 
@@ -1350,14 +1350,14 @@ mod tests {
         fn say_temperature(&mut self, at: OffsetDateTime, degrees: f64) {
             let mut m = Measurement::at(at);
             m.temperature_c = Some(degrees);
-            self.events.push(hems_drv::DriverEvent::Measured(m));
+            self.events.push(ems_drv::DriverEvent::Measured(m));
         }
 
         /// Report `power`, observed at `at`.
         fn say(&mut self, at: OffsetDateTime, power: Power) {
             let mut m = Measurement::at(at);
             m.power = Some(power);
-            self.events.push(hems_drv::DriverEvent::Measured(m));
+            self.events.push(ems_drv::DriverEvent::Measured(m));
         }
     }
 
@@ -1374,12 +1374,12 @@ mod tests {
         fn on_timeout(&mut self, _: OffsetDateTime) {}
         fn command(
             &mut self,
-            _: &hems_core::setpoint::Command,
+            _: &ems_core::setpoint::Command,
             _: OffsetDateTime,
         ) -> Result<(), DriverError> {
             Ok(())
         }
-        fn poll_event(&mut self) -> Option<hems_drv::DriverEvent> {
+        fn poll_event(&mut self) -> Option<ems_drv::DriverEvent> {
             if self.events.is_empty() {
                 None
             } else {
@@ -1416,7 +1416,7 @@ mod tests {
             lpc.on_heartbeat(NOW + Duration::seconds(beat * 30));
         }
         let outcome = lpc.on_limit(
-            &hems_drv::eebus::LimitWrite::active(4_200.0),
+            &ems_drv::eebus::LimitWrite::active(4_200.0),
             NOW + Duration::seconds(110),
         );
         assert!(outcome.is_accepted(), "{outcome:?}");
@@ -1465,8 +1465,8 @@ mod tests {
             .expect("an inverter driver");
         let setpoint = Setpoint::new(
             id("pv"),
-            hems_core::setpoint::Command::ActivePower(Power::from_kw(1.0)),
-            hems_core::setpoint::Reason::Fallback(hems_core::setpoint::FallbackCause::NoPlan),
+            ems_core::setpoint::Command::ActivePower(Power::from_kw(1.0)),
+            ems_core::setpoint::Reason::Fallback(ems_core::setpoint::FallbackCause::NoPlan),
             NOW,
         )
         .expect("a valid setpoint");
@@ -1486,8 +1486,8 @@ mod tests {
         let mut r = Registry::new();
         let setpoint = Setpoint::new(
             id("wallbox"),
-            hems_core::setpoint::Command::ChargingCurrent(Current::new(16.0)),
-            hems_core::setpoint::Reason::Fallback(hems_core::setpoint::FallbackCause::NoPlan),
+            ems_core::setpoint::Command::ChargingCurrent(Current::new(16.0)),
+            ems_core::setpoint::Reason::Fallback(ems_core::setpoint::FallbackCause::NoPlan),
             NOW,
         )
         .expect("a valid setpoint");

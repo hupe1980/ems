@@ -22,13 +22,13 @@
 //! credential that cannot reach one cannot reach the other, and leaving it out
 //! here is that decision honoured rather than an unbuilt tool.
 //!
-//! That split is `hems_service::Authority`'s, not this module's; what this
+//! That split is `ems_service::Authority`'s, not this module's; what this
 //! module does is refuse to route around it.
 
 use std::sync::Arc;
 
 use crate::store::{Store, StoreError};
-use hems_service::mcp::{McpAuth, rfc3339, rfc3339_opt};
+use ems_service::mcp::{McpAuth, rfc3339, rfc3339_opt};
 use http::request::Parts;
 use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -55,7 +55,7 @@ pub struct State {
     /// Not one authority for the whole surface: every tool resolves the request
     /// that reached *it*, so this surface has exactly the reach of whoever is on
     /// the other end of it (D111).
-    pub auth: hems_service::McpAuth,
+    pub auth: ems_service::McpAuth,
 }
 
 /// A site and an optional window.
@@ -253,7 +253,7 @@ impl Handler {
     /// households in its scope — the same answer the REST route would give the
     /// same token.
     fn deny_unless_may_read(&self, parts: &Parts, site: &str) -> Result<(), McpError> {
-        let caller = hems_service::mcp::caller(&self.state.auth, parts)?;
+        let caller = ems_service::mcp::caller(&self.state.auth, parts)?;
         if caller.may_read(site) {
             Ok(())
         } else {
@@ -379,7 +379,7 @@ pub fn router(
     auth: McpAuth,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
-    hems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
+    ems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
 }
 
 #[cfg(test)]
@@ -388,9 +388,9 @@ mod tests {
 
     /// A pool onto a port nothing listens on, built without connecting.
     ///
-    /// `hems_service::db::connect` proves the database answers, which is right
+    /// `ems_service::db::connect` proves the database answers, which is right
     /// everywhere except here.
-    fn unreachable_pool() -> hems_service::Db {
+    fn unreachable_pool() -> ems_service::Db {
         let config: tokio_postgres::Config = "postgres://nobody@127.0.0.1:1/none"
             .parse()
             .expect("a well-formed URL");
@@ -413,11 +413,11 @@ mod tests {
     /// what makes that a property rather than a claim — if the refusal ever
     /// stopped happening first, the test would fail on a connection error
     /// instead of passing.
-    fn handler(credentials: &hems_service::Credentials) -> Handler {
+    fn handler(credentials: &ems_service::Credentials) -> Handler {
         Handler::new(std::sync::Arc::new(State {
             store: crate::Store::new(unreachable_pool()),
-            auth: hems_service::McpAuth::per_caller(
-                &hems_service::McpSettings {
+            auth: ems_service::McpAuth::per_caller(
+                &ems_service::McpSettings {
                     enabled: true,
                     token: None,
                 },
@@ -449,8 +449,8 @@ mod tests {
         .await
     }
 
-    fn credentials() -> hems_service::Credentials {
-        hems_service::Credentials::default()
+    fn credentials() -> ems_service::Credentials {
+        ems_service::Credentials::default()
             .with_site("haus-1", "tok-1")
             .with_operator("tok-netz")
     }
@@ -498,8 +498,8 @@ mod tests {
     #[tokio::test]
     async fn one_tenants_operator_cannot_read_anothers_household() {
         // Two operators on one daemon. Neither is the other's.
-        let h = handler(&hems_service::Credentials::default().with_operator_of(
-            hems_service::SiteScope::Tenant {
+        let h = handler(&ems_service::Credentials::default().with_operator_of(
+            ems_service::SiteScope::Tenant {
                 name: "nord".into(),
                 sites: ["haus-1".to_owned()].into_iter().collect(),
             },

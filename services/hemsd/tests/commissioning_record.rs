@@ -54,7 +54,7 @@ async fn a_box(with_identity: bool) -> (String, LocalAccess, String) {
     })
     .with_commissioning(Commissioning {
         ship_id: Some("hems_test".into()),
-        control_box: hems_core::prelude::AssetId::new("netzanschluss").ok(),
+        control_box: ems_core::prelude::AssetId::new("netzanschluss").ok(),
         ..Commissioning::default()
     });
     let router = hemsd::runtime::surfaces_over(local, None, access.clone(), false);

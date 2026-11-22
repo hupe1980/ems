@@ -62,18 +62,18 @@ const BACKOFF_S: [i64; 6] = [30, 120, 600, 1_800, 3_600, 10_800];
 
 /// Every type this box sends to a subscriber, and nothing else.
 pub const EMITTED: [&str; 7] = [
-    hems_events::GRID_LPC_LIMIT_RECEIVED,
-    hems_events::GRID_LPC_LIMIT_RELEASED,
-    hems_events::GRID_LPC_FAILSAFE_ENTERED,
-    hems_events::SITE_GOAL_AT_RISK,
-    hems_events::DEVICE_DEVIATION_DETECTED,
-    hems_events::SITE_DAY_CLOSED,
-    hems_events::TEST_PING,
+    ems_events::GRID_LPC_LIMIT_RECEIVED,
+    ems_events::GRID_LPC_LIMIT_RELEASED,
+    ems_events::GRID_LPC_FAILSAFE_ENTERED,
+    ems_events::SITE_GOAL_AT_RISK,
+    ems_events::DEVICE_DEVIATION_DETECTED,
+    ems_events::SITE_DAY_CLOSED,
+    ems_events::TEST_PING,
 ];
 
 // ── The data each event carries ─────────────────────────────────────────────
 
-/// `de.hems.grid.lpc.limit.received`: the network operator reduced the
+/// `de.ems.grid.lpc.limit.received`: the network operator reduced the
 /// connection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LimitReceived {
@@ -83,21 +83,21 @@ pub struct LimitReceived {
     pub minimum_w: Option<f64>,
 }
 
-/// `de.hems.grid.lpc.limit.released`: the reduction ended.
+/// `de.ems.grid.lpc.limit.released`: the reduction ended.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LimitReleased {
     /// How long it lasted, seconds, where the box saw it begin.
     pub lasted_s: Option<i64>,
 }
 
-/// `de.hems.grid.lpc.failsafe.entered`: the control box fell silent.
+/// `de.ems.grid.lpc.failsafe.entered`: the control box fell silent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FailsafeEntered {
     /// The failsafe ceiling now in force, W.
     pub failsafe_w: Option<f64>,
 }
 
-/// `de.hems.site.goal.at-risk`: a goal turned tight or impossible.
+/// `de.ems.site.goal.at-risk`: a goal turned tight or impossible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GoalAtRisk {
     /// `tight` or `impossible`.
@@ -106,7 +106,7 @@ pub struct GoalAtRisk {
     pub assets: Vec<String>,
 }
 
-/// `de.hems.device.deviation.detected`: a device has not done what it was
+/// `de.ems.device.deviation.detected`: a device has not done what it was
 /// asked for ten minutes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeviationDetected {
@@ -114,7 +114,7 @@ pub struct DeviationDetected {
     pub assets: Vec<String>,
 }
 
-/// `de.hems.test.ping`: sent on request, to check a receiver.
+/// `de.ems.test.ping`: sent on request, to check a receiver.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TestPing {
     /// Always `true`; a receiver can tell a test from an event by its type.
@@ -130,7 +130,7 @@ pub struct Asked {
     pub name: String,
     /// Where to deliver.
     pub url: String,
-    /// The types wanted; a trailing `*` matches a family (`de.hems.grid.*`).
+    /// The types wanted; a trailing `*` matches a family (`de.ems.grid.*`).
     pub types: Vec<String>,
     /// Narrow to these subjects — asset ids or the site; empty is all.
     #[serde(default)]
@@ -392,7 +392,7 @@ impl Webhooks {
             writing: Arc::new(Mutex::new(())),
             loopback: false,
             memory: Arc::new(Mutex::new(Vec::new())),
-            source: format!("hems://sites/{site}"),
+            source: format!("ems://sites/{site}"),
             state: Arc::new(Mutex::new(Watch::default())),
         }
     }
@@ -450,7 +450,7 @@ impl Webhooks {
     /// [`Refused`], each with the sentence the page shows.
     pub async fn subscribe(&self, asked: Asked, now: OffsetDateTime) -> Result<Created, Refused> {
         for wanted in &asked.types {
-            if !EMITTED.iter().any(|t| hems_events::matches(wanted, t)) {
+            if !EMITTED.iter().any(|t| ems_events::matches(wanted, t)) {
                 return Err(Refused::UnknownType(wanted.clone()));
             }
         }
@@ -539,7 +539,7 @@ impl Webhooks {
         Ok(out)
     }
 
-    /// Send a `de.hems.test.ping` now and say what the receiver answered.
+    /// Send a `de.ems.test.ping` now and say what the receiver answered.
     ///
     /// # Errors
     /// [`Refused::Store`]. `Ok(None)` where there is no such subscription.
@@ -551,8 +551,8 @@ impl Webhooks {
         let Some(kept) = self.all().await?.into_iter().find(|k| k.id == id) else {
             return Ok(None);
         };
-        let event = hems_events::envelope::Event::new(
-            hems_events::TEST_PING,
+        let event = ems_events::envelope::Event::new(
+            ems_events::TEST_PING,
             self.source.clone(),
             new_id(),
             now,
@@ -566,7 +566,7 @@ impl Webhooks {
         let entry = Delivery {
             subscription: kept.id.clone(),
             event: event.id.clone(),
-            r#type: hems_events::TEST_PING.into(),
+            r#type: ems_events::TEST_PING.into(),
             at: now,
             attempt: 1,
             status,
@@ -598,7 +598,7 @@ impl Webhooks {
                         watch.reduced_since = Some(now);
                         let r = &home["reduction"];
                         out.push((
-                            hems_events::GRID_LPC_LIMIT_RECEIVED,
+                            ems_events::GRID_LPC_LIMIT_RECEIVED,
                             None,
                             json(&LimitReceived {
                                 limit_w: r["ceiling_kw"].as_f64().unwrap_or(0.0) * 1000.0,
@@ -612,13 +612,13 @@ impl Webhooks {
                             .take()
                             .map(|t| (now - t).whole_seconds());
                         out.push((
-                            hems_events::GRID_LPC_LIMIT_RELEASED,
+                            ems_events::GRID_LPC_LIMIT_RELEASED,
                             None,
                             json(&LimitReleased { lasted_s }),
                         ));
                     }
                     Detected::Failsafe => out.push((
-                        hems_events::GRID_LPC_FAILSAFE_ENTERED,
+                        ems_events::GRID_LPC_FAILSAFE_ENTERED,
                         None,
                         json(&FailsafeEntered {
                             failsafe_w: home["reduction"]["ceiling_kw"]
@@ -634,7 +634,7 @@ impl Webhooks {
                         };
                         let assets: Vec<String> = signals.goals.keys().cloned().collect();
                         out.push((
-                            hems_events::SITE_GOAL_AT_RISK,
+                            ems_events::SITE_GOAL_AT_RISK,
                             assets.first().cloned(),
                             json(&GoalAtRisk {
                                 verdict: verdict.into(),
@@ -645,7 +645,7 @@ impl Webhooks {
                     Detected::DeviceNotFollowing => {
                         let assets: Vec<String> = signals.not_following.iter().cloned().collect();
                         out.push((
-                            hems_events::DEVICE_DEVIATION_DETECTED,
+                            ems_events::DEVICE_DEVIATION_DETECTED,
                             assets.first().cloned(),
                             json(&DeviationDetected { assets }),
                         ));
@@ -675,7 +675,7 @@ impl Webhooks {
             }
         }
         self.owe(
-            hems_events::SITE_DAY_CLOSED,
+            ems_events::SITE_DAY_CLOSED,
             Some(day.day.clone()),
             json(day),
             now,
@@ -695,7 +695,7 @@ impl Webhooks {
             return;
         };
         let mut event =
-            hems_events::envelope::Event::new(r#type, self.source.clone(), new_id(), now, data);
+            ems_events::envelope::Event::new(r#type, self.source.clone(), new_id(), now, data);
         if let Some(subject) = &subject {
             event = event.about(subject.clone());
         }
@@ -704,7 +704,7 @@ impl Webhooks {
         };
         let body = String::from_utf8_lossy(&body).into_owned();
         for mut kept in all {
-            let wanted = kept.types.iter().any(|t| hems_events::matches(t, r#type));
+            let wanted = kept.types.iter().any(|t| ems_events::matches(t, r#type));
             let about = kept.subjects.is_empty()
                 || subject.as_ref().is_some_and(|s| kept.subjects.contains(s));
             if !wanted || !about {
@@ -866,7 +866,7 @@ async fn attempt(
     if let Err(refused) = checked(&kept.url, &ips, kept.public, loopback) {
         return (None, Some(refused.to_string()));
     }
-    let signed = hems_events::webhook::sign(&kept.key, id, now, body);
+    let signed = ems_events::webhook::sign(&kept.key, id, now, body);
     let mut client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(ATTEMPT);
@@ -911,7 +911,7 @@ async fn attempt(
 }
 
 /// Deliver what is owed, every few seconds, until the box stops.
-pub async fn run(hooks: Webhooks, shutdown: hems_service::Shutdown) {
+pub async fn run(hooks: Webhooks, shutdown: ems_service::Shutdown) {
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let stop = shutdown.wait();
@@ -1005,7 +1005,7 @@ mod tests {
     #[test]
     fn every_emitted_type_is_in_the_catalogue() {
         for t in EMITTED {
-            assert!(hems_events::is_known(t), "{t}");
+            assert!(ems_events::is_known(t), "{t}");
         }
     }
 }

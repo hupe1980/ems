@@ -1,6 +1,6 @@
 # agentd
 
-The advisory plane for [hems](https://github.com/hupe1980/hems).
+The advisory plane for [hems](https://github.com/hupe1980/ems).
 
 Every other crate answers a question about **one** thing: is this setpoint inside
 the guard's bound, does this quarter hour settle, was this § 14a reduction

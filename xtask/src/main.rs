@@ -57,7 +57,7 @@ cargo xtask <task>
   check-citations   every regulatory citation in the code names a document that
                     concepts/REFERENCES.md actually indexes
   check-events      every CloudEvents type used in the workspace is in the
-                    hems-events catalogue
+                    ems-events catalogue
   check-manifests   every publishable crate can actually be packaged: the files
                     its manifest promises exist
   check-wire        every serialisable quantity, instant and date names how it
@@ -378,7 +378,7 @@ fn check_citations(root: &Path) -> Result<()> {
 /// crates cannot be packaged. Which is exactly what an audit of this workspace
 /// found.
 /// Every long-running task a daemon spawns from `main` goes through
-/// `hems_service::Health::vital`, so `/livez` can fail.
+/// `ems_service::Health::vital`, so `/livez` can fail.
 ///
 /// # Why this is a guard rather than a review note
 ///
@@ -990,7 +990,7 @@ fn pure_crates(root: &Path) -> Result<usize> {
     Ok(justfile
         .lines()
         .find(|l| l.trim_start().starts_with("pure="))
-        .map_or(0, |l| l.matches("hems-").count()))
+        .map_or(0, |l| l.matches("ems-").count()))
 }
 
 fn check_examples(root: &Path) -> Result<()> {
@@ -1091,7 +1091,7 @@ fn check_examples(root: &Path) -> Result<()> {
 /// cross a network in the clear, and it looks as authoritative as the line above
 /// it (D85).
 ///
-/// The same rule as `hems_service::http::confidential`, spelled out rather than
+/// The same rule as `ems_service::http::confidential`, spelled out rather than
 /// called: `xtask` guards the workspace and so may not depend on it.
 fn is_confidential_url(url: &str) -> bool {
     if let Some(rest) = url.strip_prefix("https://") {
@@ -1237,13 +1237,13 @@ fn manifest_file(manifest: &str, key: &str, default: &str) -> Option<String> {
 /// differently. Nothing breaks, nothing logs, and the feature simply never
 /// happens.
 fn check_events(root: &Path) -> Result<()> {
-    let prefix = hems_events::PREFIX;
+    let prefix = ems_events::PREFIX;
     let mut unknown: Vec<(PathBuf, String)> = Vec::new();
     let mut found = 0usize;
 
     for file in rust_sources(root)? {
         // The catalogue itself is where the names are declared.
-        if file.ends_with("hems-events/src/lib.rs") {
+        if file.ends_with("ems-events/src/lib.rs") {
             continue;
         }
         let text = std::fs::read_to_string(&file)?;
@@ -1252,15 +1252,15 @@ fn check_events(root: &Path) -> Result<()> {
                 continue;
             }
             found += 1;
-            // A pattern a subscriber asks for (`de.hems.grid.*`) is as good as
+            // A pattern a subscriber asks for (`de.ems.grid.*`) is as good as
             // the types it matches — and one that matches none is the same
             // silent failure as a misspelt type: a subscription that never fires.
             let known = if literal.contains('*') || literal.contains('?') {
-                hems_events::ALL
+                ems_events::ALL
                     .iter()
-                    .any(|t| hems_events::matches(&literal, t))
+                    .any(|t| ems_events::matches(&literal, t))
             } else {
-                hems_events::is_known(&literal)
+                ems_events::is_known(&literal)
             };
             if !known {
                 unknown.push((file.clone(), literal));
@@ -1272,7 +1272,7 @@ fn check_events(root: &Path) -> Result<()> {
         println!("check-events: {found} event references, all in the catalogue");
         Ok(())
     } else {
-        eprintln!("check-events: event types that are not in hems-events:");
+        eprintln!("check-events: event types that are not in ems-events:");
         for (file, literal) in &unknown {
             eprintln!("  {}: {literal:?}", file.display());
         }
@@ -1409,7 +1409,7 @@ fn wire_fields(root: &Path) -> Result<usize> {
         eprintln!(
             "check-wire: a quantity or an instant must say how it travels — \
              `rust_decimal::serde::str` for a Decimal, `time::serde::rfc3339` for \
-             an instant, `hems_core::wire::iso_date` for a date:"
+             an instant, `ems_core::wire::iso_date` for a date:"
         );
         for b in &bare {
             eprintln!("{b}");
@@ -1506,8 +1506,8 @@ fn decimal_field(trimmed: &str) -> Option<&str> {
 /// why eight of them accumulated without anybody noticing. No test can fail for
 /// one, `cargo build` is silent, and `cargo tree` only answers if asked.
 ///
-/// One of the eight was a **layering** defect rather than weight: `hems-sim`
-/// declared `hems-forecast`. Nothing used it, but the edge said the simulator —
+/// One of the eight was a **layering** defect rather than weight: `ems-sim`
+/// declared `ems-forecast`. Nothing used it, but the edge said the simulator —
 /// "the day that happens" — may read the forecaster — "the day that was
 /// expected" — and keeping those apart is the whole of D35. An unused edge is
 /// how a used one arrives.

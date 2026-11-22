@@ -21,7 +21,7 @@
 use std::sync::Arc;
 
 use crate::fleet::Fleet;
-use hems_service::mcp::McpAuth;
+use ems_service::mcp::McpAuth;
 use http::request::Parts;
 use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -52,7 +52,7 @@ pub struct State {
     /// Not one authority for the whole surface: every tool resolves the request
     /// that reached *it*, so this surface has exactly the reach of whoever is on
     /// the other end of it (D111).
-    pub auth: hems_service::McpAuth,
+    pub auth: ems_service::McpAuth,
 }
 
 /// Which site a caller is asking about.
@@ -82,7 +82,7 @@ impl Handler {
     /// is a predicate here for the same reason it is there: an agent acting for
     /// one tenant must not pull another tenant's rows through its request
     /// (D111, D112).
-    async fn fleet(&self, scope: &hems_service::SiteScope) -> Result<Fleet, McpError> {
+    async fn fleet(&self, scope: &ems_service::SiteScope) -> Result<Fleet, McpError> {
         let since = crate::store::window_start(
             self.state.keep_days,
             time::OffsetDateTime::now_utc().date(),
@@ -184,7 +184,7 @@ impl Handler {
         Extension(parts): Extension<Parts>,
         Parameters(p): Parameters<SiteParams>,
     ) -> Result<CallToolResult, McpError> {
-        let caller = hems_service::mcp::caller(&self.state.auth, &parts)?;
+        let caller = ems_service::mcp::caller(&self.state.auth, &parts)?;
         if !caller.may_read(&p.site) {
             return Err(McpError::invalid_params(
                 format!(
@@ -197,7 +197,7 @@ impl Handler {
         }
         // One household, so one household is read.
         let fleet = self
-            .fleet(&hems_service::SiteScope::One(p.site.clone()))
+            .fleet(&ems_service::SiteScope::One(p.site.clone()))
             .await?;
         match fleet.site(&p.site) {
             Some(history) => {
@@ -255,8 +255,8 @@ impl Handler {
     /// household's own reach, so this asks for the fleet capability by name
     /// rather than inferring it from a site check that a `None` site would pass
     /// (D112).
-    fn fleet_caller(&self, parts: &Parts) -> Result<hems_service::Authority, McpError> {
-        let caller = hems_service::mcp::caller(&self.state.auth, parts)?;
+    fn fleet_caller(&self, parts: &Parts) -> Result<ems_service::Authority, McpError> {
+        let caller = ems_service::mcp::caller(&self.state.auth, parts)?;
         if caller.may_read_the_fleet() {
             Ok(caller)
         } else {
@@ -380,5 +380,5 @@ pub fn router(
     auth: McpAuth,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
-    hems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
+    ems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
 }

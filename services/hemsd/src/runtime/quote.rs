@@ -55,7 +55,7 @@ pub fn slot() -> Option<tokio::sync::MutexGuard<'static, Option<std::time::Insta
 
 /// What the plan spends on the things a goal moves: the grid, the battery's
 /// life, and what it borrows from the stores and would have to put back.
-fn spend(solved: &hems_optimizer::solve::Solved) -> Option<f64> {
+fn spend(solved: &ems_optimizer::solve::Solved) -> Option<f64> {
     let c = solved.plan.expected_cost.as_ref()?;
     Some(c.energy_eur + c.wear_eur + c.stored_eur)
 }
@@ -84,7 +84,7 @@ pub async fn car(
     let inputs = last.lock().await.clone()?;
     let full = (*facts.lock().await)?;
     let proposed = crate::home::session_for(&full, goal, now);
-    let answer = crate::home::judge_goal(&proposed, hems_core::prelude::Slot::containing(now));
+    let answer = crate::home::judge_goal(&proposed, ems_core::prelude::Slot::containing(now));
     let extra_eur = difference(inputs.clone(), inputs.with_car(Some(proposed))).await;
     Some(Quote {
         verdict: answer.verdict,
@@ -98,7 +98,7 @@ pub async fn car(
 pub async fn tank(
     last: &LastInputs,
     facts: &crate::home::TankFacts,
-    tank: &hems_core::asset::DhwTank,
+    tank: &ems_core::asset::DhwTank,
     goal: TankGoal,
     now: OffsetDateTime,
 ) -> Option<Quote> {

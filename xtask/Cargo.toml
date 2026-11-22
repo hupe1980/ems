@@ -9,4 +9,4 @@ publish = false
 
 [dependencies]
 anyhow      = { workspace = true }
-hems-events = { workspace = true }
+ems-events = { workspace = true }

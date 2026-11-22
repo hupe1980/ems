@@ -11,8 +11,8 @@ homepage.workspace     = true
 rust-version.workspace = true
 
 [dependencies]
-hems-core    = { workspace = true }
-hems-grid    = { workspace = true }
+ems-core    = { workspace = true }
+ems-grid    = { workspace = true }
 metering     = { workspace = true }
 # The Model Context Protocol surface at `/mcp`, on the socket this daemon
 # already binds. Read-only tools: an agent may read what an operator reads and
@@ -21,7 +21,7 @@ http           = { workspace = true }
 rmcp          = { workspace = true }
 schemars      = { workspace = true }
 tokio-util    = { workspace = true }
-hems-service      = { workspace = true, features = ["postgres"] }
+ems-service      = { workspace = true, features = ["postgres"] }
 tokio-postgres    = { workspace = true }
 deadpool-postgres = { workspace = true }
 
@@ -38,8 +38,8 @@ tracing      = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "sync", "io-util"] }
-# A real PostgreSQL, started by the test. See `hems_service::testdb` for what
+# A real PostgreSQL, started by the test. See `ems_service::testdb` for what
 # that costs and why a fleet service tested on a different engine is a fleet
 # service whose queries are checked by nothing.
-hems-service = { workspace = true, features = ["testkit"] }
+ems-service = { workspace = true, features = ["testkit"] }
 toml = { workspace = true }

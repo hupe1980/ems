@@ -7,9 +7,9 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use hems_core::prelude::Slot;
-use hems_tariff::cache::PriceCache;
-use hems_tariff::source::Source;
+use ems_core::prelude::Slot;
+use ems_tariff::cache::PriceCache;
+use ems_tariff::source::Source;
 use tariffd::poller::{Poller, coverage, is_ready};
 use tariffd::upstream::{Fetched, Upstream, UpstreamError, parse};
 use time::OffsetDateTime;
@@ -85,7 +85,7 @@ fn captured(pairs: Vec<(Source, Vec<Result<String, u16>>)>) -> Captured {
 
 #[test]
 fn a_captured_awattar_body_becomes_priced_quarter_hours() {
-    // The seam itself: the daemon's dispatch and `hems-tariff`'s parser, with a
+    // The seam itself: the daemon's dispatch and `ems-tariff`'s parser, with a
     // body that never came off a socket.
     let fetched = parse(Source::Awattar, &awattar_body()).expect("the capture parses");
     assert_eq!(fetched.series.len(), 16, "four hours are sixteen quarters");
@@ -95,7 +95,7 @@ fn a_captured_awattar_body_becomes_priced_quarter_hours() {
 #[tokio::test]
 async fn a_day_of_fetching_ends_with_a_cache_the_planner_can_use() {
     let mut cache = PriceCache::new();
-    let mut carbon = hems_tariff::cache::CarbonCache::new();
+    let mut carbon = ems_tariff::cache::CarbonCache::new();
     let mut poller = Poller::new(
         captured(vec![(Source::Awattar, vec![Ok(awattar_body())])]),
         [Source::Awattar],
@@ -116,7 +116,7 @@ async fn the_more_trusted_source_decides_where_two_disagree() {
     // the auction — so what stands afterwards is SMARD's, whatever order they
     // arrived in.
     let mut cache = PriceCache::new();
-    let mut carbon = hems_tariff::cache::CarbonCache::new();
+    let mut carbon = ems_tariff::cache::CarbonCache::new();
     let mut poller = Poller::new(
         captured(vec![
             (Source::Awattar, vec![Ok(awattar_body())]),
@@ -140,7 +140,7 @@ async fn an_outage_leaves_the_box_able_to_plan_from_what_it_already_has() {
     // goes away, and the household still has prices. A design that answered from
     // the last request rather than from a store would have nothing.
     let mut cache = PriceCache::new();
-    let mut carbon = hems_tariff::cache::CarbonCache::new();
+    let mut carbon = ems_tariff::cache::CarbonCache::new();
     let mut poller = Poller::new(
         captured(vec![(
             Source::Awattar,
@@ -169,7 +169,7 @@ async fn prices_more_than_two_days_old_are_dropped() {
     // A gateway box's flash is not a time-series database. Everything the cache
     // holds is within two days of now, in both directions.
     let mut cache = PriceCache::new();
-    let mut carbon = hems_tariff::cache::CarbonCache::new();
+    let mut carbon = ems_tariff::cache::CarbonCache::new();
     let mut poller = Poller::new(
         captured(vec![(Source::Awattar, vec![Ok(awattar_body())])]),
         [Source::Awattar],
@@ -217,7 +217,7 @@ async fn the_grids_carbon_intensity_survives_the_whole_chain() {
         time::Duration::hours(1),
     );
     let mut cache = PriceCache::new();
-    let mut carbon = hems_tariff::cache::CarbonCache::new();
+    let mut carbon = ems_tariff::cache::CarbonCache::new();
     poller.poll(&mut cache, &mut carbon, NOON).await;
 
     // Two published hours become eight quarter hours — a published figure is an
@@ -241,14 +241,14 @@ async fn the_grids_carbon_intensity_survives_the_whole_chain() {
     // The other end of the chain: a tariff carrying the series prices each slot
     // with the grid's *own* intensity rather than a constant — which is the
     // whole difference between a carbon signal and a second autarky dial.
-    let tariff = hems_tariff::tariff::Tariff {
+    let tariff = ems_tariff::tariff::Tariff {
         carbon_g_per_kwh: carbon.series(),
-        ..hems_tariff::tariff::Tariff::fixed(
+        ..ems_tariff::tariff::Tariff::fixed(
             rust_decimal::Decimal::new(30, 0),
             rust_decimal::Decimal::new(10, 0),
         )
     };
-    let stack = hems_tariff::PriceStack::build(&tariff, hems_core::prelude::Horizon::new(NOON, 8));
+    let stack = ems_tariff::PriceStack::build(&tariff, ems_core::prelude::Horizon::new(NOON, 8));
     let intensities: Vec<f64> = stack.slots.iter().filter_map(|p| p.co2_g_per_kwh).collect();
     assert_eq!(intensities.len(), 8, "every slot carries one");
     assert!(

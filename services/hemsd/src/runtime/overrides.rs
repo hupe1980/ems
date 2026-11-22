@@ -7,7 +7,7 @@
 //!
 //! # It goes through the arbiter, and therefore through the guard
 //!
-//! An override is a **desire**, not a setpoint. `hems_realtime::Arbiter` reads
+//! An override is a **desire**, not a setpoint. `ems_realtime::Arbiter` reads
 //! it first and then narrows it into whatever the grid, the fuses and the
 //! hardware leave open — so `[BK6-22-300 A1 4.6 S. 3]` still holds, and a
 //! household in the middle of a § 14a reduction that presses *boost* gets as
@@ -28,8 +28,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hems_core::prelude::AssetId;
-use hems_core::setpoint::UserOverride;
+use ems_core::prelude::AssetId;
+use ems_core::setpoint::UserOverride;
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 

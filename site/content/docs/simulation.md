@@ -7,7 +7,7 @@ weight = 12
 group = "Running it"
 +++
 
-`hems-sim` stands in for every device on a reference day, and every saving or
+`ems-sim` stands in for every device on a reference day, and every saving or
 compliance figure on this site comes out of it. So the design question it
 answers is not “does it run?” but **can it fail?**
 
@@ -57,7 +57,7 @@ fortnight. `just day-report` prints the one that is checked.
 `autumn` is also the only one of the seven where the seam between the arbiter and
 the wiring shows: a switching wallbox spends the afternoon being asked for power
 that falls between what three conductors and one can hold, and
-`hems_device::realisable` answers each of those with zero — correctly, and
+`ems_device::realisable` answers each of those with zero — correctly, and
 silently. The day reports **19 ticks and 0,18 kWh** of it against nought on the
 other six, and its own test pins that, which is what keeps the number from being
 structurally zero.
@@ -136,8 +136,8 @@ This is the part that decides whether any saving figure means anything.
 <pre class="mermaid">
 flowchart LR
   SEED["seed + instant"] --> R["Realisation<br/>4 octaves of value noise:<br/>~4 h, 1 h, 15 min, 4 min"]
-  R --> SIM["the day the house lives<br/>hems-sim"]
-  HIST["six weeks of the box's<br/>own metering"] --> FC["what the planner is told<br/>hems-forecast"]
+  R --> SIM["the day the house lives<br/>ems-sim"]
+  HIST["six weeks of the box's<br/>own metering"] --> FC["what the planner is told<br/>ems-forecast"]
   FC --> PLAN["plan"]
   PLAN --> SIM
   SIM --> SCORE["CRPS, coverage,<br/>and the money"]

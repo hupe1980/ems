@@ -7,12 +7,12 @@ weight = 5
 group = "The box"
 +++
 
-`hems-core` is the vocabulary every other crate speaks. It holds **facts and no
+`ems-core` is the vocabulary every other crate speaks. It holds **facts and no
 rules**: what a site is made of, what a quarter hour is, what a measurement and
 a command are. Whether a heat pump is a *steuerbare Verbrauchseinrichtung* under
-§ 14a is a rule and lives in [`hems-grid`](@/docs/grid-rules.md); what a
-kilowatt-hour costs is [`hems-tariff`](@/docs/tariffs.md); what to do about
-either is [`hems-optimizer`](@/docs/optimizer.md) and `hems-realtime`.
+§ 14a is a rule and lives in [`ems-grid`](@/docs/grid-rules.md); what a
+kilowatt-hour costs is [`ems-tariff`](@/docs/tariffs.md); what to do about
+either is [`ems-optimizer`](@/docs/optimizer.md) and `ems-realtime`.
 
 The regulatory vocabulary the workspace shares — `Fallgruppe`, the Bundesland
 calendar, the market identifiers — comes from
@@ -176,7 +176,7 @@ solve can never reach a device.
 
 ## The building is a store, and it is discretised exactly
 
-`hems-core::thermal` carries a two-mass RC model of the house: an air node with a
+`ems-core::thermal` carries a two-mass RC model of the house: an air node with a
 time constant of about thirteen minutes, and a fabric node with one measured in
 days. The fabric usually stores several times what the household battery does,
 and it is free.
@@ -216,13 +216,13 @@ is an offset on the right-hand side.
 
 ## Everything takes time as a parameter
 
-No function in `hems-core` reads a clock, opens a socket, spawns a task or
+No function in `ems-core` reads a clock, opens a socket, spawns a task or
 contains `unsafe`. `just purity` fails the build if it — or any of the other nine
 domain crates — reaches for one. That is what makes a whole winter day, DST
 transition included, a unit test that runs in milliseconds.
 
 ```rust
-use hems_core::prelude::*;
+use ems_core::prelude::*;
 
 let limit = Setpoint::new(
     AssetId::new("wallbox-garage")?,

@@ -44,7 +44,7 @@
 //! of a site that changed unreadable against the series of one that did not.
 //! Cardinality is bounded by the number of assets a house has.
 //!
-//! The sign is `hems-core`'s throughout: **positive is drawn**, negative is fed
+//! The sign is `ems-core`'s throughout: **positive is drawn**, negative is fed
 //! back. A series that flipped the convention per point would be a series
 //! nobody can sum.
 
@@ -55,7 +55,7 @@ use chronix::chronix_query;
 use chronix::prelude::{
     Chronix, ChronixConfig, FieldValue, Parallelism, Point, RecordBatch, SeriesKey, Timestamp,
 };
-use hems_core::prelude::{AssetId, Power};
+use ems_core::prelude::{AssetId, Power};
 use time::OffsetDateTime;
 
 /// A wall-clock instant as the store's own timestamp: nanoseconds since the
@@ -120,7 +120,7 @@ pub enum SeriesError {
     /// A tag or field name the store will not accept.
     ///
     /// An asset identifier is already narrower than `chronix`'s own rule, so
-    /// this is unreachable for anything `hems-core` will construct — and it is
+    /// this is unreachable for anything `ems-core` will construct — and it is
     /// an error rather than a panic because the alternative to recording a
     /// measurement is never a crash.
     #[error("{what} is not a name the series accepts: {detail}")]
@@ -600,7 +600,7 @@ mod tests {
 
         // The sign convention survives, which is the half a series that mixes
         // producers and consumers has to get right: a roof feeding back is
-        // negative in `hems-core`'s load convention and must not come back
+        // negative in `ems-core`'s load convention and must not come back
         // positive.
         let pv = series
             .window(

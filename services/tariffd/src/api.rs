@@ -20,8 +20,8 @@ use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
-use hems_core::prelude::Horizon;
-use hems_tariff::cache::PriceCache;
+use ems_core::prelude::Horizon;
+use ems_tariff::cache::PriceCache;
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
@@ -29,7 +29,7 @@ use tokio::sync::RwLock;
 #[derive(Clone)]
 pub struct Prices {
     cache: Arc<RwLock<PriceCache>>,
-    carbon: Arc<RwLock<hems_tariff::cache::CarbonCache>>,
+    carbon: Arc<RwLock<ems_tariff::cache::CarbonCache>>,
 }
 
 impl Prices {
@@ -38,7 +38,7 @@ impl Prices {
     pub fn new(cache: Arc<RwLock<PriceCache>>) -> Self {
         Self {
             cache,
-            carbon: Arc::new(RwLock::new(hems_tariff::cache::CarbonCache::new())),
+            carbon: Arc::new(RwLock::new(ems_tariff::cache::CarbonCache::new())),
         }
     }
 
@@ -48,7 +48,7 @@ impl Prices {
     /// configured Energy-Charts has no intensity to serve, and an empty series
     /// is the honest answer rather than a route that is missing.
     #[must_use]
-    pub fn with_carbon(mut self, carbon: Arc<RwLock<hems_tariff::cache::CarbonCache>>) -> Self {
+    pub fn with_carbon(mut self, carbon: Arc<RwLock<ems_tariff::cache::CarbonCache>>) -> Self {
         self.carbon = carbon;
         self
     }
@@ -90,7 +90,7 @@ pub struct Point {
     /// The wholesale price, ct/kWh, as an exact decimal string.
     pub price_ct: String,
     /// Which source it came from.
-    pub source: hems_tariff::source::Source,
+    pub source: ems_tariff::source::Source,
 }
 
 /// The answer to a price question.

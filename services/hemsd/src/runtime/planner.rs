@@ -38,16 +38,16 @@
 
 use std::sync::Arc;
 
-use hems_core::prelude::{Asset, Horizon, Plan, Power, Site, Slot};
-use hems_forecast::Forecast;
-use hems_forecast::load::LoadProfile;
-use hems_forecast::quantile::Band;
-use hems_forecast::residual::ResidualModel;
-use hems_forecast::{ArrayModel, WeatherSeries};
-use hems_optimizer::model::{BatteryModel, DhwModel, Problem};
-use hems_optimizer::solve::{AssetNames, solve};
-use hems_service::{Health, Shutdown};
-use hems_tariff::PriceStack;
+use ems_core::prelude::{Asset, Horizon, Plan, Power, Site, Slot};
+use ems_forecast::Forecast;
+use ems_forecast::load::LoadProfile;
+use ems_forecast::quantile::Band;
+use ems_forecast::residual::ResidualModel;
+use ems_forecast::{ArrayModel, WeatherSeries};
+use ems_optimizer::model::{BatteryModel, DhwModel, Problem};
+use ems_optimizer::solve::{AssetNames, solve};
+use ems_service::{Health, Shutdown};
+use ems_tariff::PriceStack;
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, RwLock};
 
@@ -76,7 +76,7 @@ pub struct Learned {
     /// and this one's is to notice it moving so the household finds out. A
     /// fortnight after a string fails, `pv` has learned the lower output and
     /// nothing anywhere says the roof got worse (D199).
-    pub health: hems_forecast::PlantHealth,
+    pub health: ems_forecast::PlantHealth,
     /// Which house this is: the thermal record, and the building fitted from it.
     ///
     /// The one of the three that changes the *shape* of a plan rather than its
@@ -85,7 +85,7 @@ pub struct Learned {
     /// solid-wall house and a new timber frame — so a box planning every
     /// household against `Rc2::house()` over-heats two thirds of them and pays
     /// the comfort slack for the overshoot.
-    pub building: hems_forecast::building::Record,
+    pub building: ems_forecast::building::Record,
 }
 
 /// The names the two models are stored under.
@@ -112,12 +112,12 @@ impl Learned {
     /// a few days of an excited house and can never happen at all in a household
     /// whose heat pump nothing measures.
     #[must_use]
-    pub fn new(land: hems_core::calendar::Bundesland, building: hems_core::prelude::Rc2) -> Self {
+    pub fn new(land: ems_core::calendar::Bundesland, building: ems_core::prelude::Rc2) -> Self {
         Self {
-            pv: ResidualModel::new(hems_forecast::residual::DEFAULT_ALPHA),
-            health: hems_forecast::PlantHealth::new(),
+            pv: ResidualModel::new(ems_forecast::residual::DEFAULT_ALPHA),
+            health: ems_forecast::PlantHealth::new(),
             load: LoadProfile::new(land),
-            building: hems_forecast::building::Record::new(building),
+            building: ems_forecast::building::Record::new(building),
         }
     }
 
@@ -134,8 +134,8 @@ impl Learned {
     #[must_use]
     pub fn restored(
         store: &crate::store::Store,
-        land: hems_core::calendar::Bundesland,
-        building: hems_core::prelude::Rc2,
+        land: ems_core::calendar::Bundesland,
+        building: ems_core::prelude::Rc2,
     ) -> Self {
         let mut learned = Self::new(land, building);
         match store.learned::<ResidualModel>(PV_MODEL) {
@@ -154,12 +154,12 @@ impl Learned {
             Ok(None) => {}
             Err(error) => tracing::warn!(%error, "the household's own profile could not be read"),
         }
-        match store.learned::<hems_forecast::PlantHealth>(HEALTH_MODEL) {
+        match store.learned::<ems_forecast::PlantHealth>(HEALTH_MODEL) {
             Ok(Some(health)) => learned.health = health,
             Ok(None) => {}
             Err(error) => tracing::warn!(%error, "the roof's own health record could not be read"),
         }
-        match store.learned::<hems_forecast::building::Record>(BUILDING_MODEL) {
+        match store.learned::<ems_forecast::building::Record>(BUILDING_MODEL) {
             Ok(Some(building)) => learned.building = building,
             Ok(None) => {}
             Err(error) => {
@@ -206,8 +206,8 @@ impl Learned {
             // array to move rather than following it. Both are powers averaged
             // over the slot, so a quarter hour of each is energy.
             self.health.observe_slot(
-                modelled * hems_core::prelude::SLOT_HOURS / 1000.0,
-                pv * hems_core::prelude::SLOT_HOURS / 1000.0,
+                modelled * ems_core::prelude::SLOT_HOURS / 1000.0,
+                pv * ems_core::prelude::SLOT_HOURS / 1000.0,
             );
         }
         self.load.observe(slot, load);
@@ -218,7 +218,7 @@ impl Learned {
     /// Called from the control loop on the **local-day** boundary, beside the
     /// day report, because a performance ratio is a daily figure and a Berlin
     /// day is what the rest of this box settles on.
-    pub fn close_roof_day(&mut self) -> hems_forecast::Health {
+    pub fn close_roof_day(&mut self) -> ems_forecast::Health {
         self.health.close_day()
     }
 
@@ -251,7 +251,7 @@ pub struct Planner {
     /// The roof, as the solar model sees it.
     pub array: ArrayModel,
     /// Which way the building's glazing mostly faces, degrees clockwise from
-    /// north — the plane [`hems_core::thermal::Rc2::solar_aperture_m2`] is
+    /// north — the plane [`ems_core::thermal::Rc2::solar_aperture_m2`] is
     /// driven with.
     pub facade_azimuth_deg: f64,
     /// What a kilowatt-hour costs and earns.
@@ -442,14 +442,10 @@ pub async fn run(
         let now = OffsetDateTime::now_utc();
         refresh(&fleet, &mut cached, carbon_matters, now).await;
 
-        let today = hems_core::calendar::local_day(now);
+        let today = ems_core::calendar::local_day(now);
         if fitted_on != Some(today) {
             fitted_on = Some(today);
-            let found = learned
-                .lock()
-                .await
-                .building
-                .refit(hems_core::prelude::SLOT);
+            let found = learned.lock().await.building.refit(ems_core::prelude::SLOT);
             if let Some(found) = found {
                 tracing::info!(
                     fabric_kwh_per_k = found.building.mass_capacity_kwh_per_k,
@@ -472,7 +468,7 @@ pub async fn run(
                     .plan
                     .expected_cost
                     .as_ref()
-                    .map(hems_core::prelude::CostBreakdown::total);
+                    .map(ems_core::prelude::CostBreakdown::total);
                 tracing::info!(
                     slots = solved.plan.slots.len(),
                     expected_eur = cost,
@@ -545,7 +541,7 @@ async fn attempt(
     published: &Published,
     learned: &Arc<Mutex<Learned>>,
     now: OffsetDateTime,
-) -> Result<hems_optimizer::solve::Solved, Reason> {
+) -> Result<ems_optimizer::solve::Solved, Reason> {
     let site = &planner.household.site;
     let horizon = Horizon::new(now, planner.control.horizon_slots.max(4));
 
@@ -696,7 +692,7 @@ async fn attempt(
     // nobody can buy.
     let draw: Vec<f64> = horizon
         .slots()
-        .map(|s| hems_forecast::hotwater::draw(s).get())
+        .map(|s| ems_forecast::hotwater::draw(s).get())
         .collect();
     let names = AssetNames {
         battery: battery.and(planner.household.battery.clone()),
@@ -764,15 +760,15 @@ pub struct Inputs {
     prices: PriceStack,
     pv: Forecast,
     load: Forecast,
-    limits: hems_optimizer::model::PlanningLimits,
-    objective: hems_optimizer::model::Objective,
-    risk: hems_optimizer::Risk,
+    limits: ems_optimizer::model::PlanningLimits,
+    objective: ems_optimizer::model::Objective,
+    risk: ems_optimizer::Risk,
     battery: Option<BatteryModel>,
     dhw: Option<DhwModel>,
     draw: Vec<f64>,
-    dhw_target: Option<hems_optimizer::model::DhwTarget>,
-    ev: Option<hems_optimizer::model::EvSession>,
-    thermal: Option<hems_optimizer::model::ThermalModel>,
+    dhw_target: Option<ems_optimizer::model::DhwTarget>,
+    ev: Option<ems_optimizer::model::EvSession>,
+    thermal: Option<ems_optimizer::model::ThermalModel>,
     outdoor: Vec<f64>,
     window: Vec<f64>,
     names: AssetNames,
@@ -785,9 +781,7 @@ impl Inputs {
     ///
     /// # Errors
     /// The solver's refusal.
-    pub fn solve(
-        &self,
-    ) -> Result<hems_optimizer::solve::Solved, hems_optimizer::solve::SolveError> {
+    pub fn solve(&self) -> Result<ems_optimizer::solve::Solved, ems_optimizer::solve::SolveError> {
         let mut problem = Problem::new(self.horizon, &self.prices, &self.pv, &self.load)
             .with_limits(self.limits.clone())
             .with_objective(self.objective)
@@ -818,7 +812,7 @@ impl Inputs {
 
     /// The same problem with the car's goal replaced.
     #[must_use]
-    pub fn with_car(&self, session: Option<hems_optimizer::model::EvSession>) -> Self {
+    pub fn with_car(&self, session: Option<ems_optimizer::model::EvSession>) -> Self {
         Self {
             ev: session,
             ..self.clone()
@@ -827,7 +821,7 @@ impl Inputs {
 
     /// The same problem with the tank's goal replaced.
     #[must_use]
-    pub fn with_tank(&self, target: Option<hems_optimizer::model::DhwTarget>) -> Self {
+    pub fn with_tank(&self, target: Option<ems_optimizer::model::DhwTarget>) -> Self {
         Self {
             dhw_target: target,
             ..self.clone()
@@ -836,7 +830,7 @@ impl Inputs {
 
     /// The car's session as planned, where there is one.
     #[must_use]
-    pub fn car(&self) -> Option<hems_optimizer::model::EvSession> {
+    pub fn car(&self) -> Option<ems_optimizer::model::EvSession> {
         self.ev
     }
 
@@ -862,7 +856,7 @@ async fn publish(
     series: &WeatherSeries,
     pv: &Forecast,
     load: &Forecast,
-    location: hems_core::prelude::GeoPoint,
+    location: ems_core::prelude::GeoPoint,
     facade_azimuth_deg: f64,
 ) {
     *published.outdoor.write().await = series
@@ -876,8 +870,8 @@ async fn publish(
         .map(|(slot, point)| {
             (
                 *slot,
-                hems_forecast::solar::window_irradiance(
-                    hems_forecast::solar::sun_position(location, *slot),
+                ems_forecast::solar::window_irradiance(
+                    ems_forecast::solar::sun_position(location, *slot),
                     point.ghi_w_per_m2,
                     facade_azimuth_deg,
                 ),
@@ -901,7 +895,7 @@ fn to_series(sky: &Sky) -> WeatherSeries {
             .map(|p| {
                 (
                     Slot::containing(p.slot),
-                    hems_forecast::weather::WeatherPoint {
+                    ems_forecast::weather::WeatherPoint {
                         ghi_w_per_m2: p.ghi_w_per_m2,
                         temperature_c: p.temperature_c,
                         cloud_cover: p.cloud_cover,
@@ -1009,15 +1003,15 @@ const DISCOMFORT_EUR_PER_KELVIN_HOUR: f64 = 1.5;
 ///   only place the two can be told apart;
 /// * the **compressor state** is what the appliance says it is doing, which is
 ///   the whole of what makes a minimum runtime mean anything on a receding
-///   horizon (see [`CompressorState`](hems_core::prelude::CompressorState)).
+///   horizon (see [`CompressorState`](ems_core::prelude::CompressorState)).
 fn heat_pump_model(
     site: &Site,
     observed: &crate::drivers::Observed,
     household: &Household,
-    building: hems_core::prelude::Rc2,
-) -> Option<hems_optimizer::model::ThermalModel> {
-    use hems_core::prelude::{CompressorState, ThermalState};
-    use hems_optimizer::model::{HeatPumpModel, ThermalModel};
+    building: ems_core::prelude::Rc2,
+) -> Option<ems_optimizer::model::ThermalModel> {
+    use ems_core::prelude::{CompressorState, ThermalState};
+    use ems_optimizer::model::{HeatPumpModel, ThermalModel};
 
     let id = household.heat_pump.as_ref()?;
     let Some(Asset::HeatPump(hp)) = site.asset(id) else {
@@ -1038,7 +1032,7 @@ fn heat_pump_model(
     // command a mode the compressor does not have (D202).
     unit.max_cooling = hp
         .cooling_electrical
-        .unwrap_or(hems_core::prelude::Power::ZERO);
+        .unwrap_or(ems_core::prelude::Power::ZERO);
     if let Some(offer) = observed.flexibility.get(id) {
         if let Some(min_run) = offer.min_run {
             unit.min_on_slots = slots_of(min_run);
@@ -1076,7 +1070,7 @@ fn heat_pump_model(
 /// for one quarter hour is a minimum runtime the appliance then extends by
 /// itself, and the plan spends the difference somewhere it did not budget for.
 fn slots_of(duration: time::Duration) -> usize {
-    let slots = (duration / hems_core::prelude::SLOT).ceil();
+    let slots = (duration / ems_core::prelude::SLOT).ceil();
     if slots.is_finite() && slots >= 1.0 {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let n = slots as usize;
@@ -1107,8 +1101,8 @@ fn ev_session(
     household: &Household,
     charging: Option<&crate::config::EebusEvSettings>,
     horizon: Horizon,
-) -> Option<hems_optimizer::model::EvSession> {
-    use hems_core::prelude::{Energy, PhaseMode};
+) -> Option<ems_optimizer::model::EvSession> {
+    use ems_core::prelude::{Energy, PhaseMode};
 
     let evse_id = household.evse.as_ref()?;
     let Some(Asset::Evse(evse)) = site.asset(evse_id) else {
@@ -1134,7 +1128,7 @@ fn ev_session(
         return None;
     }
     let departure = charging.departure_slot(horizon)?;
-    Some(hems_optimizer::model::EvSession {
+    Some(ems_optimizer::model::EvSession {
         energy_now,
         energy_target,
         capacity,
@@ -1162,7 +1156,7 @@ fn ev_session(
 /// *not connected*. Left out, it is neither modelled nor named, which by D96 is
 /// what keeps the arbiter from receiving a target for it at all: the battery
 /// runs its own logic and the plan prices the house around it.
-fn drivable(observed: &crate::drivers::Observed, id: &hems_core::prelude::AssetId) -> Option<()> {
+fn drivable(observed: &crate::drivers::Observed, id: &ems_core::prelude::AssetId) -> Option<()> {
     (!observed.uncommandable.contains(id)).then_some(())
 }
 
@@ -1196,7 +1190,7 @@ fn battery_model(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::prelude::{Power, Rc2};
+    use ems_core::prelude::{Power, Rc2};
 
     /// A tank nobody measured is left out of the plan rather than guessed at.
     ///
@@ -1210,7 +1204,7 @@ mod tests {
     /// The three different `None`s, and why the planner treats them alike.
     #[test]
     fn a_car_nobody_can_see_is_not_a_car_to_plan_for() {
-        use hems_core::prelude::Horizon;
+        use ems_core::prelude::Horizon;
 
         let household = crate::site::Household::build(&crate::HouseholdConfig::default())
             .expect("the reference household");
@@ -1245,7 +1239,7 @@ mod tests {
         let mut observed = crate::drivers::Observed::default();
         observed.vehicles.insert(
             evse.clone(),
-            hems_drv::VehiclePresence {
+            ems_drv::VehiclePresence {
                 connected: false,
                 soc: None,
                 capacity_wh: None,
@@ -1268,7 +1262,7 @@ mod tests {
         // invented battery.
         observed.vehicles.insert(
             evse.clone(),
-            hems_drv::VehiclePresence {
+            ems_drv::VehiclePresence {
                 connected: true,
                 soc: None,
                 capacity_wh: Some(58_000.0),
@@ -1291,7 +1285,7 @@ mod tests {
     /// A car that is there, and short of its target, is a session to plan.
     #[test]
     fn a_car_on_the_cable_becomes_a_charging_deadline() {
-        use hems_core::prelude::Horizon;
+        use ems_core::prelude::Horizon;
 
         let household = crate::site::Household::build(&crate::HouseholdConfig::default())
             .expect("the reference household");
@@ -1312,7 +1306,7 @@ mod tests {
         let mut observed = crate::drivers::Observed::default();
         observed.vehicles.insert(
             evse,
-            hems_drv::VehiclePresence {
+            ems_drv::VehiclePresence {
                 connected: true,
                 soc: Some(0.35),
                 capacity_wh: Some(58_000.0),
@@ -1346,7 +1340,7 @@ mod tests {
         // asset the problem does not move is a target of zero the arbiter obeys.
         observed.vehicles.insert(
             household.evse.clone().expect("the wallbox"),
-            hems_drv::VehiclePresence {
+            ems_drv::VehiclePresence {
                 connected: true,
                 soc: Some(0.9),
                 capacity_wh: Some(58_000.0),
@@ -1371,16 +1365,16 @@ mod tests {
     /// the refusal and nothing else.
     #[test]
     fn a_device_no_driver_can_command_is_left_out_of_the_plan() {
-        use hems_core::prelude::Measurement;
+        use ems_core::prelude::Measurement;
 
         let household = crate::site::Household::build(&crate::HouseholdConfig::default())
             .expect("the reference household");
         let now = time::OffsetDateTime::now_utc();
         let battery = household.battery.clone().expect("the reference battery");
         let tank = household.dhw.clone().expect("the reference tank");
-        let mut state = hems_realtime::guard::SiteState::default();
+        let mut state = ems_realtime::guard::SiteState::default();
         let mut soc = Measurement::at(now);
-        soc.soc = hems_core::prelude::Soc::new(0.5).ok();
+        soc.soc = ems_core::prelude::Soc::new(0.5).ok();
         state.assets.insert(battery.clone(), soc);
         let mut warm = Measurement::at(now);
         warm.temperature_c = Some(52.5);
@@ -1422,13 +1416,13 @@ mod tests {
     /// A tank that has been measured is the store the optimiser was written for.
     #[test]
     fn a_measured_tank_becomes_a_store_the_planner_can_move() {
-        use hems_core::prelude::{Asset, Measurement};
+        use ems_core::prelude::{Asset, Measurement};
 
         let household = crate::site::Household::build(&crate::HouseholdConfig::default())
             .expect("the reference household");
         let now = time::OffsetDateTime::now_utc();
         let dhw_id = household.dhw.clone().expect("the reference tank");
-        let mut state = hems_realtime::guard::SiteState::default();
+        let mut state = ems_realtime::guard::SiteState::default();
         let mut measured = Measurement::at(now);
         measured.temperature_c = Some(52.5);
         state.assets.insert(dhw_id.clone(), measured);
@@ -1460,7 +1454,7 @@ mod tests {
         // its own load. Both models are cheap to keep and expensive to relearn.
         let store = crate::store::Store::in_memory().expect("a store");
         let now = time::OffsetDateTime::now_utc();
-        let land = hems_core::calendar::Bundesland::Be;
+        let land = ems_core::calendar::Bundesland::Be;
 
         let mut before = Learned::new(land, Rc2::house());
         // A fortnight, so every day type has been seen: a profile is indexed by
@@ -1509,7 +1503,7 @@ mod tests {
             .put_learned(PV_MODEL, &"a shape from some other version", now)
             .expect("it stores");
 
-        let restored = Learned::restored(&store, hems_core::calendar::Bundesland::Be, Rc2::house());
+        let restored = Learned::restored(&store, ems_core::calendar::Bundesland::Be, Rc2::house());
         assert!(
             !restored.pv.is_trained(),
             "the unreadable half is simply relearned"
@@ -1524,10 +1518,10 @@ mod tests {
         // not be handed the old answer back by its own store.
         let store = crate::store::Store::in_memory().expect("a store");
         let now = time::OffsetDateTime::now_utc();
-        let learned = Learned::new(hems_core::calendar::Bundesland::By, Rc2::house());
+        let learned = Learned::new(ems_core::calendar::Bundesland::By, Rc2::house());
         learned.remember(&store, now);
 
-        let restored = Learned::restored(&store, hems_core::calendar::Bundesland::Nw, Rc2::house());
-        assert_eq!(restored.load.land, hems_core::calendar::Bundesland::Nw);
+        let restored = Learned::restored(&store, ems_core::calendar::Bundesland::Nw, Rc2::house());
+        assert_eq!(restored.load.land, ems_core::calendar::Bundesland::Nw);
     }
 }

@@ -41,14 +41,14 @@
 
 use std::collections::BTreeMap;
 
-use hems_service::db::{Db, Migration};
+use ems_service::db::{Db, Migration};
 use thiserror::Error;
 use time::OffsetDateTime;
 
 /// The schema this binary carries.
 ///
 /// `include_str!` rather than a path read at run time, so the container needs no
-/// files beside the binary. `hems_service::db::migrate` checksums each revision,
+/// files beside the binary. `ems_service::db::migrate` checksums each revision,
 /// so an edit to one already applied is refused rather than skipped.
 pub const MIGRATIONS: &[Migration] = &[Migration {
     version: 1,
@@ -218,8 +218,8 @@ mod tests {
 
     const NOW: OffsetDateTime = datetime!(2026-06-21 12:00:00 UTC);
 
-    async fn store() -> (hems_service::testdb::Postgres, Store) {
-        let fixture = hems_service::testdb::Postgres::start(MIGRATIONS).await;
+    async fn store() -> (ems_service::testdb::Postgres, Store) {
+        let fixture = ems_service::testdb::Postgres::start(MIGRATIONS).await;
         let store = Store::new(fixture.db.clone());
         (fixture, store)
     }

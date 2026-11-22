@@ -13,7 +13,7 @@
 //!
 //! # It reads the **summary**, not the days, and that is a bound
 //!
-//! [`hems_core::report::Summary`] is bounded by **findings**: every compliance
+//! [`ems_core::report::Summary`] is bounded by **findings**: every compliance
 //! answer in it is already a list with a site and a date, because `obsd`'s whole
 //! design is *lists, never rates*, and the rest are counts. So a fleet in good
 //! order is a handful of numbers whatever its size. The rows would be
@@ -24,7 +24,7 @@
 //! *which* spent time on the fallback; whether those are the same `(site, date)`
 //! pairs is the question no exact answer contains, and it is the agent's.
 
-use hems_core::report::Summary;
+use ems_core::report::Summary;
 
 /// What a specialist read, and where it came from.
 ///
@@ -116,7 +116,7 @@ impl Obsd {
     /// A client for the `obsd` at `endpoint`, presenting `token`.
     ///
     /// # Errors
-    /// [`hems_service::HttpError`] where the client cannot be built, or where
+    /// [`ems_service::HttpError`] where the client cannot be built, or where
     /// `endpoint` would carry this daemon's **credential** across a network in
     /// the clear. That second check is the one this daemon was missing: the
     /// token it presents holds `hems.fleet.read`, which reads every household in
@@ -124,14 +124,14 @@ impl Obsd {
     pub fn new(
         endpoint: impl Into<String>,
         token: impl Into<String>,
-        http: &hems_service::HttpSettings,
+        http: &ems_service::HttpSettings,
         timeout: std::time::Duration,
-    ) -> Result<Self, hems_service::HttpError> {
+    ) -> Result<Self, ems_service::HttpError> {
         let endpoint = endpoint.into().trim_end_matches('/').to_owned();
-        hems_service::http::confidential(&endpoint)?;
+        ems_service::http::confidential(&endpoint)?;
         Ok(Self {
-            client: hems_service::http::client(
-                hems_service::identity!(),
+            client: ems_service::http::client(
+                ems_service::identity!(),
                 &http.clone().with_timeout_s(timeout.as_secs().max(1)),
             )?,
             endpoint,
@@ -168,7 +168,7 @@ impl Upstream for Obsd {
                 status: status.as_u16(),
             });
         }
-        // `Summary` is `hems-core`'s, not a mirror written here: the two ends
+        // `Summary` is `ems-core`'s, not a mirror written here: the two ends
         // share the type rather than two people remembering the same field
         // names, which is the whole reason it moved out of `obsd`.
         let fleet: Summary = response
@@ -200,7 +200,7 @@ mod tests {
         let obsd = Obsd::new(
             "https://obsd.example/",
             "tok-secret",
-            &hems_service::HttpSettings::default(),
+            &ems_service::HttpSettings::default(),
             std::time::Duration::from_secs(5),
         )
         .expect("a client");
@@ -218,10 +218,10 @@ mod tests {
             Obsd::new(
                 "http://obsd.example/",
                 "tok-secret",
-                &hems_service::HttpSettings::default(),
+                &ems_service::HttpSettings::default(),
                 std::time::Duration::from_secs(5),
             ),
-            Err(hems_service::HttpError::NotConfidential { .. })
+            Err(ems_service::HttpError::NotConfidential { .. })
         ));
         // …and loopback is the exception, because that is a socket on the same
         // host and there is no network to read it off.
@@ -229,7 +229,7 @@ mod tests {
             Obsd::new(
                 "http://127.0.0.1:7780",
                 "tok-secret",
-                &hems_service::HttpSettings::default(),
+                &ems_service::HttpSettings::default(),
                 std::time::Duration::from_secs(5),
             )
             .is_ok()

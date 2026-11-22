@@ -8,11 +8,11 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::prelude::{GuardRule, Power};
-use hems_grid::evidence::ControlEvent;
-use hems_grid::mispel::QuarterHour;
-use hems_grid::para14a::ControlMode;
-use hems_service::{Credentials, Secret};
+use ems_core::prelude::{GuardRule, Power};
+use ems_grid::evidence::ControlEvent;
+use ems_grid::mispel::QuarterHour;
+use ems_grid::para14a::ControlMode;
+use ems_service::{Credentials, Secret};
 use histd::api::{History, router};
 use time::macros::datetime;
 
@@ -32,7 +32,7 @@ fn credentials() -> Credentials {
     Credentials::resolve(
         &sites,
         &std::collections::BTreeMap::new(),
-        &[hems_service::OperatorCredential {
+        &[ems_service::OperatorCredential {
             token: Secret::literal(NETZ),
             tenant: "*".into(),
         }],
@@ -50,17 +50,14 @@ fn event() -> ControlEvent {
     )
 }
 
-async fn start() -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
+async fn start() -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bound = listener.local_addr().unwrap();
     drop(listener);
 
     // A record already exists for `haus-1`, so a refusal below is a refusal
     // rather than an empty answer that happens to look like one.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = histd::Store::new(fixture.db.clone());
     store
         .put_control_event("haus-1", &event())
@@ -69,22 +66,22 @@ async fn start() -> (
     store
         .put_quarter_hour(
             "haus-1",
-            &QuarterHour::empty(hems_core::prelude::Slot::containing(NOW)),
+            &QuarterHour::empty(ems_core::prelude::Slot::containing(NOW)),
             NOW,
         )
         .await
         .expect("a register");
 
-    let settings = hems_service::Settings {
+    let settings = ems_service::Settings {
         listen: bound,
         shutdown_grace_s: 2,
-        ..hems_service::Settings::default()
+        ..ems_service::Settings::default()
     };
-    let (signal, trigger) = hems_service::Shutdown::channel();
-    let server = hems_service::Server::new(
-        hems_service::identity!(),
+    let (signal, trigger) = ems_service::Shutdown::channel();
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
         settings,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         router(History::new(store.clone(), credentials())),
     );
     tokio::spawn(async move { server.run_until(signal).await.unwrap() });

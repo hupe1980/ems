@@ -12,11 +12,11 @@ pub struct Settings {
     /// them. The environment override is unaffected either way — it goes through
     /// `AsMut<Settings>` rather than through the file's shape.
     #[serde(default)]
-    pub service: hems_service::Settings,
+    pub service: ems_service::Settings,
     /// One bearer token per site — the credential its box presents.
     ///
     /// A box may read and write **its own** record and no other. Each is a
-    /// [`hems_service::Secret`], so the usual deployment writes
+    /// [`ems_service::Secret`], so the usual deployment writes
     /// `haus-1 = "env:HEMS_HISTD_TOKEN_HAUS1"` and no credential enters the
     /// configuration file.
     ///
@@ -24,7 +24,7 @@ pub struct Settings {
     /// of "nobody configured it": what these routes serve is a household's whole
     /// consumption record and the evidence a network operator settles on.
     #[serde(default)]
-    pub site_tokens: std::collections::BTreeMap<String, hems_service::Secret>,
+    pub site_tokens: std::collections::BTreeMap<String, ems_service::Secret>,
     /// Tokens that may read **any** site's § 14a evidence.
     ///
     /// A network operator checking a reduction it commanded, or an internal
@@ -43,16 +43,16 @@ pub struct Settings {
     pub tenants: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// The operator credentials, each scoped to a tenant.
     #[serde(default)]
-    pub operators: Vec<hems_service::OperatorCredential>,
+    pub operators: Vec<ems_service::OperatorCredential>,
     /// How to reach PostgreSQL.
     ///
     /// A fleet service, so a database a fleet can reach: what this daemon holds
     /// is every household's § 14a evidence, and a file on one node cannot be
     /// replicated, cannot be read by a second replica and cannot outlive the
     /// node (D156). The URL itself is a reference to a credential rather than
-    /// the credential — see [`hems_service::DbSettings`].
+    /// the credential — see [`ems_service::DbSettings`].
     #[serde(default)]
-    pub database: hems_service::DbSettings,
+    pub database: ems_service::DbSettings,
     /// How often to delete what has aged out, seconds.
     ///
     /// Daily. `[A1 7.3]`'s two years are not a number anybody is racing, and a
@@ -78,7 +78,7 @@ pub struct Settings {
     /// law, `[MiSpeL Tenor 9]` b) — `"YYYY-MM-DD"`, or absent while there is no
     /// approval. The Pauschaloption applies from the first day of the month
     /// after it, and not at all before it.
-    #[serde(default, with = "hems_core::wire::iso_date::option")]
+    #[serde(default, with = "ems_core::wire::iso_date::option")]
     pub mispel_state_aid_approved_on: Option<time::Date>,
     /// The Model Context Protocol surface, off by default.
     ///
@@ -86,27 +86,27 @@ pub struct Settings {
     /// switched on and the surface answers as whatever authority that token
     /// already carries here — an operator, or one site.
     #[serde(default)]
-    pub mcp: hems_service::McpSettings,
+    pub mcp: ems_service::McpSettings,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            service: hems_service::Settings::default(),
+            service: ems_service::Settings::default(),
             site_tokens: std::collections::BTreeMap::new(),
             tenants: std::collections::BTreeMap::new(),
             operators: Vec::new(),
             mispel: std::collections::BTreeMap::new(),
             mispel_state_aid_approved_on: None,
-            database: hems_service::DbSettings::default(),
+            database: ems_service::DbSettings::default(),
             retention_sweep_s: 24 * 3600,
-            mcp: hems_service::McpSettings::default(),
+            mcp: ems_service::McpSettings::default(),
         }
     }
 }
 
-impl AsMut<hems_service::Settings> for Settings {
-    fn as_mut(&mut self) -> &mut hems_service::Settings {
+impl AsMut<ems_service::Settings> for Settings {
+    fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
     }
 }
@@ -138,11 +138,11 @@ pub enum MispelSettings {
     /// settled per calendar month or Rumpfmonat.
     Abgrenzung {
         /// Which of the four Basisfälle the installation is, `[MiSpeL A1 3]`.
-        basisfall: hems_grid::mispel::Basisfall,
+        basisfall: ems_grid::mispel::Basisfall,
         /// The first day the installation is assigned on the option's basis,
         /// `"YYYY-MM-DD"` — the first of a month unless `first_assignment`
         /// (§ 21b Abs. 1 S. 2 EEG by analogy); `histd` refuses to start otherwise.
-        #[serde(with = "hems_core::wire::iso_date")]
+        #[serde(with = "ems_core::wire::iso_date")]
         assigned_from: time::Date,
         /// Whether this is the **first** assignment of a newly commissioned
         /// plant, which alone may start mid-month (a Rumpfmonat or Rumpfjahr).
@@ -157,7 +157,7 @@ pub enum MispelSettings {
     /// at most 30 kWp, settled per calendar year or Rumpfjahr.
     Pauschal {
         /// Which of the three Pauschalfälle, `[MiSpeL A2 3]`.
-        fall: hems_grid::mispel::PauschalFall,
+        fall: ems_grid::mispel::PauschalFall,
         /// `Pinst` — installed solar power behind the Einspeisestelle, kWp.
         solar_kwp: f64,
         /// `SKinst` — installed storage capacity behind it, kWh.
@@ -170,7 +170,7 @@ pub enum MispelSettings {
         /// The first day the installation is assigned on the option's basis,
         /// `"YYYY-MM-DD"` — the first of a month unless `first_assignment`
         /// (§ 21b Abs. 1 S. 2 EEG by analogy); `histd` refuses to start otherwise.
-        #[serde(with = "hems_core::wire::iso_date")]
+        #[serde(with = "ems_core::wire::iso_date")]
         assigned_from: time::Date,
         /// Whether this is the **first** assignment of a newly commissioned
         /// plant, which alone may start mid-month (a Rumpfmonat or Rumpfjahr).
@@ -230,12 +230,12 @@ impl Settings {
     /// Nachweis that would rest on it.
     ///
     /// # Errors
-    /// The site and the [`hems_grid::mispel::Refusal`] its assignment draws.
+    /// The site and the [`ems_grid::mispel::Refusal`] its assignment draws.
     pub fn validate_mispel(&self) -> Result<(), String> {
-        let rules = hems_grid::mispel::RuleSet::default();
+        let rules = ems_grid::mispel::RuleSet::default();
         for (site, declared) in &self.mispel {
             if let Some(a) = declared.assignment() {
-                hems_grid::mispel::Assignment {
+                ems_grid::mispel::Assignment {
                     from: a.assigned_from,
                     first: a.first_assignment,
                 }

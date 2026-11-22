@@ -5,10 +5,10 @@
 //! differently, a battery model that disagrees with the optimiser's, a
 //! forecast that is not in the same units as the thing it forecasts.
 
-use hems_core::prelude::{CapRelief, Energy, Power, Soc};
-use hems_flex::ControlType;
-use hems_grid::mispel::{Basisfall, RuleSet, abgrenzung_month};
-use hems_grid::sharing::{Aufteilung, Community, Member, allocate_by};
+use ems_core::prelude::{CapRelief, Energy, Power, Soc};
+use ems_flex::ControlType;
+use ems_grid::mispel::{Basisfall, RuleSet, abgrenzung_month};
+use ems_grid::sharing::{Aufteilung, Community, Member, allocate_by};
 use hemsd::{HouseholdConfig, Scenario, run};
 use rust_decimal::Decimal;
 use time::Duration;
@@ -360,8 +360,8 @@ fn the_sixty_percent_cap_costs_a_roof_what_an_intelligent_meter_would_have_saved
     let ceiling = capped
         .feed_in_ceiling_kw
         .expect("a 20 kWp roof commissioned after 25.02.2025 without an iMSys is capped");
-    let cadence = hemsd::scenario::CONTROL_PERIOD.as_seconds_f64()
-        / hems_core::prelude::SLOT.as_seconds_f64();
+    let cadence =
+        hemsd::scenario::CONTROL_PERIOD.as_seconds_f64() / ems_core::prelude::SLOT.as_seconds_f64();
     let allowance = capped.worst_uncommanded_export_step_w / 1000.0 * cadence;
     assert!(
         capped.peak_feed_in_kw <= ceiling + allowance,
@@ -835,15 +835,15 @@ fn every_asset_the_arbiter_moves_can_be_described_in_s2() {
     let household =
         hemsd::Household::build(&HouseholdConfig::default()).expect("the reference household");
     for asset in &household.site.assets {
-        let control = hems_flex::control_type_for(asset, true);
+        let control = ems_flex::control_type_for(asset, true);
         let expected = match asset {
-            hems_core::asset::Asset::Battery(_)
-            | hems_core::asset::Asset::Dhw(_)
-            | hems_core::asset::Asset::Evse(_) => ControlType::Frbc,
-            hems_core::asset::Asset::Pv(_) | hems_core::asset::Asset::HeatPump(_) => {
+            ems_core::asset::Asset::Battery(_)
+            | ems_core::asset::Asset::Dhw(_)
+            | ems_core::asset::Asset::Evse(_) => ControlType::Frbc,
+            ems_core::asset::Asset::Pv(_) | ems_core::asset::Asset::HeatPump(_) => {
                 ControlType::Pebc
             }
-            hems_core::asset::Asset::Load(l) if l.programme().is_some() => ControlType::Ppbc,
+            ems_core::asset::Asset::Load(l) if l.programme().is_some() => ControlType::Ppbc,
             _ => ControlType::NotControllable,
         };
         assert_eq!(
@@ -857,7 +857,7 @@ fn every_asset_the_arbiter_moves_can_be_described_in_s2() {
         // produces or stores.
         if control != ControlType::NotControllable {
             assert!(
-                !hems_flex::roles_for(asset).is_empty(),
+                !ems_flex::roles_for(asset).is_empty(),
                 "{} takes instructions but declares no S2 role",
                 asset.id()
             );
@@ -1300,7 +1300,7 @@ fn a_switchable_charge_point_is_the_whole_session_in_the_shoulder_season() {
     // And the seam this day is the one that exercises. A contactor switches on
     // whole conductors, so the surplus tracker keeps asking for values that fall
     // between what three conductors and one can hold — and
-    // `hems_device::realisable` answers each with zero, correctly and silently.
+    // `ems_device::realisable` answers each with zero, correctly and silently.
     // On every other reference day this number is nought; here it is the cost of
     // the mechanism, and it has to stay visible rather than being absorbed into
     // "the car charged a bit less than it might have".
@@ -1526,7 +1526,7 @@ fn a_days_forecast_scores_are_one_episode_and_never_claim_calibration() {
 #[test]
 fn a_forty_two_c_community_moves_the_day_and_the_baseline_is_in_it_too() {
     // The other half of § 42c, and the one that was missing for four versions:
-    // `hems-grid::sharing` could *settle* an allocation and the planner had no
+    // `ems-grid::sharing` could *settle* an allocation and the planner had no
     // term that valued one, so a household could belong to a community and its
     // box would never once move a kilowatt-hour to catch the neighbours' roof.
     //
@@ -1542,7 +1542,7 @@ fn a_forty_two_c_community_moves_the_day_and_the_baseline_is_in_it_too() {
     let lawful =
         Scenario::winter_with_grid_event(HouseholdConfig::default()).on_a_day_sharing_reaches();
     assert!(
-        hems_grid::sharing::applies_on(lawful.date),
+        ems_grid::sharing::applies_on(lawful.date),
         "the day a § 42c comparison runs on has to be one § 42c reaches"
     );
     let plain = run(&lawful).unwrap();
@@ -1764,7 +1764,7 @@ fn a_fleet_that_is_down_costs_a_delay_and_not_a_day() {
         store
             .queue_event(
                 "haus-1:2026-01-14",
-                hems_events::SITE_DAY_REPORTED,
+                ems_events::SITE_DAY_REPORTED,
                 br#"{"specversion":"1.0"}"#,
                 now,
             )
@@ -1814,12 +1814,12 @@ fn a_box_closes_its_day_from_what_it_wrote_down() {
     let _ = std::fs::remove_file(&path);
 
     let day = time::macros::date!(2026 - 01 - 15);
-    let midnight = hems_core::calendar::day_start_utc(day);
+    let midnight = ems_core::calendar::day_start_utc(day);
     {
         let store = hemsd::store::Store::open(&path).unwrap();
         for i in 0..96 {
-            let quarter = hems_grid::mispel::QuarterHour {
-                slot: hems_core::prelude::Slot::containing(
+            let quarter = ems_grid::mispel::QuarterHour {
+                slot: ems_core::prelude::Slot::containing(
                     midnight + time::Duration::minutes(15 * i),
                 ),
                 grid_draw: rust_decimal::Decimal::new(15, 2),
@@ -1886,19 +1886,17 @@ fn a_box_closes_its_day_from_what_it_wrote_down() {
     assert_eq!(kpis.control_events, 0);
 
     // And it travels as the same signed CloudEvent the simulator's day does.
-    let event = hems_events::Event::new(
-        hems_events::SITE_DAY_REPORTED,
-        "hems://sites/reference-household".to_owned(),
+    let event = ems_events::Event::new(
+        ems_events::SITE_DAY_REPORTED,
+        "ems://sites/reference-household".to_owned(),
         format!("reference-household:{day}"),
         midnight,
         &kpis,
     );
     let body = event.to_bytes().expect("a day serialises");
-    let back = hems_events::Event::<hems_core::report::DayKpis>::parse(
-        &body,
-        hems_events::SITE_DAY_REPORTED,
-    )
-    .expect("and `obsd` can read it back");
+    let back =
+        ems_events::Event::<ems_core::report::DayKpis>::parse(&body, ems_events::SITE_DAY_REPORTED)
+            .expect("and `obsd` can read it back");
     assert_eq!(back.data, kpis, "through the type both sides share");
 
     let _ = std::fs::remove_file(&path);
@@ -2279,7 +2277,7 @@ fn a_box_on_its_first_evening_is_lawful_and_honest_about_what_it_knows() {
     );
     assert_eq!(
         day.load_prior,
-        Some(hems_forecast::PriorBasis::Anchored),
+        Some(ems_forecast::PriorBasis::Anchored),
         "a box that has measured nothing and been told nothing anchors on its reading"
     );
     assert!(

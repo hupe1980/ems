@@ -1,14 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/hems-core", "crates/hems-device", "crates/hems-drv", "crates/hems-flex", "crates/hems-grid", "crates/hems-realtime", "crates/hems-tariff", "crates/hems-forecast", "crates/hems-optimizer", "crates/hems-events", "crates/hems-service", "crates/hems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/histd", "services/obsd", "services/tariffd", "xtask"]
+members = ["crates/ems-core", "crates/ems-device", "crates/ems-drv", "crates/ems-flex", "crates/ems-grid", "crates/ems-realtime", "crates/ems-tariff", "crates/ems-forecast", "crates/ems-optimizer", "crates/ems-events", "crates/ems-service", "crates/ems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/histd", "services/obsd", "services/tariffd", "xtask"]
 
 [workspace.package]
-version      = "0.6.0"
+version      = "0.7.0"
 authors      = ["hupe1980"]
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/hupe1980/hems"
-homepage     = "https://hupe1980.github.io/hems"
+repository   = "https://github.com/hupe1980/ems"
+homepage     = "https://hupe1980.github.io/ems"
 rust-version = "1.99"
 
 [workspace.dependencies]
@@ -53,7 +53,7 @@ anyhow       = "1"
 toml         = { version = "1", default-features = false, features = ["parse", "serde"] }
 
 # Reading somebody else's price list. Both are pure parsers — a `&str` in, a
-# structure out — so `hems-tariff` stays a domain crate that does no I/O: the
+# structure out — so `ems-tariff` stays a domain crate that does no I/O: the
 # fetching lives in `tariffd`, and every source is tested against a captured
 # response rather than against the internet.
 # ≥ 0.41: RUSTSEC-2026-… caps the namespace resolver's per-element
@@ -103,7 +103,7 @@ sunspec      = { version = "0.9", default-features = false, features = [
 
 # The far end of the virtual house (`hemsd house`): a Modbus TCP *server* nobody
 # here wrote, so the box's own frame codec meets a stranger. Server only — the
-# box's client stays `hems-drv`'s — and only behind `hemsd`'s `house` feature.
+# box's client stays `ems-drv`'s — and only behind `hemsd`'s `house` feature.
 tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-server"] }
 
 # Linear/mixed-integer programming façade. `microlp` is the pure-Rust default so
@@ -111,18 +111,18 @@ tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-se
 good_lp      = { version = "1.15", default-features = false }
 
 # ── Internal (path + version so the domain crates can be published) ─────────
-hems-core      = { path = "crates/hems-core",      version = "0.6" }
-hems-device    = { path = "crates/hems-device",    version = "0.6" }
-hems-drv       = { path = "crates/hems-drv",       version = "0.6" }
-hems-flex      = { path = "crates/hems-flex",      version = "0.6" }
-hems-grid      = { path = "crates/hems-grid",      version = "0.6" }
-hems-tariff    = { path = "crates/hems-tariff",    version = "0.6" }
-hems-forecast  = { path = "crates/hems-forecast",  version = "0.6" }
-hems-optimizer = { path = "crates/hems-optimizer", version = "0.6" }
-hems-realtime  = { path = "crates/hems-realtime",  version = "0.6" }
-hems-events    = { path = "crates/hems-events",    version = "0.6" }
-hems-service   = { path = "crates/hems-service",   version = "0.6" }
-hems-sim       = { path = "crates/hems-sim",       version = "0.6" }
+ems-core      = { path = "crates/ems-core",      version = "0.7" }
+ems-device    = { path = "crates/ems-device",    version = "0.7" }
+ems-drv       = { path = "crates/ems-drv",       version = "0.7" }
+ems-flex      = { path = "crates/ems-flex",      version = "0.7" }
+ems-grid      = { path = "crates/ems-grid",      version = "0.7" }
+ems-tariff    = { path = "crates/ems-tariff",    version = "0.7" }
+ems-forecast  = { path = "crates/ems-forecast",  version = "0.7" }
+ems-optimizer = { path = "crates/ems-optimizer", version = "0.7" }
+ems-realtime  = { path = "crates/ems-realtime",  version = "0.7" }
+ems-events    = { path = "crates/ems-events",    version = "0.7" }
+ems-service   = { path = "crates/ems-service",   version = "0.7" }
+ems-sim       = { path = "crates/ems-sim",       version = "0.7" }
 
 # ── The fleet's own dependencies ────────────────────────────────────────────
 #
@@ -131,7 +131,7 @@ hems-sim       = { path = "crates/hems-sim",       version = "0.6" }
 # unit test. They live here so the six daemons agree about which versions they
 # are, and nowhere else.
 
-# The runtime. `hems-service` takes the narrow feature set a daemon shell needs;
+# The runtime. `ems-service` takes the narrow feature set a daemon shell needs;
 # a daemon that wants more asks for more.
 tokio        = { version = "1", default-features = false }
 # The HTTP surface. Axum rather than a framework with a router of its own,
@@ -156,7 +156,7 @@ axum         = { version = "0.8", default-features = false, features = ["http1",
 # **No root-store feature here, deliberately.** `reqwest` 0.13 verifies with
 # `rustls-platform-verifier` and exposes no way to install a compiled-in list, so
 # where a client's trust anchors come from is a deployment's decision and
-# `hems_service::http::TlsRoots` is where it is written down (D171).
+# `ems_service::http::TlsRoots` is where it is written down (D171).
 reqwest      = { version = "0.13", default-features = false, features = ["rustls", "http2", "json", "charset"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json", "std", "ansi"] }
 # The Model Context Protocol. Every fleet daemon mounts a **read-only** tool
@@ -190,7 +190,7 @@ redb         = { version = "4" }
 # `default-features = false` drops all three defaults, and each is a choice
 # rather than an inheritance: `sql` and with it DataFusion (52 MiB of object code
 # for a query API this box does not have), `field-encryption`, and `analytics`
-# (32 310 lines this workspace does not call, because `hems-forecast` owns the
+# (32 310 lines this workspace does not call, because `ems-forecast` owns the
 # forecasting). Measured: 178 packages against 290.
 #
 # What it does **not** drop is `rayon`, as `chronix`'s own release notes say: the
@@ -220,7 +220,7 @@ arrow        = { version = "59", default-features = false }
 #
 # `tokio-postgres` rather than `sqlx`. What `sqlx` would add over it is a
 # compile-time `query!` these daemons do not use and a `migrate!` macro
-# `hems_service::db` already replaces with an advisory lock, a checksum and a
+# `ems_service::db` already replaces with an advisory lock, a checksum and a
 # refusal to run backwards. D158 has the history. Of the three ways out —
 # move the box to `sqlx/sqlite` too, keep the fleet on SQLite, or use a
 # PostgreSQL driver that links no native library — only the last leaves the
@@ -234,7 +234,7 @@ deadpool-postgres     = { version = "0.14", default-features = false, features =
 # `ring` precisely so this is a build failure rather than a resolution to
 # notice, and two providers in one binary is a runtime panic.
 rustls                = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12", "logging"] }
-# Mozilla's CA list, used **directly** by `hems_service::db` for the
+# Mozilla's CA list, used **directly** by `ems_service::db` for the
 # `rustls::RootCertStore` a managed PostgreSQL instance is verified against — the
 # fleet's database link, and not the HTTP client, whose anchors are `TlsRoots`.
 webpki-roots          = { version = "1" }
@@ -257,7 +257,7 @@ qrcode                = { version = "0.15", default-features = false, features =
 # price of the paragraph above: SQLite was what made `just ci` a clone-and-run,
 # and a fleet service tested against a database it does not deploy on is a
 # service whose queries are checked by nothing (D156).
-# There is deliberately **no** container library here. `hems_service::testdb`
+# There is deliberately **no** container library here. `ems_service::testdb`
 # runs `docker run --rm` itself: one command and a readiness poll, which is less
 # code than the library call it replaced, one fewer dependency (and with it the
 # `ring` provider that `deny.toml` bans), and it fails in ways that name their

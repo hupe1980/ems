@@ -7,9 +7,9 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
-use hems_core::report::DayKpis;
-use hems_events::webhook::{self, WebhookError};
-use hems_service::auth::Credentials;
+use ems_core::report::DayKpis;
+use ems_events::webhook::{self, WebhookError};
+use ems_service::auth::Credentials;
 
 use crate::fleet::Fleet;
 use crate::store::Store;
@@ -77,7 +77,7 @@ impl Observed {
     /// one that is easy to forget is the first (D112).
     async fn fleet_in(
         &self,
-        scope: &hems_service::SiteScope,
+        scope: &ems_service::SiteScope,
         now: time::OffsetDateTime,
     ) -> Result<Fleet, StatusCode> {
         let since = crate::store::window_start(self.keep_days, now.date());
@@ -98,7 +98,7 @@ impl Observed {
     /// bearer token, because they are different callers: a box has a secret it
     /// signs with, and a person or an internal service has a credential it
     /// presents.
-    fn authority(&self, headers: &HeaderMap) -> Result<hems_service::Authority, StatusCode> {
+    fn authority(&self, headers: &HeaderMap) -> Result<ems_service::Authority, StatusCode> {
         self.readers
             .authority_in(
                 headers
@@ -127,7 +127,7 @@ impl Observed {
     fn may_read_the_fleet(
         &self,
         headers: &HeaderMap,
-    ) -> Result<hems_service::Authority, StatusCode> {
+    ) -> Result<ems_service::Authority, StatusCode> {
         let authority = self.authority(headers)?;
         if authority.may_read_the_fleet() {
             Ok(authority)
@@ -172,8 +172,8 @@ async fn report(
         })?
         .to_owned();
 
-    let event = hems_events::Event::<DayKpis>::parse(&body, hems_events::SITE_DAY_REPORTED)
-        .map_err(|e| {
+    let event =
+        ems_events::Event::<DayKpis>::parse(&body, ems_events::SITE_DAY_REPORTED).map_err(|e| {
             tracing::warn!(error = %e, "a signed report was not a day report");
             StatusCode::BAD_REQUEST
         })?;
@@ -266,7 +266,7 @@ async fn site(
     // that is not.
     let fleet = state
         .fleet_in(
-            &hems_service::SiteScope::One(site.clone()),
+            &ems_service::SiteScope::One(site.clone()),
             time::OffsetDateTime::now_utc(),
         )
         .await?;

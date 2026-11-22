@@ -29,7 +29,7 @@
 //! session setting configured in another crate is one assertion away from not
 //! holding. Both are asserted below — the plans, and the setting.
 
-use hems_service::testdb::Postgres;
+use ems_service::testdb::Postgres;
 
 /// Enough sites and days that a sequential scan is not the cheapest plan by
 /// accident. A planner given a hundred rows reads them all whatever the SQL

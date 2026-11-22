@@ -12,8 +12,8 @@
 use std::net::SocketAddr;
 use std::time::Duration as StdDuration;
 
-use hems_service::shutdown::ShutdownTrigger;
-use hems_service::{Health, Shutdown};
+use ems_service::shutdown::ShutdownTrigger;
+use ems_service::{Health, Shutdown};
 use hemsd::house::{self, House};
 use hemsd::{HouseholdConfig, Scenario};
 use time::{Duration, OffsetDateTime};

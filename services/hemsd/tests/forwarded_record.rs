@@ -23,12 +23,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Router;
 use axum::routing::post;
-use hems_core::prelude::{AssetId, Power, Slot};
-use hems_core::setpoint::GuardRule;
-use hems_grid::evidence::ControlEvent;
-use hems_grid::mispel::QuarterHour;
-use hems_grid::para14a::ControlMode;
-use hems_service::{Secret, Shutdown};
+use ems_core::prelude::{AssetId, Power, Slot};
+use ems_core::setpoint::GuardRule;
+use ems_grid::evidence::ControlEvent;
+use ems_grid::mispel::QuarterHour;
+use ems_grid::para14a::ControlMode;
+use ems_service::{Secret, Shutdown};
 use hemsd::runtime::outbox::{HistdSettings, Outbox};
 use hemsd::store::{Recorded, Store};
 use rust_decimal::Decimal;
@@ -132,7 +132,7 @@ async fn both_halves_of_the_record_reach_the_fleet_and_leave_the_backlog() {
             every_s: 300,
             batch: 50,
         },
-        &hems_service::HttpSettings::default(),
+        &ems_service::HttpSettings::default(),
     )
     .expect("a client")
     .expect("a configured fleet");
@@ -181,7 +181,7 @@ async fn a_fleet_that_refuses_the_registers_keeps_them_owed() {
             every_s: 300,
             batch: 50,
         },
-        &hems_service::HttpSettings::default(),
+        &ems_service::HttpSettings::default(),
     )
     .expect("a client")
     .expect("a configured fleet");

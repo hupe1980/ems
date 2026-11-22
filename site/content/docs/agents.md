@@ -182,7 +182,7 @@ pairs is the question neither list contains. The summary arrives labelled
 journal answers *"why did the queue say that in March"* by replay rather than by
 asking `obsd` what it says now.
 
-`Summary` and `Finding` live in `hems-core` beside `DayKpis`. A wire type defined
+`Summary` and `Finding` live in `ems-core` beside `DayKpis`. A wire type defined
 inside the service that computes it and mirrored by hand at the far end is held
 together by two people remembering the same field names.
 

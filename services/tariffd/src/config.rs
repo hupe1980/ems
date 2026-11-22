@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use hems_tariff::source::Source;
+use ems_tariff::source::Source;
 
 /// One source's endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -14,11 +14,11 @@ pub struct Endpoint {
     ///
     /// Out of the code and out of the logs: a token is a credential and a URL
     /// with one in the query string ends up in somebody's access log. Each value
-    /// is a [`hems_service::Secret`], so the usual deployment writes
+    /// is a [`ems_service::Secret`], so the usual deployment writes
     /// `"env:ENTSOE_TOKEN"` and the token never enters the configuration file
     /// either.
     #[serde(default)]
-    pub headers: BTreeMap<String, hems_service::Secret>,
+    pub headers: BTreeMap<String, ems_service::Secret>,
 }
 
 /// Everything `tariffd` is configured with.
@@ -31,7 +31,7 @@ pub struct Settings {
     /// environment override is unaffected — it goes through `AsMut<Settings>`
     /// rather than through the file's shape.
     #[serde(default)]
-    pub service: hems_service::Settings,
+    pub service: ems_service::Settings,
     /// Which sources to ask, and where.
     ///
     /// Empty by default, and that is the honest default: a `tariffd` nobody has
@@ -59,7 +59,7 @@ pub struct Settings {
     /// a PDF or an Excel sheet per network operator — so somebody transcribes
     /// each one, once per Netzgebiet rather than once per household, and this
     /// is where the fleet keeps them. The shape of each calendar is
-    /// [`hems_grid::modul3::Transcription`], the same one a box takes as
+    /// [`ems_grid::modul3::Transcription`], the same one a box takes as
     /// `[tariff.modul3]`, so a transcription is portable between the two.
     ///
     /// Every entry is checked against the BDEW Anwendungshilfe at start-up and
@@ -77,7 +77,7 @@ pub struct Settings {
     /// result is a published figure, not a household's data. What it costs is
     /// the operator's own upstream quota, which is a rate-limiting question.
     #[serde(default)]
-    pub mcp: hems_service::McpSettings,
+    pub mcp: ems_service::McpSettings,
     /// How many slots the readiness probe requires the cache to cover.
     ///
     /// Ninety-six is one day: a box asking for a 24-hour horizon can be answered
@@ -89,20 +89,20 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            service: hems_service::Settings::default(),
+            service: ems_service::Settings::default(),
             sources: BTreeMap::new(),
             poll_interval_s: 900,
             request_timeout_s: 20,
             max_backoff_s: 3600,
             modul3: Vec::new(),
-            mcp: hems_service::McpSettings::default(),
+            mcp: ems_service::McpSettings::default(),
             ready_slots: 96,
         }
     }
 }
 
-impl AsMut<hems_service::Settings> for Settings {
-    fn as_mut(&mut self) -> &mut hems_service::Settings {
+impl AsMut<ems_service::Settings> for Settings {
+    fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
     }
 }
@@ -115,7 +115,7 @@ pub struct Modul3Entry {
     /// which is what a box's site configuration already names.
     pub netzbetreiber: String,
     /// The calendar, as transcribed from the operator's price sheet.
-    pub calendar: hems_grid::modul3::Transcription,
+    pub calendar: ems_grid::modul3::Transcription,
 }
 
 #[cfg(test)]

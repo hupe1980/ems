@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use agentd::upstream::{Upstream, UpstreamError, Window};
 use agentplane::prelude::{JournalStore, RedbStore};
-use hems_core::report::{DayKpis, Economics, Summary};
+use ems_core::report::{DayKpis, Economics, Summary};
 
 const NOW: time::OffsetDateTime = time::macros::datetime!(2026-01-20 06:00 UTC);
 const SILENT_AFTER: time::Duration = time::Duration::days(2);

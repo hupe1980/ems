@@ -28,7 +28,7 @@ use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::get;
-use hems_service::auth::Credentials;
+use ems_service::auth::Credentials;
 
 use crate::review::{Queue, Reviewed, SPECIALISTS};
 
@@ -50,7 +50,7 @@ impl Advisory {
     }
 
     /// The caller, if it may ask a question about every household in its scope.
-    fn fleet_caller(&self, headers: &HeaderMap) -> Result<hems_service::Authority, StatusCode> {
+    fn fleet_caller(&self, headers: &HeaderMap) -> Result<ems_service::Authority, StatusCode> {
         let authority = self
             .readers
             .authority_in(

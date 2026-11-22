@@ -12,7 +12,7 @@
 //! |---|---|---|
 //! | one [`transport`] task per driver | its own socket's | the socket, and nothing else |
 //! | the control loop ([`control`]) | `tick_period_s` | guard, arbiter, and the commands that come out |
-//! | the HTTP surface (`hems-service`) | on request | health, readiness, and what the box is doing |
+//! | the HTTP surface (`ems-service`) | on request | health, readiness, and what the box is doing |
 //!
 //! The drivers are shared behind one lock rather than owned by the loop,
 //! because the two questions are asked at different speeds: a socket wants
@@ -53,9 +53,9 @@ pub mod webpush;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hems_core::prelude::{AssetId, Power, Site};
-use hems_drv::modbus::{Cadence, SunSpec};
-use hems_service::{Health, Shutdown};
+use ems_core::prelude::{AssetId, Power, Site};
+use ems_drv::modbus::{Cadence, SunSpec};
+use ems_service::{Health, Shutdown};
 use tokio::sync::Mutex;
 
 use crate::config::{DriverSettings, Settings};
@@ -169,9 +169,9 @@ pub struct Running {
     /// The planner's last solve, for pricing a goal before it is set.
     pub last: planner::LastInputs,
     /// The plan in force and the prices it was made against, for the page.
-    pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
+    pub plan: Arc<tokio::sync::RwLock<Option<ems_core::prelude::Plan>>>,
     /// The prices the plan in force was made against.
-    pub prices: Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    pub prices: Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     /// The HTTPS configuration and its certificate's fingerprint, where the box
     /// serves HTTPS (`[api] tls`, on by default off loopback).
     pub tls: Option<(Arc<rustls::ServerConfig>, String)>,
@@ -221,7 +221,7 @@ pub fn assemble(
     // `[A1 3.1.b]`'s cutoff is 31.12.2023 and `[A1 10.1]`'s is 31.12.2028, and
     // both are German dates — a start-up line that disagreed with the decision
     // it is describing would be worse than no line at all.
-    name_the_statutory_limits(&household, hems_core::calendar::local_day(now));
+    name_the_statutory_limits(&household, ems_core::calendar::local_day(now));
 
     Ok(Running {
         drivers,
@@ -288,7 +288,7 @@ fn open_series(settings: &Settings) -> anyhow::Result<Option<Arc<crate::series::
 /// be checked rather than that one was broken, and refusing on it would tie the
 /// box's willingness to start to how much `metering` knows this release.
 fn check_modul3(settings: &Settings, now: time::OffsetDateTime) -> Result<(), StartError> {
-    use hems_grid::modul3::{Modul3Conformance, Modul3Eligibility};
+    use ems_grid::modul3::{Modul3Conformance, Modul3Eligibility};
 
     if settings.tariff.modul != crate::config::Modul::Modul3 {
         // A calendar nothing reads is a calendar nobody notices is wrong.
@@ -331,7 +331,7 @@ fn check_modul3(settings: &Settings, now: time::OffsetDateTime) -> Result<(), St
             .is_some_and(|pv| pv.para9.imsys_since.is_some()),
         has_rlm: false,
     };
-    if !eligibility.is_eligible_on(hems_core::calendar::local_day(now)) {
+    if !eligibility.is_eligible_on(ems_core::calendar::local_day(now)) {
         return Err(StartError::Modul3(
             "this delivery point may not be billed on Modul 3: it needs Modul 1, an              intelligent metering system, and no registrierende Leistungsmessung — and the              module has only been orderable since 01.04.2025"
                 .into(),
@@ -389,12 +389,12 @@ fn check_the_physics(
     config: &crate::site::HouseholdConfig,
     household: &Household,
 ) -> Result<(), StartError> {
-    use hems_core::prelude::Asset;
+    use ems_core::prelude::Asset;
 
     let building = config.building;
     // The planner's own step, which is the quarter hour every price, every
     // register and every plan in this workspace is written in.
-    let step = hems_core::prelude::SLOT;
+    let step = ems_core::prelude::SLOT;
     if !building.discretise(step).is_contraction() {
         return Err(StartError::Physics(format!(
             "the building model does not contract over a {} minute step, so the \
@@ -431,7 +431,7 @@ fn check_the_physics(
     // it through the COP credited an ordinary 3 kW rod with 7,4 kW of heat at
     // −12 °C, which is more than the entire design load of the average house.
     // The warning could then not fire for any household anybody would install.
-    let cop = hems_core::prelude::CopCurve::air_source().at(NORM_AUSSENTEMPERATUR_C);
+    let cop = ems_core::prelude::CopCurve::air_source().at(NORM_AUSSENTEMPERATUR_C);
     let rod_kw = unit.heating_rod.unwrap_or(Power::ZERO).kw();
     let deliverable = unit.electrical_nominal.kw() * cop + rod_kw;
     if deliverable < needed {
@@ -470,14 +470,14 @@ fn check_the_physics(
 /// So: one line per controllable device, one for the roof, and the installer can
 /// read them against the folder in their hand.
 fn name_the_statutory_limits(household: &Household, today: time::Date) {
-    use hems_core::prelude::Asset;
+    use ems_core::prelude::Asset;
 
     for asset in &household.site.assets {
         let meta = asset.meta();
         if matches!(asset, Asset::Meter(_) | Asset::Load(_)) {
             continue;
         }
-        let participation = hems_grid::para14a::participation(
+        let participation = ems_grid::para14a::participation(
             meta.commissioned_at,
             meta.steuve_exemption,
             meta.legacy_status,
@@ -492,7 +492,7 @@ fn name_the_statutory_limits(household: &Household, today: time::Date) {
         );
     }
 
-    let Some(profile) = hems_grid::para9::GenerationProfile::of_site(&household.site) else {
+    let Some(profile) = ems_grid::para9::GenerationProfile::of_site(&household.site) else {
         return;
     };
     if let Some(limit) = profile.statutory_limit() {
@@ -550,14 +550,14 @@ async fn assembled(
 fn register_map(
     settings: &crate::config::RegisterSettings,
     asset: AssetId,
-) -> Result<Box<dyn hems_drv::Driver + Send>, StartError> {
+) -> Result<Box<dyn ems_drv::Driver + Send>, StartError> {
     let millis = |ms: u64, fallback: i64| {
         time::Duration::milliseconds(i64::try_from(ms).unwrap_or(fallback))
     };
-    let driver = hems_drv::modbus::registers::Registers::new(
+    let driver = ems_drv::modbus::registers::Registers::new(
         asset,
         settings.unit,
-        hems_drv::modbus::Cadence {
+        ems_drv::modbus::Cadence {
             poll: millis(settings.poll_ms, 1_000),
             timeout: millis(settings.timeout_ms, 5_000),
         },
@@ -620,9 +620,9 @@ pub fn failsafe_in_force(
 /// the key: a box that named itself differently per driver would be several
 /// devices on its own network, all but one of which an installer has never been
 /// shown (D136).
-fn spine_identity(vendor: Option<&str>, unique: Option<&str>) -> hems_drv::eebus::SpineIdentity {
-    let default = hems_drv::eebus::SpineIdentity::default();
-    hems_drv::eebus::SpineIdentity {
+fn spine_identity(vendor: Option<&str>, unique: Option<&str>) -> ems_drv::eebus::SpineIdentity {
+    let default = ems_drv::eebus::SpineIdentity::default();
+    ems_drv::eebus::SpineIdentity {
         vendor: vendor.map_or(default.vendor, str::to_owned),
         unique: unique.map_or(default.unique, str::to_owned),
     }
@@ -638,7 +638,7 @@ fn build_driver(
     site: &Site,
     kept: Option<&crate::store::Store>,
     now: time::OffsetDateTime,
-) -> Result<Box<dyn hems_drv::Driver + Send>, StartError> {
+) -> Result<Box<dyn ems_drv::Driver + Send>, StartError> {
     let asset = |name: &str| {
         AssetId::new(name).map_err(|e| StartError::Driver {
             asset: name.to_string(),
@@ -670,11 +670,11 @@ fn build_driver(
             // gives away six kilowatts nobody asked it to.
             let configured = s.failsafe_kw.map_or_else(
                 || {
-                    hems_grid::para14a::minimum_power(
-                        &hems_grid::classify_at(&site.assets, now),
-                        hems_grid::para14a::ControlMode::Ems,
+                    ems_grid::para14a::minimum_power(
+                        &ems_grid::classify_at(&site.assets, now),
+                        ems_grid::para14a::ControlMode::Ems,
                     )
-                    .max(hems_grid::para14a::MINDESTLEISTUNG)
+                    .max(ems_grid::para14a::MINDESTLEISTUNG)
                 },
                 Power::from_kw,
             );
@@ -684,9 +684,9 @@ fn build_driver(
                 std::time::Duration::from_secs(s.failsafe_hours.saturating_mul(3600)),
             );
             let identity = spine_identity(s.spine_vendor.as_deref(), s.spine_unique.as_deref());
-            let driver = hems_drv::eebus::Lpc::with_identity(
+            let driver = ems_drv::eebus::Lpc::with_identity(
                 asset(&s.asset)?,
-                hems_drv::eebus::Use::Lpc,
+                ems_drv::eebus::Use::Lpc,
                 failsafe,
                 failsafe_for,
                 now,
@@ -700,7 +700,7 @@ fn build_driver(
         }
         DriverSettings::EebusEv(s) => {
             let identity = spine_identity(s.spine_vendor.as_deref(), s.spine_unique.as_deref());
-            let driver = hems_drv::eebus_ev::EvCharger::new(asset(&s.asset)?, now, &identity)
+            let driver = ems_drv::eebus_ev::EvCharger::new(asset(&s.asset)?, now, &identity)
                 .map_err(|e| StartError::Driver {
                     asset: s.asset.clone(),
                     detail: e.to_string(),
@@ -709,7 +709,7 @@ fn build_driver(
         }
         DriverSettings::EebusDhw(s) => {
             let identity = spine_identity(s.spine_vendor.as_deref(), s.spine_unique.as_deref());
-            let driver = hems_drv::eebus_dhw::DhwTank::new(asset(&s.asset)?, now, &identity)
+            let driver = ems_drv::eebus_dhw::DhwTank::new(asset(&s.asset)?, now, &identity)
                 .map_err(|e| StartError::Driver {
                     asset: s.asset.clone(),
                     detail: e.to_string(),
@@ -719,7 +719,7 @@ fn build_driver(
         DriverSettings::Registers(s) => register_map(s, asset(&s.asset)?),
         DriverSettings::EebusHeatPump(s) => {
             let identity = spine_identity(s.spine_vendor.as_deref(), s.spine_unique.as_deref());
-            let driver = hems_drv::eebus_heat_pump::HeatPump::new(asset(&s.asset)?, now, &identity)
+            let driver = ems_drv::eebus_heat_pump::HeatPump::new(asset(&s.asset)?, now, &identity)
                 .map_err(|e| StartError::Driver {
                     asset: s.asset.clone(),
                     detail: e.to_string(),
@@ -906,7 +906,7 @@ pub async fn run(
                 // addresses everything behind it with one number rather than each
                 // device on its own. The evidence record has to state which, because
                 // the minimum a reduction may not go below depends on it.
-                control_mode: hems_grid::para14a::ControlMode::Ems,
+                control_mode: ems_grid::para14a::ControlMode::Ems,
                 pv: running.household.pv.clone(),
                 battery: running.household.battery.clone(),
                 evse: running.household.evse.clone(),
@@ -984,7 +984,7 @@ fn start_forwarding(
 /// (D112, [`access::require_token`]).
 ///
 /// The shell's `/livez`, `/readyz` and `/metrics` are **not** here — they are
-/// added afterwards by `hems_service::Server` and stay open, because an
+/// added afterwards by `ems_service::Server` and stay open, because an
 /// orchestrator that needed a household's credential to restart a crashed box is
 /// one that would be given that credential far too widely.
 pub fn surfaces(
@@ -1239,8 +1239,8 @@ fn start_dialled(
 /// rather than a broken one: the guard and the arbiter need nothing but
 /// measurements (G3). What it loses is the plan, and it says so.
 type PlannerHandles = (
-    Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
-    Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    Arc<tokio::sync::RwLock<Option<ems_core::prelude::Plan>>>,
+    Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     planner::Published,
     Arc<Mutex<planner::Learned>>,
 );
@@ -1373,16 +1373,16 @@ async fn start_planner(
 /// default is the one that hides a broken chain: it was 35°/180° here, and for
 /// as long as the asset carried the same pair it was impossible to tell whether
 /// this line was reading the configuration or ignoring it.
-fn array_of(site: &Site, settings: &crate::config::SiteSettings) -> hems_forecast::ArrayModel {
+fn array_of(site: &Site, settings: &crate::config::SiteSettings) -> ems_forecast::ArrayModel {
     let (tilt, azimuth) = site
         .assets
         .iter()
         .find_map(|a| match a {
-            hems_core::prelude::Asset::Pv(pv) => Some((pv.tilt_deg, pv.azimuth_deg)),
+            ems_core::prelude::Asset::Pv(pv) => Some((pv.tilt_deg, pv.azimuth_deg)),
             _ => None,
         })
         .unwrap_or((0.0, 180.0));
-    hems_forecast::ArrayModel::new(
+    ems_forecast::ArrayModel::new(
         Power::from_kw(settings.pv_kwp),
         Power::from_kw(settings.pv_ac_kw),
         tilt,
@@ -1506,7 +1506,7 @@ mod tests {
 mod physics_tests {
     use super::*;
     use crate::config::{BuildingSettings, SiteSettings};
-    use hems_core::prelude::{BuildingClass, Rc2};
+    use ems_core::prelude::{BuildingClass, Rc2};
 
     fn built(settings: &SiteSettings) -> (crate::site::HouseholdConfig, Household) {
         let config = settings.household().expect("a household");
@@ -1600,7 +1600,7 @@ mod physics_tests {
         // the *bigger* house that does not fit is a 1970s one with the 3 kW
         // unit an installer sizes from a heat-load calculation somebody did for
         // the retrofit rather than for the building as it stands.
-        let cop = hems_core::prelude::CopCurve::air_source().at(NORM_AUSSENTEMPERATUR_C);
+        let cop = ems_core::prelude::CopCurve::air_source().at(NORM_AUSSENTEMPERATUR_C);
         let small = 3.0 * cop + 3.0;
         assert!(
             average.steady_state_heat_kw(20.0, NORM_AUSSENTEMPERATUR_C) < small,

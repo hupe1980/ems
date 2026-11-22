@@ -40,7 +40,8 @@
       </p>
       <h1>Home energy management that obeys the German grid — <em>and proves it.</em></h1>
       <p class="hero-sub">
-        hems plans a household's battery, car, heat pump and hot water against
+        hems, the household product of ems, plans a household's battery, car,
+        heat pump and hot water against
         tomorrow's prices and weather. The network operator's limit sits in a
         guard nothing can override, every rule cites its source, and the saving
         is measured against the same house with the same hardware.
@@ -56,8 +57,8 @@
         <span class="lamp"></span><span class="lamp"></span><span class="lamp"></span>
         <span class="name">quickstart</span>
       </div>
-<pre><code>$ git clone https://github.com/hupe1980/hems
-$ cd hems
+<pre><code>$ git clone https://github.com/hupe1980/ems
+$ cd ems
 $ cargo run -p hemsd -- simulate --day winter
 
   2026-01-15 — with a § 14a reduction
@@ -382,25 +383,25 @@ flowchart LR
       <div>
         <h2 class="plain">Or use one crate on its own</h2>
         <p class="muted">The domain crates do no I/O and take time as a
-        parameter. <code>hems-grid</code> is the German grid rules,
-        <code>hems-tariff</code> what a kilowatt-hour costs,
-        <code>hems-flex</code> a household's flexibility in S2.</p>
+        parameter. <code>ems-grid</code> is the German grid rules,
+        <code>ems-tariff</code> what a kilowatt-hour costs,
+        <code>ems-flex</code> a household's flexibility in S2.</p>
         <ul class="pill-row">
-          <li class="pill">hems-core</li>
-          <li class="pill">hems-grid</li>
-          <li class="pill">hems-tariff</li>
-          <li class="pill">hems-forecast</li>
-          <li class="pill">hems-optimizer</li>
-          <li class="pill">hems-realtime</li>
-          <li class="pill">hems-device</li>
-          <li class="pill">hems-drv</li>
-          <li class="pill">hems-flex</li>
-          <li class="pill">hems-events</li>
+          <li class="pill">ems-core</li>
+          <li class="pill">ems-grid</li>
+          <li class="pill">ems-tariff</li>
+          <li class="pill">ems-forecast</li>
+          <li class="pill">ems-optimizer</li>
+          <li class="pill">ems-realtime</li>
+          <li class="pill">ems-device</li>
+          <li class="pill">ems-drv</li>
+          <li class="pill">ems-flex</li>
+          <li class="pill">ems-events</li>
         </ul>
       </div>
       <div>
-<pre><code>use hems_grid::para14a::{ControlMode, SteuVe, minimum_power};
-use hems_core::prelude::{AssetId, Fallgruppe, Power};
+<pre><code>use ems_grid::para14a::{ControlMode, SteuVe, minimum_power};
+use ems_core::prelude::{AssetId, Fallgruppe, Power};
 
 let devices = [
     SteuVe {

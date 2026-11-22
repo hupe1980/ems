@@ -23,13 +23,13 @@
 //!
 //! # It is not a fleet back-test
 //!
-//! Every realisation comes from `hems-sim`'s own generator, so the days share
+//! Every realisation comes from `ems-sim`'s own generator, so the days share
 //! their statistics with the model that forecasts them (R23). What this measures
 //! is the **difference between two controllers on the same set of days**, which
 //! is a fair comparison and survives that objection; what it may not be used for
 //! is an absolute saving figure shown to a customer.
 
-use hems_forecast::Calibration;
+use ems_forecast::Calibration;
 
 use crate::scenario::{DayResult, Scenario, run};
 
@@ -53,7 +53,7 @@ pub struct Spread {
     /// worth almost nothing: forecast error is correlated across a day, so
     /// ninety-six quarter hours of one Tuesday are close to **one** draw, and
     /// [`Calibration::is_well_calibrated`] refuses to answer on fewer than
-    /// [`hems_forecast::CALIBRATION_DAYS`] of them.
+    /// [`ems_forecast::CALIBRATION_DAYS`] of them.
     ///
     /// This sweep is the only thing in the workspace that produces independent
     /// days, and it was computing a `Calibration` per day and throwing it away.
@@ -149,7 +149,7 @@ pub fn spread_over_days(scenario: &Scenario, days: usize) -> anyhow::Result<Spre
     for day in 0..days {
         let mut one = scenario.clone();
         // A different day with the same statistics. The multiplier is the same
-        // golden-ratio odd constant `hems-sim` mixes with, so consecutive
+        // golden-ratio odd constant `ems-sim` mixes with, so consecutive
         // indices give unrelated weathers rather than neighbouring ones.
         one.weather.seed = scenario
             .weather

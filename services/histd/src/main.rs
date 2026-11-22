@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use hems_service::{Health, Server, Shutdown, shutdown};
+use ems_service::{Health, Server, Shutdown, shutdown};
 use histd::api::{History, router};
 use histd::{Settings, Store};
 
@@ -19,9 +19,9 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = hems_service::load(cli.config.as_deref(), "HEMS_HISTD")?;
-    hems_service::init_tracing(
-        hems_service::identity!(),
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_HISTD")?;
+    ems_service::init_tracing(
+        ems_service::identity!(),
         &settings.service.log_filter,
         settings.service.log_json,
     );
@@ -33,8 +33,8 @@ async fn main() -> anyhow::Result<()> {
     // Eagerly, so a wrong password or an unreachable database stops the daemon
     // here rather than answering every request with a `500`. The migrations run
     // under an advisory lock, so several replicas starting together is safe.
-    let db = hems_service::db::connect(&settings.database, hems_service::identity!().name).await?;
-    hems_service::db::migrate(&db, histd::store::MIGRATIONS).await?;
+    let db = ems_service::db::connect(&settings.database, ems_service::identity!().name).await?;
+    ems_service::db::migrate(&db, histd::store::MIGRATIONS).await?;
     let store = Store::new(db);
     let health = Health::new();
     tracing::info!("history open");
@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
     // Resolved once, here, so a reference to a secret that is not there stops
     // the daemon rather than starting one that answers nothing and says why only
     // in a `401`.
-    let credentials = hems_service::Credentials::resolve(
+    let credentials = ems_service::Credentials::resolve(
         &settings.site_tokens,
         &settings.tenants,
         &settings.operators,
@@ -63,12 +63,12 @@ async fn main() -> anyhow::Result<()> {
     health.vital(
         "store",
         signal.clone(),
-        hems_service::db::watch(store.db().clone(), health.clone(), "store", signal.clone()),
+        ems_service::db::watch(store.db().clone(), health.clone(), "store", signal.clone()),
     );
     // The series a probe cannot answer: a saturated pool serves `503`s while
     // `/livez` and `/readyz` both stay green, because the process is alive and
     // the database is reachable and there is simply no connection to be had.
-    hems_service::metrics::publish_pool(store.db());
+    ems_service::metrics::publish_pool(store.db());
     // **Vital**, and the quietest of the three: a retention loop that has died
     // sweeps nothing, so the two years of `[A1 7.3]` evidence grow without bound
     // and the only symptom is a disk filling up months later. `/livez` used to
@@ -92,20 +92,20 @@ async fn main() -> anyhow::Result<()> {
         settings.mispel_state_aid_approved_on,
     ));
     if settings.mcp.enabled {
-        let auth = hems_service::McpAuth::per_caller(&settings.mcp, &credentials)?;
+        let auth = ems_service::McpAuth::per_caller(&settings.mcp, &credentials)?;
         app = app.merge(histd::mcp_server::router(
             Arc::new(histd::mcp_server::State {
                 store: store.clone(),
                 auth: auth.clone(),
             }),
             auth,
-            hems_service::mcp::cancel_on(&signal),
+            ems_service::mcp::cancel_on(&signal),
         ));
         tracing::info!("the Model Context Protocol surface is mounted at /mcp");
     }
 
     Server::new(
-        hems_service::identity!(),
+        ems_service::identity!(),
         settings.service.clone(),
         health,
         app,

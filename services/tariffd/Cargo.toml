@@ -11,14 +11,14 @@ homepage.workspace     = true
 rust-version.workspace = true
 
 [dependencies]
-hems-core    = { workspace = true }
-hems-grid    = { workspace = true, features = ["serde"] }
-hems-service = { workspace = true }
+ems-core    = { workspace = true }
+ems-grid    = { workspace = true, features = ["serde"] }
+ems-service = { workspace = true }
 http          = { workspace = true }
 rmcp         = { workspace = true }
 schemars     = { workspace = true }
 tokio-util   = { workspace = true }
-hems-tariff  = { workspace = true, features = ["serde"] }
+ems-tariff  = { workspace = true, features = ["serde"] }
 
 anyhow       = { workspace = true }
 axum         = { workspace = true }

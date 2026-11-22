@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
-use hems_core::prelude::Slot;
+use ems_core::prelude::Slot;
 use time::{Duration, OffsetDateTime};
 
 use super::Clock;
@@ -35,7 +35,7 @@ struct Day {
     midnight: OffsetDateTime,
     prices_ct: Vec<i64>,
     weather: Weather,
-    location: hems_core::prelude::GeoPoint,
+    location: ems_core::prelude::GeoPoint,
 }
 
 /// The location name the box's configuration asks `forecastd` for.
@@ -91,7 +91,7 @@ async fn prices(
             serde_json::json!({
                 "slot": rfc3339(start),
                 "price_ct": day.price_at(start).to_string(),
-                "source": hems_tariff::source::Source::EnergyCharts,
+                "source": ems_tariff::source::Source::EnergyCharts,
             })
         })
         .collect();
@@ -119,8 +119,8 @@ async fn weather(State(day): State<Day>, Path(location): Path<String>) -> axum::
         .map(|i| {
             let start = first + Duration::minutes(15 * i);
             let lived = day.clock.scenario_at(start);
-            let sun = hems_forecast::solar::sun_position(day.location, Slot::containing(lived));
-            let clear = hems_forecast::solar::clear_sky_ghi(sun);
+            let sun = ems_forecast::solar::sun_position(day.location, Slot::containing(lived));
+            let clear = ems_forecast::solar::clear_sky_ghi(sun);
             serde_json::json!({
                 "slot": rfc3339(start),
                 "ghi_w_per_m2": clear * (1.0 - day.weather.mean_cloud),

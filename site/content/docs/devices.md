@@ -14,8 +14,8 @@ questions:
 
 | Crate | Question |
 |---|---|
-| `hems-device` | *what will this device accept?* — amperes, contact states, phase counts, and what it will **actually** take if asked |
-| `hems-drv` | *how do I say it on this protocol?* — SunSpec over Modbus TCP, EEBUS LPC |
+| `ems-device` | *what will this device accept?* — amperes, contact states, phase counts, and what it will **actually** take if asked |
+| `ems-drv` | *how do I say it on this protocol?* — SunSpec over Modbus TCP, EEBUS LPC |
 
 Both are sans-I/O. `hemsd` owns the socket.
 
@@ -234,7 +234,7 @@ nameplate — optimistic, and self-correcting on the next tick.
 Something has to own a *set* of drivers, give each one its bytes, and fold what
 they say into the two things the control planes read — `SiteState`, what the
 house is doing, and `GridLimits`, what the operator is asking for. That is
-`hemsd`'s registry, and it lives there rather than in `hems-drv` because it is
+`hemsd`'s registry, and it lives there rather than in `ems-drv` because it is
 the layer where a socket becomes legitimate.
 
 Registration is a **check**, not a formality. A declaration nothing validates is a
@@ -464,7 +464,7 @@ limitation machine, the 120-second heartbeat timeout, the 2–24 hour
 `FailsafeDurationMinimum`, the rule that an expired duration deactivates a limit
 — all of it lives in the [`eebus`](https://crates.io/crates/eebus) crate,
 sans-I/O, exercised against the use-case specification. This driver is a
-*translation*, and `hems_grid::LpcState` is **derived** from `eebus`'s rather
+*translation*, and `ems_grid::LpcState` is **derived** from `eebus`'s rather
 than tracked alongside it. Two implementations of a certifiable state machine
 disagree, and the one that is wrong is whichever the certification lab is not
 looking at. The state machine itself is on
@@ -715,8 +715,8 @@ left to infer it.
 
 ## One crate, protocols behind features
 
-All of `hems-drv` together is about two thousand lines. `hems-grid` alone is five
-thousand and `hems-device` is eight hundred as a *single* crate, so three crates
+All of `ems-drv` together is about two thousand lines. `ems-grid` alone is five
+thousand and `ems-device` is eight hundred as a *single* crate, so three crates
 for this would be ceremony — and the standing rule in this workspace is that
 machinery has to be earned. The **trait** is earned, by two implementors of
 genuinely different shapes; a crate each is not.

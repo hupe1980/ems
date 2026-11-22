@@ -18,7 +18,7 @@
 //! been charged from the grid, or a bidirectional charge point, keeps its levy
 //! privileges (§ 21 EnFG) and its EEG support only if the energy through it is
 //! *separated*: which quantity was green, which grey, quarter hour by quarter
-//! hour, summed over a calendar month. `hems-grid::mispel` is that arithmetic
+//! hour, summed over a calendar month. `ems-grid::mispel` is that arithmetic
 //! and this is the document it produces. Until it existed the box wrote the
 //! registers, this service kept them for two years, and **nothing ever settled
 //! them** — the whole formula set was reachable only from a test.
@@ -35,7 +35,7 @@
 //! Assembling the document column by column would make it a second rendering,
 //! and the two would agree until one of them was changed.
 
-use hems_grid::mispel::{
+use ems_grid::mispel::{
     Assignment, Basisfall, Conditions, Governed, MispelOption, PauschalPeriod, PauschalPlant,
     QuarterHour, Refusal, RuleSet,
 };
@@ -196,7 +196,7 @@ pub enum MispelExportError {
     },
     /// The arithmetic refused the values.
     #[error("the settlement refused these registers: {0}")]
-    Arithmetic(#[from] hems_grid::mispel::MispelError),
+    Arithmetic(#[from] ems_grid::mispel::MispelError),
     /// The store could not be read.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -269,7 +269,7 @@ async fn exclusivity(
     };
     let simultaneous: Decimal = quarters
         .iter()
-        .map(hems_grid::mispel::QuarterHour::simultaneous_grid_charging)
+        .map(ems_grid::mispel::QuarterHour::simultaneous_grid_charging)
         .sum();
     // Reported rather than merely summed: a household whose claim has lapsed
     // needs the quarter hour, not a total it has to go looking for.
@@ -379,14 +379,14 @@ pub async fn mispel(
         state_aid_approved_on,
     };
     let window: Governed =
-        hems_grid::mispel::governed(rules, option, conditions, period_first, period_last).map_err(
+        ems_grid::mispel::governed(rules, option, conditions, period_first, period_last).map_err(
             |refusal| MispelExportError::NotGoverned {
                 period: period.clone(),
                 refusal,
             },
         )?;
-    let from = hems_core::calendar::day_start_utc(window.first);
-    let to = hems_core::calendar::day_end_utc(window.last);
+    let from = ems_core::calendar::day_start_utc(window.first);
+    let to = ems_core::calendar::day_end_utc(window.last);
 
     let quarters = store
         .quarter_hours_as_of(site, Some(from), Some(to), as_of)
@@ -517,7 +517,7 @@ fn abgrenzung_figures(
     rules: RuleSet,
     quarters: &[QuarterHour],
 ) -> Result<Value, MispelExportError> {
-    let a = hems_grid::mispel::abgrenzung_month(fall, rules, quarters)?;
+    let a = ems_grid::mispel::abgrenzung_month(fall, rules, quarters)?;
     Ok(json!({
         "option": "abgrenzung",
         "abgrenzung": serde_json::to_value(a).unwrap_or(Value::Null),
@@ -533,7 +533,7 @@ fn pauschal_figures(
     period: PauschalPeriod,
     quarters: &[QuarterHour],
 ) -> Result<Value, MispelExportError> {
-    let p = hems_grid::mispel::pauschal_period(plant, rules, period, quarters)?;
+    let p = ems_grid::mispel::pauschal_period(plant, rules, period, quarters)?;
     Ok(json!({
         "option": "pauschal",
         "plant": serde_json::to_value(plant).unwrap_or(Value::Null),
@@ -567,8 +567,8 @@ fn calendar_month(
     }
     .map_err(|_| MispelExportError::NotACalendarMonth { year, month })?;
     Ok((
-        hems_core::calendar::day_start_utc(first),
-        hems_core::calendar::day_start_utc(next),
+        ems_core::calendar::day_start_utc(first),
+        ems_core::calendar::day_start_utc(next),
     ))
 }
 
@@ -599,8 +599,8 @@ fn calendar_year(year: i32) -> Result<(OffsetDateTime, OffsetDateTime), MispelEx
     let next = time::Date::from_calendar_date(year + 1, Month::January, 1)
         .map_err(|_| MispelExportError::NotACalendarMonth { year, month: 1 })?;
     Ok((
-        hems_core::calendar::day_start_utc(first),
-        hems_core::calendar::day_start_utc(next),
+        ems_core::calendar::day_start_utc(first),
+        ems_core::calendar::day_start_utc(next),
     ))
 }
 

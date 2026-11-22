@@ -178,9 +178,9 @@ impl Event {
     #[must_use]
     pub const fn topic(self) -> &'static str {
         match self {
-            Self::ReductionBegan | Self::ReductionEnded | Self::Failsafe => "hems-grid",
+            Self::ReductionBegan | Self::ReductionEnded | Self::Failsafe => "ems-grid",
             Self::GoalTight | Self::GoalImpossible => "hems-goal",
-            Self::DeviceNotFollowing => "hems-device",
+            Self::DeviceNotFollowing => "ems-device",
             Self::Test => "hems-test",
         }
     }
@@ -1067,7 +1067,7 @@ impl Deferred {
 /// time of day in this box is on.
 #[must_use]
 pub fn local_minute(now: OffsetDateTime) -> u16 {
-    let local = hems_core::calendar::to_berlin(now);
+    let local = ems_core::calendar::to_berlin(now);
     u16::from(local.hour()) * 60 + u16::from(local.minute())
 }
 
@@ -1083,7 +1083,7 @@ pub async fn run<F, Fut>(
     push: Option<Push>,
     hooks: Option<crate::runtime::webhooks::Webhooks>,
     document: F,
-    shutdown: hems_service::Shutdown,
+    shutdown: ems_service::Shutdown,
 ) where
     F: Fn() -> Fut + Send,
     Fut: std::future::Future<Output = Option<serde_json::Value>> + Send,
@@ -1637,7 +1637,7 @@ mod tests {
         for (headers, body) in received.iter() {
             assert_eq!(headers["content-encoding"], "aes128gcm");
             assert_eq!(headers["ttl"], "1800");
-            assert_eq!(headers["topic"], "hems-grid");
+            assert_eq!(headers["topic"], "ems-grid");
             assert!(
                 !body.windows(4).any(|w| w == b"hems" || w == b"Netz"),
                 "the push service carries ciphertext"

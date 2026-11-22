@@ -10,14 +10,14 @@
 //! `simulated_days.rs` (`failsafe_minutes == 2` on the winter day) and
 //! `drivers.rs` (`a_device_that_nods_and_does_nothing_is_named_rather_than_believed`).
 
-use hems_core::prelude::{AssetId, Power};
-use hems_realtime::{Claim, allocate};
+use ems_core::prelude::{AssetId, Power};
+use ems_realtime::{Claim, allocate};
 
 fn id(s: &str) -> AssetId {
     AssetId::new(s).expect("a valid identifier")
 }
 
-fn granted(grants: &[hems_realtime::Grant], asset: &str) -> f64 {
+fn granted(grants: &[ems_realtime::Grant], asset: &str) -> f64 {
     grants
         .iter()
         .find(|g| g.asset == id(asset))
@@ -50,13 +50,11 @@ fn the_minimum_is_shared_by_demand_and_not_equally() {
 fn a_measurement_only_device_gets_no_share() {
     let household = hemsd::Household::build(&hemsd::HouseholdConfig::default())
         .expect("the reference household");
-    let steuve = hems_grid::para14a::classify_on(
-        &household.site.assets,
-        time::macros::date!(2026 - 11 - 17),
-    );
+    let steuve =
+        ems_grid::para14a::classify_on(&household.site.assets, time::macros::date!(2026 - 11 - 17));
     let classified: Vec<&AssetId> = steuve.iter().flat_map(|s| &s.assets).collect();
     for asset in &household.site.assets {
-        if matches!(asset, hems_core::asset::Asset::Meter(_)) {
+        if matches!(asset, ems_core::asset::Asset::Meter(_)) {
             assert!(
                 !classified.contains(&asset.id()),
                 "the meter {} must not be a § 14a device",
@@ -90,14 +88,12 @@ fn capacity_one_device_leaves_is_used_by_another() {
 fn a_grid_chargeable_battery_counts_as_a_controllable_device() {
     let household = hemsd::Household::build(&hemsd::HouseholdConfig::default())
         .expect("the reference household");
-    let steuve = hems_grid::para14a::classify_on(
-        &household.site.assets,
-        time::macros::date!(2026 - 11 - 17),
-    );
+    let steuve =
+        ems_grid::para14a::classify_on(&household.site.assets, time::macros::date!(2026 - 11 - 17));
     assert!(
         steuve
             .iter()
-            .any(|s| matches!(s.fallgruppe, hems_core::asset::Fallgruppe::Stromspeicher)),
+            .any(|s| matches!(s.fallgruppe, ems_core::asset::Fallgruppe::Stromspeicher)),
         "the reference battery is § 14a load: {steuve:?}"
     );
 }

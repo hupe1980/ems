@@ -37,7 +37,7 @@ lint:
 # clock, a whole winter day stops being a unit test — which is the property the
 # guard and the arbiter are built around.
 #
-# `hems-drv` is on the list for the same reason and with more force: a driver is
+# `ems-drv` is on the list for the same reason and with more force: a driver is
 # the crate most likely to reach for a socket, because a socket is what it is
 # *about*. Keeping it sans-I/O is what makes a § 14a failsafe — a sixty-second
 # heartbeat and a two-hour minimum — an assertion rather than two hours of
@@ -47,7 +47,7 @@ lint:
 purity:
     #!/usr/bin/env bash
     set -uo pipefail
-    pure="hems-core hems-device hems-drv hems-flex hems-grid hems-tariff hems-forecast hems-optimizer hems-realtime hems-events"
+    pure="ems-core ems-device ems-drv ems-flex ems-grid ems-tariff ems-forecast ems-optimizer ems-realtime ems-events"
     fail=0
     for crate in $pure; do
         hits="$(grep -rn --include='*.rs' -E \
@@ -64,7 +64,7 @@ purity:
 
 # The fleet daemons deploy on PostgreSQL, so their queries are tested against
 # PostgreSQL — a service checked on a different engine is a service whose SQL is
-# checked by nothing (D156). `hems_service::testdb` starts **one** container for
+# checked by nothing (D156). `ems_service::testdb` starts **one** container for
 # the whole workspace and gives each test a database of its own, so this needs a
 # container runtime (Docker, Podman or Colima) and nothing else installed.
 # `just db-stop` removes it.

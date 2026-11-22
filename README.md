@@ -1,13 +1,13 @@
-<h1 align="center">⚡ hems</h1>
+<h1 align="center">⚡ ems</h1>
 
 <p align="center">
-  <strong>Open-source home energy management for German households.</strong><br>
+  <strong>Open-source energy management for the German grid — starting with hems, for households.</strong><br>
   The grid rules as cited, tested code. A guard nothing can override. Savings measured against the same house.
 </p>
 
 <p align="center">
-  <a href="https://hupe1980.github.io/hems"><img alt="Documentation" src="https://img.shields.io/badge/docs-hupe1980.github.io%2Fhems-blue"></a>
-  <a href="https://github.com/hupe1980/hems/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/hupe1980/hems/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://hupe1980.github.io/ems"><img alt="Documentation" src="https://img.shields.io/badge/docs-hupe1980.github.io%2Fems-blue"></a>
+  <a href="https://github.com/hupe1980/ems/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/hupe1980/ems/actions/workflows/ci.yml/badge.svg"></a>
   <a href="#-licence"><img alt="License" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue"></a>
   <img alt="Rust" src="https://img.shields.io/badge/rust-1.99+-orange?logo=rust">
   <img alt="Status" src="https://img.shields.io/badge/status-pre--alpha-orange">
@@ -15,12 +15,14 @@
 
 ---
 
-hems plans a household's battery, car, heat pump and hot water against
+**ems** is the workspace: the grid rules, the guard, the planner, the
+simulator and the protocols, as `ems-*` crates. **hems** (`hemsd`) is its
+household product. It plans a household's battery, car, heat pump and hot water against
 tomorrow's prices and weather, and obeys the rules that since 2024 make a German
 house with a roof a small regulated power station: the network operator's
 § 14a EnWG reduction, the § 9 EEG feed-in cap, Modul 1–3 network fees, MiSpeL
 storage accounting and § 42c energy sharing. New to those? Read
-[the German grid in ten minutes](https://hupe1980.github.io/hems/docs/background/).
+[the German grid in ten minutes](https://hupe1980.github.io/ems/docs/background/).
 
 <p align="center">
   <img src="site/static/screens/now-reduced.png" width="240" alt="Now: the network operator is reducing the connection, and the battery carries the house">
@@ -38,7 +40,7 @@ storage accounting and § 42c energy sharing. New to those? Read
 ## 🚀 Quickstart
 
 ```console
-$ git clone https://github.com/hupe1980/hems && cd hems
+$ git clone https://github.com/hupe1980/ems && cd ems
 $ cargo run -p hemsd -- demo                     # open http://127.0.0.1:8080
 ```
 
@@ -85,7 +87,7 @@ regime declared for a device the household does not own. Every daemon ships an
 annotated `<name>.example.toml` that a test parses, so the examples cannot drift.
 
 Released binaries for `x86_64` and `aarch64` Linux are on the
-[releases page](https://github.com/hupe1980/hems/releases), each with a CycloneDX
+[releases page](https://github.com/hupe1980/ems/releases), each with a CycloneDX
 SBOM, `SHA256SUMS` and a build-provenance attestation
 (`gh attestation verify hemsd-*.tar.gz --repo hupe1980/hems`).
 
@@ -94,31 +96,31 @@ SBOM, `SHA256SUMS` and a build-provenance attestation
 1. **The grid limit cannot be widened.** The § 14a limit lives in a guard plane
    that runs last and only intersects; a property test over a thousand random
    households, plans and overrides holds it.
-   ([architecture](https://hupe1980.github.io/hems/docs/architecture/))
+   ([architecture](https://hupe1980.github.io/ems/docs/architecture/))
 2. **It says why, in a sentence.** Every setpoint carries its reason — the
    grid, a price, a forecast or the household's override — and the household
    page renders it: *"Running at 3,3 kW — 36 ct is among the cheapest 15 % of
    the next two days."* No reason, no compile.
-   ([the household page](https://hupe1980.github.io/hems/docs/household/))
+   ([the household page](https://hupe1980.github.io/ems/docs/household/))
 3. **Savings against the same house.** The baseline owns the same battery, run
    the way it ships, under the same weather and rules; battery wear, comfort and
    undelivered charge are costs.
-   ([planner](https://hupe1980.github.io/hems/docs/optimizer/))
+   ([planner](https://hupe1980.github.io/ems/docs/optimizer/))
 4. **Rules with citations.** Every regulatory number carries its clause —
    `[BK6-22-300 A1 4.5.2]`, `[LPC-031]` — and the build fails on one it cannot
-   resolve. ([grid rules](https://hupe1980.github.io/hems/docs/grid-rules/))
+   resolve. ([grid rules](https://hupe1980.github.io/ems/docs/grid-rules/))
 5. **The forecast is allowed to be wrong.** Each simulated day plays out weather
    the planner never saw and scores its own forecasts beside the money.
-   ([forecasting](https://hupe1980.github.io/hems/docs/forecasting/))
+   ([forecasting](https://hupe1980.github.io/ems/docs/forecasting/))
 6. **Local first.** Guard, arbiter and planner run on the box; without the
    internet it keeps planning on its cache and enforces the limit locally.
 7. **The household's data stays the household's.** A local API for the box's
    history, a Data Act export, and an aggregator credential that can drive
    devices but not read when somebody was home.
-   ([security](https://hupe1980.github.io/hems/docs/security/))
+   ([security](https://hupe1980.github.io/ems/docs/security/))
 8. **Open to other energy managers.** An aggregator can drive the house over S2
    (EN 50491-12-2) with a credential the household can withdraw.
-   ([flexibility](https://hupe1980.github.io/hems/docs/flexibility/))
+   ([flexibility](https://hupe1980.github.io/ems/docs/flexibility/))
 
 ## 🧭 How it is arranged
 
@@ -183,18 +185,18 @@ The domain crates do no I/O, take time as a parameter and are usable on their ow
 
 | Crate | What it is |
 |---|---|
-| [`hems-core`](crates/hems-core) | The vocabulary: one sign convention, the quarter-hour grid, assets and circuits, setpoints that must name a reason, the building and hot-water tank as stores, and the types edge and fleet exchange |
-| [`hems-grid`](crates/hems-grid) | § 14a EnWG, the EEBUS LPC/LPP limitation machine, § 9 EEG, Modul 3, MiSpeL flow accounting, § 42c sharing, the two-year evidence record — all cited |
-| [`hems-tariff`](crates/hems-tariff) | The price stack; parsers for ENTSO-E, SMARD, aWATTar, Tibber and Energy-Charts; the Modul 1/2/3 advisor |
-| [`hems-forecast`](crates/hems-forecast) | Solar geometry and a physical PV model, a corrector that learns *this* roof, load and charging profiles, building identification, and the metrics that score them |
-| [`hems-optimizer`](crates/hems-optimizer) | The receding-horizon MILP: cost, battery wear, comfort, hot water, shiftable appliances, per-slot grid limits |
-| [`hems-realtime`](crates/hems-realtime) | The guard, the fair allocator for shared limits, the one-second arbiter |
-| [`hems-device`](crates/hems-device) | What a wanted power becomes on hardware: amperes, phases, SG Ready contacts, and what a device will actually take |
-| [`hems-drv`](crates/hems-drv) | The sans-I/O driver contract, SunSpec over Modbus TCP, and the EEBUS drivers behind features |
-| [`hems-flex`](crates/hems-flex) | The household's flexibility in S2 (EN 50491-12-2) and the Resource Manager session |
-| [`hems-sim`](crates/hems-sim) | Simulated battery, charge point, inverter, building, tank, appliances and Steuerbox, each with a way of saying no, and seeded weather |
-| [`hems-events`](crates/hems-events) | The CloudEvents catalogue and the Standard Webhooks signature, enforced by a workspace guard |
-| [`hems-service`](crates/hems-service) | The shell every daemon shares: configuration, secrets as references, health and metrics, capabilities, MCP mounting, signature verification, the one outbound HTTP client, HTTPS |
+| [`ems-core`](crates/ems-core) | The vocabulary: one sign convention, the quarter-hour grid, assets and circuits, setpoints that must name a reason, the building and hot-water tank as stores, and the types edge and fleet exchange |
+| [`ems-grid`](crates/ems-grid) | § 14a EnWG, the EEBUS LPC/LPP limitation machine, § 9 EEG, Modul 3, MiSpeL flow accounting, § 42c sharing, the two-year evidence record — all cited |
+| [`ems-tariff`](crates/ems-tariff) | The price stack; parsers for ENTSO-E, SMARD, aWATTar, Tibber and Energy-Charts; the Modul 1/2/3 advisor |
+| [`ems-forecast`](crates/ems-forecast) | Solar geometry and a physical PV model, a corrector that learns *this* roof, load and charging profiles, building identification, and the metrics that score them |
+| [`ems-optimizer`](crates/ems-optimizer) | The receding-horizon MILP: cost, battery wear, comfort, hot water, shiftable appliances, per-slot grid limits |
+| [`ems-realtime`](crates/ems-realtime) | The guard, the fair allocator for shared limits, the one-second arbiter |
+| [`ems-device`](crates/ems-device) | What a wanted power becomes on hardware: amperes, phases, SG Ready contacts, and what a device will actually take |
+| [`ems-drv`](crates/ems-drv) | The sans-I/O driver contract, SunSpec over Modbus TCP, and the EEBUS drivers behind features |
+| [`ems-flex`](crates/ems-flex) | The household's flexibility in S2 (EN 50491-12-2) and the Resource Manager session |
+| [`ems-sim`](crates/ems-sim) | Simulated battery, charge point, inverter, building, tank, appliances and Steuerbox, each with a way of saying no, and seeded weather |
+| [`ems-events`](crates/ems-events) | The CloudEvents catalogue and the Standard Webhooks signature, enforced by a workspace guard |
+| [`ems-service`](crates/ems-service) | The shell every daemon shares: configuration, secrets as references, health and metrics, capabilities, MCP mounting, signature verification, the one outbound HTTP client, HTTPS |
 
 ## 🛰️ Daemons
 

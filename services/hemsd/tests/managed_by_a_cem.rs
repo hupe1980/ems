@@ -1,6 +1,6 @@
 //! A Customer Energy Manager drives this household, over a real socket.
 //!
-//! `hems-flex` had the whole of S2 (EN 50491-12-2) — the descriptions, the
+//! `ems-flex` had the whole of S2 (EN 50491-12-2) — the descriptions, the
 //! session, the instruction arithmetic — and until `hemsd::runtime::s2` existed
 //! **nothing called any of it**. That is the failure mode this workspace keeps
 //! finding in itself and the one its README puts first: a module that is
@@ -39,7 +39,7 @@
 
 use std::sync::Arc;
 
-use hems_core::prelude::{AssetId, Power};
+use ems_core::prelude::{AssetId, Power};
 use hemsd::drivers::Registry;
 use hemsd::runtime::s2::{Cem, S2Settings, Surface};
 use s2_kit::io::{Dialled, Driver, WebSocket, WebSocketOptions};
@@ -57,9 +57,9 @@ const TOKEN: &str = "a-token-only-this-household-has";
 /// Through `runtime::surfaces` rather than by assembling a router of its own,
 /// and that is load-bearing: the security property is a layer over the whole
 /// assembly, so a test that built its own arrangement of the same parts would
-/// pass while the product shipped an open port. `hems_service::Server` adds only
+/// pass while the product shipped an open port. `ems_service::Server` adds only
 /// the health surface on top, which is deliberately outside the gate.
-async fn a_box_that_can_be_managed() -> (String, Cem, hems_core::prelude::Site) {
+async fn a_box_that_can_be_managed() -> (String, Cem, ems_core::prelude::Site) {
     let (address, cem, site, _) = a_box_with_its_access().await;
     (address, cem, site)
 }
@@ -68,7 +68,7 @@ async fn a_box_that_can_be_managed() -> (String, Cem, hems_core::prelude::Site) 
 async fn a_box_with_its_access() -> (
     String,
     Cem,
-    hems_core::prelude::Site,
+    ems_core::prelude::Site,
     hemsd::runtime::access::LocalAccess,
 ) {
     let household = hemsd::Household::build(&hemsd::HouseholdConfig::default())
@@ -281,11 +281,11 @@ impl Manager {
 }
 
 /// The identifier of the reference household's battery.
-fn battery(site: &hems_core::prelude::Site) -> AssetId {
+fn battery(site: &ems_core::prelude::Site) -> AssetId {
     site.assets
         .iter()
         .find_map(|a| match a {
-            hems_core::prelude::Asset::Battery(b) => Some(b.meta.id.clone()),
+            ems_core::prelude::Asset::Battery(b) => Some(b.meta.id.clone()),
             _ => None,
         })
         .expect("the reference household has a battery")
@@ -502,7 +502,7 @@ async fn there_is_nothing_to_manage_on_an_asset_this_household_does_not_have() {
 ///
 /// The control loop is not run here — this drives the seam directly, because what
 /// is under test is that the override *reaches the wire*, and the arbiter's own
-/// precedence is pinned where it is decided (`hems-realtime`).
+/// precedence is pinned where it is decided (`ems-realtime`).
 #[tokio::test]
 async fn a_manager_is_told_when_the_grid_overrides_its_instruction() {
     let (address, cem, site) = a_box_that_can_be_managed().await;

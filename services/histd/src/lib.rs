@@ -6,7 +6,7 @@
 //! **The evidence record.** `[A1 7.2]` says what a § 14a control event has to be
 //! documented with — the ceiling, when it arrived, what was done about it, and a
 //! trace of what the connection point actually drew — and `[A1 7.3]` says it is
-//! kept for **two years**. `hems-grid::evidence` builds it; until now it lived
+//! kept for **two years**. `ems-grid::evidence` builds it; until now it lived
 //! in memory and died with the process, which is the difference between a record
 //! and an intention.
 //!
@@ -39,7 +39,7 @@
 //! # The schema is a `migrations/` directory, as in `mako`
 //!
 //! `migrations/NNNN_*.sql`, a new file per revision and never an edit to one
-//! already applied, applied by [`hems_service::db::migrate`] under an advisory
+//! already applied, applied by [`ems_service::db::migrate`] under an advisory
 //! lock so several replicas may start at once. An edited revision is refused by
 //! its checksum rather than used: two years of § 14a evidence is the last record
 //! in this workspace that should be repaired by guesswork.

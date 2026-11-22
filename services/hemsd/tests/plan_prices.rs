@@ -6,7 +6,7 @@
 //! report asks of a meter. They were never held together, and in 0.3 the
 //! baseline was €93 for a day whose unmanaged house cost €22.
 
-use hems_core::prelude::Asset;
+use ems_core::prelude::Asset;
 use hemsd::home::{TankGoal, Verdict, judge_tank};
 use hemsd::scenario::{Recording, run_recorded};
 use hemsd::{HouseholdConfig, Scenario};

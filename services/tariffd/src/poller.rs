@@ -19,9 +19,9 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::prelude::{Horizon, Slot};
-use hems_tariff::cache::PriceCache;
-use hems_tariff::source::Source;
+use ems_core::prelude::{Horizon, Slot};
+use ems_tariff::cache::PriceCache;
+use ems_tariff::source::Source;
 use time::OffsetDateTime;
 
 use crate::upstream::{Upstream, UpstreamError};
@@ -125,7 +125,7 @@ impl<U: Upstream> Poller<U> {
     pub async fn poll(
         &mut self,
         cache: &mut PriceCache,
-        carbon: &mut hems_tariff::cache::CarbonCache,
+        carbon: &mut ems_tariff::cache::CarbonCache,
         now: OffsetDateTime,
     ) -> PollOutcome {
         let mut outcome = PollOutcome::default();
@@ -209,7 +209,7 @@ pub fn coverage(cache: &PriceCache, now: OffsetDateTime, slots: usize) -> f64 {
 mod tests {
     use super::*;
     use crate::upstream::Fetched;
-    use hems_tariff::source::{PriceBasis, PriceSeries};
+    use ems_tariff::source::{PriceBasis, PriceSeries};
     use rust_decimal::Decimal;
     use std::sync::Mutex;
     use time::macros::datetime;
@@ -294,7 +294,7 @@ mod tests {
             time::Duration::hours(1),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         let outcome = poller.poll(&mut cache, &mut carbon, NOON).await;
         assert_eq!(outcome.learned_from, vec![Source::Smard]);
         assert!(is_ready(&cache, NOON, 96));
@@ -320,7 +320,7 @@ mod tests {
             time::Duration::hours(1),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         assert!(
             poller
                 .poll(&mut cache, &mut carbon, NOON)
@@ -356,7 +356,7 @@ mod tests {
             time::Duration::hours(1),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         let first = poller.poll(&mut cache, &mut carbon, NOON).await;
         assert_eq!(first.failed.len(), 1);
         assert_eq!(first.learned_from, vec![Source::Smard]);
@@ -385,7 +385,7 @@ mod tests {
             time::Duration::hours(1),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         let mut now = NOON;
         let mut waits = Vec::new();
         for _ in 0..5 {
@@ -423,7 +423,7 @@ mod tests {
             time::Duration::hours(4),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         let mut now = NOON;
         for _ in 0..2 {
             poller.poll(&mut cache, &mut carbon, now).await;
@@ -466,7 +466,7 @@ mod tests {
             time::Duration::hours(1),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         poller.poll(&mut cache, &mut carbon, NOON).await;
         assert!(
             coverage(&cache, NOON, 96) > 0.98,
@@ -491,7 +491,7 @@ mod tests {
             time::Duration::hours(1),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         let outcome = poller.poll(&mut cache, &mut carbon, NOON).await;
         assert!(!outcome.learned_anything());
         assert!(!is_ready(&cache, NOON, 96));
@@ -516,7 +516,7 @@ mod tests {
             time::Duration::hours(1),
         );
         let mut cache = PriceCache::new();
-        let mut carbon = hems_tariff::cache::CarbonCache::new();
+        let mut carbon = ems_tariff::cache::CarbonCache::new();
         poller.poll(&mut cache, &mut carbon, NOON).await;
         // One minute later nothing is due, so nothing is asked.
         poller

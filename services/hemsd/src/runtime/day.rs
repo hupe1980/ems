@@ -31,9 +31,9 @@ use std::collections::BTreeMap;
 
 use time::Date;
 
-use hems_core::prelude::Slot;
-use hems_core::report::{DayKpis, ForecastScores};
-use hems_forecast::quantile::Band;
+use ems_core::prelude::Slot;
+use ems_core::report::{DayKpis, ForecastScores};
+use ems_forecast::quantile::Band;
 
 use crate::store::{Store, StoreError};
 
@@ -85,8 +85,8 @@ impl Scored {
         if self.pv.len() < ENOUGH_OF_A_DAY {
             return None;
         }
-        let pv = hems_forecast::Calibration::score(self.pv.iter().copied());
-        let load = hems_forecast::Calibration::score(self.load.iter().copied());
+        let pv = ems_forecast::Calibration::score(self.pv.iter().copied());
+        let load = ems_forecast::Calibration::score(self.load.iter().copied());
         Some(ForecastScores {
             pv_coverage: pv.coverage,
             pv_crps: pv.crps,
@@ -189,8 +189,8 @@ pub struct Clipping {
 
 impl Clipping {
     /// Add one control period.
-    pub fn tick(&mut self, refused: hems_core::units::Power, period_s: u32) {
-        if refused > hems_core::units::Power::ZERO {
+    pub fn tick(&mut self, refused: ems_core::units::Power, period_s: u32) {
+        if refused > ems_core::units::Power::ZERO {
             self.ticks = self.ticks.saturating_add(1);
             self.kwh += refused.kw() * f64::from(period_s) / 3600.0;
         }
@@ -226,8 +226,8 @@ impl FeedIn {
     /// ceiling in force.
     pub fn tick(
         &mut self,
-        exported: hems_core::units::Power,
-        ceiling: Option<hems_core::units::Power>,
+        exported: ems_core::units::Power,
+        ceiling: Option<ems_core::units::Power>,
     ) {
         let Some(ceiling) = ceiling else {
             return;
@@ -269,8 +269,8 @@ pub fn kpis(
     feed_in: FeedIn,
     scored: &Scored,
 ) -> Result<Option<DayKpis>, StoreError> {
-    let from = hems_core::calendar::day_start_utc(date);
-    let to = hems_core::calendar::day_end_utc(date);
+    let from = ems_core::calendar::day_start_utc(date);
+    let to = ems_core::calendar::day_end_utc(date);
 
     let registers = store.quarter_hours_between(from, to)?;
     if registers.is_empty() {
@@ -296,13 +296,13 @@ pub fn kpis(
 
     // One arithmetic, in one place: the simulator asks the same function.
     let self_sufficiency =
-        hems_core::report::self_sufficiency(imported_kwh, produced_kwh, exported_kwh);
+        ems_core::report::self_sufficiency(imported_kwh, produced_kwh, exported_kwh);
 
     let events = store.control_events_between(from, to)?;
     let worst_overshoot_w = events
         .iter()
         .filter_map(|s| s.event.worst_overshoot())
-        .map(hems_core::units::Power::get)
+        .map(ems_core::units::Power::get)
         .fold(0.0_f64, f64::max);
 
     Ok(Some(DayKpis {
@@ -358,8 +358,8 @@ mod tests {
         produced: i64,
     ) -> crate::store::Recorded {
         crate::store::Recorded {
-            registers: hems_grid::mispel::QuarterHour {
-                slot: hems_core::prelude::Slot::containing(
+            registers: ems_grid::mispel::QuarterHour {
+                slot: ems_core::prelude::Slot::containing(
                     slot_from + time::Duration::minutes(15 * i),
                 ),
                 grid_draw: Decimal::new(draw, 2),
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn the_energies_come_from_the_registers_and_the_money_does_not() {
         let store = Store::in_memory().unwrap();
-        let midnight = hems_core::calendar::day_start_utc(date!(2026 - 01 - 15));
+        let midnight = ems_core::calendar::day_start_utc(date!(2026 - 01 - 15));
         for i in 0..4 {
             store
                 .put_quarter_hour(&register(midnight, i, 100, 25, 50), midnight)
@@ -435,7 +435,7 @@ mod tests {
     fn a_register_from_the_next_day_belongs_to_the_next_day() {
         // The window is half-open, so the boundary quarter hour is counted once.
         let store = Store::in_memory().unwrap();
-        let midnight = hems_core::calendar::day_start_utc(date!(2026 - 01 - 15));
+        let midnight = ems_core::calendar::day_start_utc(date!(2026 - 01 - 15));
         // 23:45 on the 15th, and 00:00 on the 16th.
         store
             .put_quarter_hour(&register(midnight, 95, 100, 0, 0), midnight)

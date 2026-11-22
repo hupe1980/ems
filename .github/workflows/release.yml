@@ -167,9 +167,9 @@ jobs:
           import json, sys
           bom = json.load(open(sys.argv[1]))
           name = bom["metadata"]["component"]["name"]
-          ours = sum(1 for c in bom["components"] if c["name"].startswith("hems-"))
+          ours = sum(1 for c in bom["components"] if c["name"].startswith("ems-"))
           assert name == "hemsd", f"the SBOM describes {name}, not hemsd"
-          assert ours >= 12, f"only {ours} hems crates in it — not the daemon's whole tree"
+          assert ours >= 12, f"only {ours} ems crates in it — not the daemon's whole tree"
           print(f"{name}: {len(bom['components'])} components, {ours} of them ours")
           PY
           ls -l sbom
@@ -274,9 +274,9 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -uo pipefail
-          for crate in hems-core hems-events hems-service hems-device \
-                       hems-forecast hems-grid hems-sim hems-drv hems-flex \
-                       hems-realtime hems-tariff hems-optimizer; do
+          for crate in ems-core ems-events ems-service ems-device \
+                       ems-forecast ems-grid ems-sim ems-drv ems-flex \
+                       ems-realtime ems-tariff ems-optimizer; do
             echo "::group::$crate"
             out=$(cargo publish -p "$crate" --locked 2>&1) && rc=0 || rc=$?
             echo "$out"

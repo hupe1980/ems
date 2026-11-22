@@ -17,7 +17,7 @@ $ hemsd openapi > openapi.json                     # or from the binary
 ```
 
 It is also checked in as
-[`services/hemsd/openapi.json`](https://github.com/hupe1980/hems/blob/main/services/hemsd/openapi.json),
+[`services/hemsd/openapi.json`](https://github.com/hupe1980/ems/blob/main/services/hemsd/openapi.json),
 and the build fails if a response type changes and the document does not.
 
 ## Credentials
@@ -54,7 +54,7 @@ which is the sentence the household page shows:
 
 ```json
 {
-  "type": "https://hupe1980.github.io/hems/docs/api/#not-found",
+  "type": "https://hupe1980.github.io/ems/docs/api/#not-found",
   "title": "There is no such thing on this box",
   "status": 404,
   "detail": "this box does not trust that control box, so there is nothing to forget"
@@ -124,7 +124,7 @@ nothing to remove.
 | `GET` | `/v1/subscriptions` | household | The systems this box tells about its events |
 | `POST` | `/v1/subscriptions` | household | Tell one more system: CloudEvents signed per Standard Webhooks |
 | `POST` | `/v1/subscriptions/{id}/revoke` | household | Stop telling one, and forget what it was owed |
-| `POST` | `/v1/subscriptions/{id}/test` | household | Send it a de.hems.test.ping now |
+| `POST` | `/v1/subscriptions/{id}/test` | household | Send it a de.ems.test.ping now |
 | `GET` | `/v1/deliveries` | household | The last seven days of deliveries, newest first |
 | `GET` | `/s2/{asset}` | household or manager | S2 over WebSocket: a manager drives one device, narrowed by the guard |
 <!-- api:end -->
@@ -147,21 +147,21 @@ the subscription is made. Every webhook library verifies it as it is.
 
 ```console
 $ curl -k -H "Authorization: Bearer $HEMS_TOKEN" -H 'Content-Type: application/json' \
-    -d '{"name":"Home Assistant","url":"http://homeassistant.local:8123/api/webhook/hems-7f3a9c","types":["de.hems.grid.*"]}' \
+    -d '{"name":"Home Assistant","url":"http://homeassistant.local:8123/api/webhook/hems-7f3a9c","types":["de.ems.grid.*"]}' \
     https://box.local:8080/v1/subscriptions
 ```
 
 | Type | When | `data` |
 |---|---|---|
-| `de.hems.grid.lpc.limit.received` | the network operator reduces the connection | `limit_w`, `minimum_w` |
-| `de.hems.grid.lpc.limit.released` | the reduction ends | `lasted_s` |
-| `de.hems.grid.lpc.failsafe.entered` | the control box falls silent | `failsafe_w` |
-| `de.hems.site.goal.at-risk` | a goal turns *tight* or *impossible* | `verdict`, `assets` |
-| `de.hems.device.deviation.detected` | a device ignores the box for ten minutes | `assets` |
-| `de.hems.site.day.closed` | a day closes | the receipt: whole cents, Wh, the § 14a lines |
-| `de.hems.test.ping` | `POST /v1/subscriptions/{id}/test` | `test` |
+| `de.ems.grid.lpc.limit.received` | the network operator reduces the connection | `limit_w`, `minimum_w` |
+| `de.ems.grid.lpc.limit.released` | the reduction ends | `lasted_s` |
+| `de.ems.grid.lpc.failsafe.entered` | the control box falls silent | `failsafe_w` |
+| `de.ems.site.goal.at-risk` | a goal turns *tight* or *impossible* | `verdict`, `assets` |
+| `de.ems.device.deviation.detected` | a device ignores the box for ten minutes | `assets` |
+| `de.ems.site.day.closed` | a day closes | the receipt: whole cents, Wh, the § 14a lines |
+| `de.ems.test.ping` | `POST /v1/subscriptions/{id}/test` | `test` |
 
-`types` takes a trailing `*` (`de.hems.grid.*`); `subjects` narrows to asset
+`types` takes a trailing `*` (`de.ems.grid.*`); `subjects` narrows to asset
 ids. The schema of every `data` is in `openapi.json`'s `webhooks` section.
 
 A receiver answers `2xx`. Anything else is tried again — after 30 s, 2 min,
@@ -189,7 +189,7 @@ automation:
         local_only: true
     conditions:
       - condition: template
-        value_template: "{{ trigger.json.type == 'de.hems.grid.lpc.limit.received' }}"
+        value_template: "{{ trigger.json.type == 'de.ems.grid.lpc.limit.received' }}"
     actions:
       - action: persistent_notification.create
         data:

@@ -15,9 +15,9 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::prelude::Slot;
-use hems_grid::mispel::QuarterHour;
-use hems_service::{Credentials, Secret};
+use ems_core::prelude::Slot;
+use ems_grid::mispel::QuarterHour;
+use ems_service::{Credentials, Secret};
 use histd::api::{History, router};
 use time::macros::datetime;
 
@@ -56,10 +56,7 @@ async fn a_year_of_registers(store: &histd::Store) {
         .expect("a year of registers");
 }
 
-async fn start() -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
+async fn start() -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bound = listener.local_addr().unwrap();
     drop(listener);
@@ -67,23 +64,23 @@ async fn start() -> (
     let sites: BTreeMap<String, Secret> = [("haus-1".to_owned(), Secret::literal(TOKEN))]
         .into_iter()
         .collect();
-    let settings = hems_service::Settings {
+    let settings = ems_service::Settings {
         listen: bound,
         shutdown_grace_s: 2,
-        ..hems_service::Settings::default()
+        ..ems_service::Settings::default()
     };
-    let fixture = hems_service::testdb::Postgres::start_with(histd::store::MIGRATIONS, POOL).await;
+    let fixture = ems_service::testdb::Postgres::start_with(histd::store::MIGRATIONS, POOL).await;
     let store = histd::Store::new(fixture.db.clone());
     a_year_of_registers(&store).await;
     // Leaked on purpose: the pool has to outlive the server task, and a test
     // process ends when the test does.
     std::mem::forget(fixture);
 
-    let (signal, trigger) = hems_service::Shutdown::channel();
-    let server = hems_service::Server::new(
-        hems_service::identity!(),
+    let (signal, trigger) = ems_service::Shutdown::channel();
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
         settings,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         router(History::new(
             store,
             Credentials::resolve(&sites, &std::collections::BTreeMap::new(), &[]).unwrap(),

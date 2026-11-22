@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
+use ems_service::{Health, Server, Shutdown, shutdown};
 use forecastd::api::{Weather, router};
 use forecastd::poller::{Run, is_ready};
 use forecastd::{Http, Poller, Settings};
-use hems_service::{Health, Server, Shutdown, shutdown};
 use tokio::sync::RwLock;
 
 #[derive(Parser)]
@@ -22,9 +22,9 @@ struct Cli {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = hems_service::load(cli.config.as_deref(), "HEMS_FORECASTD")?;
-    hems_service::init_tracing(
-        hems_service::identity!(),
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_FORECASTD")?;
+    ems_service::init_tracing(
+        ems_service::identity!(),
         &settings.service.log_filter,
         settings.service.log_json,
     );
@@ -69,17 +69,17 @@ async fn main() -> anyhow::Result<()> {
     // The two surfaces answer from the same runs, so they cannot disagree.
     let mut app = router(Weather::new(runs.clone()));
     if settings.mcp.enabled {
-        let auth = hems_service::McpAuth::gated(&settings.mcp)?;
+        let auth = ems_service::McpAuth::gated(&settings.mcp)?;
         app = app.merge(forecastd::mcp_server::router(
             Arc::new(forecastd::mcp_server::State { runs }),
             auth,
-            hems_service::mcp::cancel_on(&signal),
+            ems_service::mcp::cancel_on(&signal),
         ));
         tracing::info!("the Model Context Protocol surface is mounted at /mcp");
     }
 
     Server::new(
-        hems_service::identity!(),
+        ems_service::identity!(),
         settings.service.clone(),
         health,
         app,

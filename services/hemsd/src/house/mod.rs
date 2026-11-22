@@ -2,7 +2,7 @@
 //!
 //! `hemsd demo` replays decisions; nothing in it crosses a socket. This is the
 //! other half: one process that *is* a house — an inverter, a meter and a
-//! battery answering SunSpec over Modbus TCP from `hems-sim`'s physics under a
+//! battery answering SunSpec over Modbus TCP from `ems-sim`'s physics under a
 //! reference day's weather, and a Steuerbox that dials the box over SHIP and
 //! writes that day's § 14a reduction. The box reaches it through its ordinary
 //! drivers and cannot tell.
@@ -20,9 +20,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use hems_core::prelude::{GeoPoint, Power, Slot};
-use hems_forecast::ArrayModel;
-use hems_sim::{BatterySim, PvSim};
+use ems_core::prelude::{GeoPoint, Power, Slot};
+use ems_forecast::ArrayModel;
+use ems_sim::{BatterySim, PvSim};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::watch;
 

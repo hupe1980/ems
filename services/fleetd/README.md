@@ -1,7 +1,7 @@
 # fleetd
 
 Adopting a box, telling it what to run, and offering it updates — the fleet
-side of [hems](https://github.com/hupe1980/hems).
+side of [hems](https://github.com/hupe1980/ems).
 
 Three jobs, and the third has a security argument behind it.
 

@@ -1,6 +1,6 @@
 //! `obsd` — what the fleet is actually doing.
 //!
-//! Every box reports its day as a [`hems_core::report::DayKpis`]; this service
+//! Every box reports its day as a [`ems_core::report::DayKpis`]; this service
 //! keeps them and answers the three questions a fleet operator has.
 //!
 //! # The questions are not the same shape, and that is the design

@@ -11,7 +11,7 @@
 //! # Curated means refused, not warned about
 //!
 //! Every entry is validated against the BDEW Anwendungshilfe
-//! ([`hems_grid::modul3::Modul3Calendar::assess`]) when the daemon starts, and
+//! ([`ems_grid::modul3::Modul3Calendar::assess`]) when the daemon starts, and
 //! a violation is a start-up **error**. The argument is D126's, scaled up: a
 //! box that came up on a broken calendar prices one household's year in windows
 //! nobody may sell; a fleet service that served one prices a whole Netzgebiet's.
@@ -32,7 +32,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::get;
-use hems_grid::modul3::{Modul3Conformance, Modul3Context, TranscriptionError};
+use ems_grid::modul3::{Modul3Conformance, Modul3Context, TranscriptionError};
 
 use crate::config::Modul3Entry;
 
@@ -231,8 +231,8 @@ async fn operator_handler(
 mod tests {
     use super::*;
 
-    fn transcription() -> hems_grid::modul3::Transcription {
-        hems_grid::modul3::Transcription {
+    fn transcription() -> ems_grid::modul3::Transcription {
+        ems_grid::modul3::Transcription {
             id: "NB-14A-3-2026".into(),
             year: 2026,
             hochtarif_minutes: [17 * 60, 20 * 60],

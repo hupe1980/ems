@@ -1,10 +1,10 @@
 # tariffd
 
-The price service of [hems](https://github.com/hupe1980/hems): fetch, reconcile,
+The price service of [hems](https://github.com/hupe1980/ems): fetch, reconcile,
 serve.
 
-`hems-tariff::source` parses what the five published sources publish and
-`hems-tariff::cache` decides what to do when two of them disagree. Both are pure
+`ems-tariff::source` parses what the five published sources publish and
+`ems-tariff::cache` decides what to do when two of them disagree. Both are pure
 functions and neither has ever made a request. This is the process that does.
 
 ## Three jobs
@@ -39,7 +39,7 @@ which is why it is written down.
 There is no machine-readable national format for a Zählzeitdefinition — a PDF
 or an Excel sheet per network operator — so somebody transcribes each one,
 **once per Netzgebiet** rather than once per household. `[[modul3]]` entries
-carry the identical `hems_grid::modul3::Transcription` a box takes as
+carry the identical `ems_grid::modul3::Transcription` a box takes as
 `[tariff.modul3]`, keyed by the operator's BDEW-Codenummer; every one is
 checked against the BDEW Anwendungshilfe at start-up, and a violation refuses
 the daemon — a fleet serving windows nobody may sell prices a whole Netzgebiet

@@ -8,16 +8,16 @@
 
 use std::sync::Arc;
 
-use hems_service::{McpAuth, McpSettings, Secret, Shutdown};
-use hems_tariff::cache::PriceCache;
-use hems_tariff::source::{PriceBasis, PriceSeries, Source};
+use ems_service::{McpAuth, McpSettings, Secret, Shutdown};
+use ems_tariff::cache::PriceCache;
+use ems_tariff::source::{PriceBasis, PriceSeries, Source};
 use rust_decimal::Decimal;
 use tokio::sync::RwLock;
 
 /// A cache with one day of prices in it.
 async fn cache() -> Arc<RwLock<PriceCache>> {
     let now = time::OffsetDateTime::now_utc();
-    let first = hems_core::prelude::Slot::containing(now);
+    let first = ems_core::prelude::Slot::containing(now);
     let mut cache = PriceCache::new();
     let series = PriceSeries {
         points: (0..96)
@@ -32,12 +32,7 @@ async fn cache() -> Arc<RwLock<PriceCache>> {
 }
 
 /// The daemon's own router, with the MCP surface merged in as `main` merges it.
-async fn serve(
-    auth: McpAuth,
-) -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
+async fn serve(auth: McpAuth) -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bound = listener.local_addr().unwrap();
     drop(listener);
@@ -48,17 +43,17 @@ async fn serve(
         tariffd::mcp_server::router(
             Arc::new(tariffd::mcp_server::State { cache }),
             auth,
-            hems_service::mcp::cancel_on(&signal),
+            ems_service::mcp::cancel_on(&signal),
         ),
     );
-    let server = hems_service::Server::new(
-        hems_service::identity!(),
-        hems_service::Settings {
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
+        ems_service::Settings {
             listen: bound,
             shutdown_grace_s: 2,
-            ..hems_service::Settings::default()
+            ..ems_service::Settings::default()
         },
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         app,
     );
     tokio::spawn(async move { server.run_until(signal).await.unwrap() });
@@ -249,7 +244,7 @@ async fn a_daemon_holding_household_data_will_not_open_its_surface() {
         "a published auction result is nobody's data"
     );
     assert!(
-        McpAuth::per_caller(&open, &hems_service::Credentials::default()).is_err(),
+        McpAuth::per_caller(&open, &ems_service::Credentials::default()).is_err(),
         "a surface over a store that accepts nothing refuses every call identically"
     );
 
@@ -259,6 +254,6 @@ async fn a_daemon_holding_household_data_will_not_open_its_surface() {
         enabled: true,
         token: Some(Secret::literal("tok-operator")),
     };
-    let credentials = hems_service::Credentials::default().with_operator("tok-operator");
+    let credentials = ems_service::Credentials::default().with_operator("tok-operator");
     assert!(McpAuth::per_caller(&with_token, &credentials).is_err());
 }

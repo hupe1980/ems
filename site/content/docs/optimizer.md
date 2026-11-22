@@ -64,7 +64,7 @@ ordinary 20 ct hour came back at 5 986 €/kWh.
 `Σ SteuVE` is the devices a network operator may actually reduce, not every
 device the planner models: a heat pump group below 4,2 kW is not a steuerbare
 Verbrauchseinrichtung. That is a fact about a site's nameplates and its
-commissioning dates, which `hems-grid` answers and the planner is told — see
+commissioning dates, which `ems-grid` answers and the planner is told — see
 [the § 14a section](#the-ss-14a-constraint-is-on-the-netzwirksamer-leistungsbezug-per-slot).
 
 minimising, in euros throughout,
@@ -170,7 +170,7 @@ while a full battery sits behind the meter.
 work that out for itself. A device is a steuerbare Verbrauchseinrichtung only if
 it passes the 4,2 kW of `[A1 2.4.1]` — individually for a charge point and a
 battery, summed per Fallgruppe for heat pumps — which is a fact about a site's
-nameplates and its commissioning dates. `hems-optimizer` takes no site: it sees a
+nameplates and its commissioning dates. `ems-optimizer` takes no site: it sees a
 battery model, a charging session and a thermal model, none of which carries a
 Fallgruppe. Assuming all three are controllable is harmless while a roof is
 producing, where a device that *spends* the surplus and a device the ceiling
@@ -178,7 +178,7 @@ producing, where a device that *spends* the surplus and a device the ceiling
 evening, where the row has no surplus term at all and a 3 kW heat pump no network
 operator may reduce was charged against a ceiling it is not under. The household
 was made colder than the Festlegung asks for, in exactly the hours a reduction
-happens. `hems-grid::classify_at` is what answers it, `hemsd` asks, and
+happens. `ems-grid::classify_at` is what answers it, `hemsd` asks, and
 `PlanningLimits::steuve_devices` is how the answer reaches the plan. The guard
 never had this problem: it classifies the real site every tick.
 
@@ -270,7 +270,7 @@ It is modelled as a **linear store**: heat above the lowest acceptable
 temperature, with a leak and a draw. Not a second RC model, because what a
 household cares about is whether there is hot water rather than the temperature
 profile inside the cylinder — and because that is S2's own view of a tank (a fill
-level, a fill rate and a leakage, `FRBC`), so it maps onto `hems-flex` without
+level, a fill rate and a leakage, `FRBC`), so it maps onto `ems-flex` without
 translation.
 
 The draw is a **soft** constraint, priced at €3 per kilowatt-hour of heat, for
@@ -409,7 +409,7 @@ It is also only *conditionally* stable, and nothing checks the condition: drop
 the air capacity from 0,6 to 0,3 kWh/K — a flat rather than a house — and the
 planned temperature diverges outright.
 
-So `hems-core::thermal` discretises the model **exactly**, by a zero-order hold:
+So `ems-core::thermal` discretises the model **exactly**, by a zero-order hold:
 the heat input and the outdoor temperature are constant across a slot, which is
 precisely what a quarter-hour plan asserts about them, and under that assumption
 the step carries no discretisation error at all. The coefficients come from a

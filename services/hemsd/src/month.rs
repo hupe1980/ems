@@ -118,7 +118,7 @@ impl ClosedDay {
 
     /// A day the box itself closed, from the report it sends the fleet.
     #[must_use]
-    pub fn of_report(day: &hems_core::report::DayKpis) -> Self {
+    pub fn of_report(day: &ems_core::report::DayKpis) -> Self {
         Self::of(&crate::home::receipt_of(day), day.economics.is_some())
     }
 

@@ -1,7 +1,7 @@
 //! Being managed by a Customer Energy Manager, and not only describing what
 //! could be.
 //!
-//! `hems-flex` holds the whole of S2 (EN 50491-12-2) and holds it sans-I/O:
+//! `ems-flex` holds the whole of S2 (EN 50491-12-2) and holds it sans-I/O:
 //! which control type each asset belongs to, the description a manager is sent,
 //! the session that has the conversation, and the arithmetic that reads an
 //! instruction back into watts. **This is the socket under it**, and being
@@ -10,7 +10,7 @@
 //! device that says so and then declines the consequence has made the argument
 //! and kept the benefit for itself.
 //!
-//! The socket and nothing else. Every decision is `hems-flex`'s and
+//! The socket and nothing else. Every decision is `ems-flex`'s and
 //! every *control* decision is the arbiter's — the same seam `runtime/ship.rs`
 //! keeps for EEBUS, for the same reason: there is exactly one copy of the S2
 //! state machine in the product, and it is the one the unit tests drive.
@@ -33,7 +33,7 @@
 //!
 //! # It does not obey; it asks (D143)
 //!
-//! A decoded instruction becomes a [`hems_realtime::CemRequest`] in a map the
+//! A decoded instruction becomes a [`ems_realtime::CemRequest`] in a map the
 //! control loop reads, and the arbiter treats it as one more voice with an
 //! opinion — above the plan the box makes for itself, below the person in the
 //! kitchen, and below the guard absolutely. A manager cannot raise a § 14a
@@ -67,8 +67,8 @@ use std::sync::Arc;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse as _, Response};
-use hems_core::prelude::{Asset, AssetId, Envelope, Site};
-use hems_realtime::CemRequest;
+use ems_core::prelude::{Asset, AssetId, Envelope, Site};
+use ems_realtime::CemRequest;
 use s2_kit::message::Message;
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
@@ -341,7 +341,7 @@ pub fn router(surface: Surface) -> axum::Router {
 async fn upgrade(
     State(surface): State<Surface>,
     Path(asset): Path<String>,
-    caller: Option<axum::Extension<hems_service::auth::Authority>>,
+    caller: Option<axum::Extension<ems_service::auth::Authority>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let Ok(id) = AssetId::new(&asset) else {
@@ -373,7 +373,7 @@ async fn upgrade(
 /// session has queued goes out, one message comes in, the session is told about
 /// it, and whatever it produced goes out on the next turn. The **Resource
 /// Manager speaks first** — S2 makes its handshake the one that must carry a
-/// version list — so [`hems_flex::Session::open`] is called before anything is
+/// version list — so [`ems_flex::Session::open`] is called before anything is
 /// read.
 async fn serve(surface: Surface, asset: AssetId, mut socket: WebSocket) {
     let now = OffsetDateTime::now_utc();
@@ -471,16 +471,16 @@ async fn serve(surface: Surface, asset: AssetId, mut socket: WebSocket) {
 /// about *now*: a charge point with a car on it is a store and the same charge
 /// point without one is an envelope, and a manager that reconnects after the car
 /// left must be told about the charge point that is actually there.
-fn session_for(site: &Site, asset: &AssetId, now: OffsetDateTime) -> Option<hems_flex::Session> {
+fn session_for(site: &Site, asset: &AssetId, now: OffsetDateTime) -> Option<ems_flex::Session> {
     let modes = BTreeMap::new();
-    let context = hems_flex::DescribeContext::new(now, now + time::Duration::days(1), &modes);
-    hems_flex::sessions_for(site, &context)
+    let context = ems_flex::DescribeContext::new(now, now + time::Duration::days(1), &modes);
+    ems_flex::sessions_for(site, &context)
         .into_iter()
         .find(|s| s.asset() == asset)
 }
 
 /// What the household knows about one resource.
-async fn report_of(surface: &Surface, asset: &AssetId, now: OffsetDateTime) -> hems_flex::Report {
+async fn report_of(surface: &Surface, asset: &AssetId, now: OffsetDateTime) -> ems_flex::Report {
     let observed = {
         let mut registry = surface.registry.lock().await;
         registry.observe(None, now)
@@ -489,9 +489,9 @@ async fn report_of(surface: &Surface, asset: &AssetId, now: OffsetDateTime) -> h
         // A resource nobody metered reports nothing rather than reporting zero —
         // the same rule the guard applies to a silent device, and the same
         // reason: a manager told a battery is at 0 kWh will plan to fill it.
-        return hems_flex::Report::default();
+        return ems_flex::Report::default();
     };
-    hems_flex::Report {
+    ems_flex::Report {
         power: measurement.power,
         fill: fill_of(surface.site.asset(asset), measurement),
     }
@@ -506,13 +506,13 @@ async fn report_of(surface: &Surface, asset: &AssetId, now: OffsetDateTime) -> h
 ///
 /// **The charge point is not here**, and that is a consequence of how it is
 /// described rather than an omission. A wallbox becomes an S2 *store* only when
-/// a car with a departure time is on it ([`hems_flex::DescribeContext`]), and
+/// a car with a departure time is on it ([`ems_flex::DescribeContext`]), and
 /// this surface describes one without — so it is offered as a `PEBC` envelope,
 /// which a manager bounds rather than fills, and an envelope has no fill level
 /// to report. Offering it as a store would mean answering *how many
 /// kilowatt-hours is it holding*, and a state of charge with no pack size behind
 /// it cannot: the capacity is the planner's input, not the site's.
-fn fill_of(asset: Option<&Asset>, measurement: &hems_core::prelude::Measurement) -> Option<f64> {
+fn fill_of(asset: Option<&Asset>, measurement: &ems_core::prelude::Measurement) -> Option<f64> {
     match asset? {
         Asset::Battery(b) => Some(measurement.soc?.fraction() * b.capacity.kwh()),
         Asset::Dhw(t) => Some(t.stored_heat(measurement.temperature_c?).kwh()),
@@ -526,10 +526,10 @@ fn fill_of(asset: Option<&Asset>, measurement: &hems_core::prelude::Measurement)
 async fn apply(
     surface: &Surface,
     asset: &AssetId,
-    events: Vec<hems_flex::SessionEvent>,
+    events: Vec<ems_flex::SessionEvent>,
     now: OffsetDateTime,
 ) -> bool {
-    use hems_flex::{Instructed, SessionEvent};
+    use ems_flex::{Instructed, SessionEvent};
     let until = now + surface.settings.instruction_for();
     let mut closed = false;
     for event in events {
@@ -608,5 +608,5 @@ fn envelope_of(
 ) -> Option<Envelope> {
     let asset = site.asset(asset)?;
     let mode = asset.meta().phases.default_mode();
-    hems_flex::envelope_interval(instruction, asset, mode).ok()
+    ems_flex::envelope_interval(instruction, asset, mode).ok()
 }

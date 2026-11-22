@@ -1,6 +1,6 @@
 # hemsd
 
-The [hems](https://github.com/hupe1980/hems) edge daemon: the process that runs
+The [hems](https://github.com/hupe1980/ems) edge daemon: the process that runs
 on the box in the house.
 
 It is **one** process on purpose. The § 14a failsafe is a sixty-second heartbeat
@@ -73,7 +73,7 @@ ordinary `run` manages it with; `--run` starts that box in the same process.
 $ cargo run -p hemsd -- simulate --day winter
 ```
 
-The same guard, arbiter and planner against `hems-sim`'s hardware and a seeded
+The same guard, arbiter and planner against `ems-sim`'s hardware and a seeded
 weather the planner never sees, in seconds. `--json` for a machine, and:
 
 | Flag | What it does |
@@ -118,8 +118,8 @@ has not acknowledged is a backlog rather than a gap. A record that exists only
 once it has been uploaded is an intention with a network dependency, and the day
 a network operator asks about is the day the link was down.
 
-See the [architecture](https://hupe1980.github.io/hems/docs/architecture/) and
-[simulation](https://hupe1980.github.io/hems/docs/simulation/) pages.
+See the [architecture](https://hupe1980.github.io/ems/docs/architecture/) and
+[simulation](https://hupe1980.github.io/ems/docs/simulation/) pages.
 
 ## License
 

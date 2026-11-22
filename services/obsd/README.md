@@ -1,7 +1,7 @@
 # obsd
 
 What the fleet is actually doing, for
-[hems](https://github.com/hupe1980/hems).
+[hems](https://github.com/hupe1980/ems).
 
 Every box reports its day as a `DayKpis`. This service keeps them and answers the
 three questions a fleet operator has — and they are **not the same shape**, which

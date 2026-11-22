@@ -53,7 +53,7 @@ house is never worse off when the cloud is gone.
 
 ## One shell, and two decisions in it
 
-`hems-service` owns the forty lines every daemon has — configuration, logging, a
+`ems-service` owns the forty lines every daemon has — configuration, logging, a
 health surface, a bounded shutdown — and owns nothing about energy. Seven daemons
 written six times means those forty lines diverge in the direction that costs
 most, because the one that is wrong is the one whose readiness probe lies.

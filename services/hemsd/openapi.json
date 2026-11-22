@@ -59,7 +59,7 @@
             "type": "array"
           },
           "types": {
-            "description": "The types wanted; a trailing `*` matches a family (`de.hems.grid.*`).",
+            "description": "The types wanted; a trailing `*` matches a family (`de.ems.grid.*`).",
             "items": {
               "type": "string"
             },
@@ -432,7 +432,7 @@
         "type": "object"
       },
       "DeviationDetected": {
-        "description": "`de.hems.device.deviation.detected`: a device has not done what it was\nasked for ten minutes.",
+        "description": "`de.ems.device.deviation.detected`: a device has not done what it was\nasked for ten minutes.",
         "properties": {
           "assets": {
             "description": "The devices not following.",
@@ -636,7 +636,7 @@
         "type": "object"
       },
       "FailsafeEntered": {
-        "description": "`de.hems.grid.lpc.failsafe.entered`: the control box fell silent.",
+        "description": "`de.ems.grid.lpc.failsafe.entered`: the control box fell silent.",
         "properties": {
           "failsafe_w": {
             "description": "The failsafe ceiling now in force, W.",
@@ -683,7 +683,7 @@
         "type": "object"
       },
       "GoalAtRisk": {
-        "description": "`de.hems.site.goal.at-risk`: a goal turned tight or impossible.",
+        "description": "`de.ems.site.goal.at-risk`: a goal turned tight or impossible.",
         "properties": {
           "assets": {
             "description": "The devices whose goal it is.",
@@ -957,7 +957,7 @@
         "type": "object"
       },
       "LimitReceived": {
-        "description": "`de.hems.grid.lpc.limit.received`: the network operator reduced the\nconnection.",
+        "description": "`de.ems.grid.lpc.limit.received`: the network operator reduced the\nconnection.",
         "properties": {
           "limit_w": {
             "description": "The ceiling on the controllable devices, W.",
@@ -979,7 +979,7 @@
         "type": "object"
       },
       "LimitReleased": {
-        "description": "`de.hems.grid.lpc.limit.released`: the reduction ended.",
+        "description": "`de.ems.grid.lpc.limit.released`: the reduction ended.",
         "properties": {
           "lasted_s": {
             "description": "How long it lasted, seconds, where the box saw it begin.",
@@ -2291,7 +2291,7 @@
         "type": "object"
       },
       "TestPing": {
-        "description": "`de.hems.test.ping`: sent on request, to check a receiver.",
+        "description": "`de.ems.test.ping`: sent on request, to check a receiver.",
         "properties": {
           "test": {
             "description": "Always `true`; a receiver can tell a test from an event by its type.",
@@ -2535,7 +2535,7 @@
   "info": {
     "description": "The local API of a hems box. A request authenticated by the session cookie that changes anything must carry `Content-Type: application/json`.",
     "title": "hemsd",
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -5042,7 +5042,7 @@
             "session": []
           }
         ],
-        "summary": "Send it a de.hems.test.ping now"
+        "summary": "Send it a de.ems.test.ping now"
       }
     },
     "/v1/token": {
@@ -5184,7 +5184,7 @@
     }
   },
   "webhooks": {
-    "de.hems.device.deviation.detected": {
+    "de.ems.device.deviation.detected": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
         "requestBody": {
@@ -5215,7 +5215,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "const": "de.hems.device.deviation.detected"
+                    "const": "de.ems.device.deviation.detected"
                   }
                 },
                 "required": [
@@ -5240,7 +5240,7 @@
         "summary": "A device has not done what it was asked for ten minutes"
       }
     },
-    "de.hems.grid.lpc.failsafe.entered": {
+    "de.ems.grid.lpc.failsafe.entered": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
         "requestBody": {
@@ -5271,7 +5271,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "const": "de.hems.grid.lpc.failsafe.entered"
+                    "const": "de.ems.grid.lpc.failsafe.entered"
                   }
                 },
                 "required": [
@@ -5296,7 +5296,7 @@
         "summary": "The control box fell silent; the failsafe value applies"
       }
     },
-    "de.hems.grid.lpc.limit.received": {
+    "de.ems.grid.lpc.limit.received": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
         "requestBody": {
@@ -5327,7 +5327,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "const": "de.hems.grid.lpc.limit.received"
+                    "const": "de.ems.grid.lpc.limit.received"
                   }
                 },
                 "required": [
@@ -5352,7 +5352,7 @@
         "summary": "The network operator reduced the connection (§ 14a)"
       }
     },
-    "de.hems.grid.lpc.limit.released": {
+    "de.ems.grid.lpc.limit.released": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
         "requestBody": {
@@ -5383,7 +5383,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "const": "de.hems.grid.lpc.limit.released"
+                    "const": "de.ems.grid.lpc.limit.released"
                   }
                 },
                 "required": [
@@ -5408,7 +5408,7 @@
         "summary": "The reduction ended"
       }
     },
-    "de.hems.site.day.closed": {
+    "de.ems.site.day.closed": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
         "requestBody": {
@@ -5439,7 +5439,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "const": "de.hems.site.day.closed"
+                    "const": "de.ems.site.day.closed"
                   }
                 },
                 "required": [
@@ -5464,7 +5464,7 @@
         "summary": "A day closed: the receipt, in whole cents and Wh"
       }
     },
-    "de.hems.site.goal.at-risk": {
+    "de.ems.site.goal.at-risk": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
         "requestBody": {
@@ -5495,7 +5495,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "const": "de.hems.site.goal.at-risk"
+                    "const": "de.ems.site.goal.at-risk"
                   }
                 },
                 "required": [
@@ -5520,7 +5520,7 @@
         "summary": "A goal turned tight or impossible"
       }
     },
-    "de.hems.test.ping": {
+    "de.ems.test.ping": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
         "requestBody": {
@@ -5551,7 +5551,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "const": "de.hems.test.ping"
+                    "const": "de.ems.test.ping"
                   }
                 },
                 "required": [

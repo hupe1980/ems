@@ -7,7 +7,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
-use hems_service::{Release, SignedConfig};
+use ems_service::{Release, SignedConfig};
 use tokio::sync::RwLock;
 
 use crate::registry::{EnrolmentError, Registry};
@@ -22,7 +22,7 @@ pub struct Fleet {
     ///
     /// Separate from the enrolment credentials a *box* presents: those say
     /// "I am this household", and the roster is about every household.
-    operators: Arc<hems_service::Credentials>,
+    operators: Arc<ems_service::Credentials>,
     /// The half of the registry that has to outlive the process.
     ///
     /// A pool handle, cheap to clone, and shared — which is what lets a second
@@ -36,7 +36,7 @@ impl Fleet {
     pub fn new(
         registry: Arc<RwLock<Registry>>,
         releases: BTreeMap<String, Release>,
-        operators: hems_service::Credentials,
+        operators: ems_service::Credentials,
         store: Store,
     ) -> Self {
         Self {
@@ -115,7 +115,7 @@ async fn enrol(
 ///
 /// The box verifies it against the Ed25519 key it was **built** with, exactly as
 /// it verifies a release — so this endpoint being authenticated is a convenience
-/// and not the security property. See [`hems_service::SignedConfig`].
+/// and not the security property. See [`ems_service::SignedConfig`].
 async fn config(
     State(fleet): State<Fleet>,
     headers: HeaderMap,
@@ -207,7 +207,7 @@ async fn states(
     // box's own data: it says which households exist, which are running an old
     // build and which are unreachable right now. An operator's credential, or
     // nothing.
-    let token = hems_service::auth::bearer(
+    let token = ems_service::auth::bearer(
         headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok()),
@@ -216,7 +216,7 @@ async fn states(
     let authority = fleet
         .operators
         .authority_of(token)
-        .filter(hems_service::Authority::may_read_the_fleet)
+        .filter(ems_service::Authority::may_read_the_fleet)
         .ok_or(StatusCode::UNAUTHORIZED)?;
     // Scoped, so a shared deployment does not answer one tenant with another's
     // households. A single-tenant operator writes `tenant = "*"` and gets every

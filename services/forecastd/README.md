@@ -1,9 +1,9 @@
 # forecastd
 
-What the sky is going to do, for [hems](https://github.com/hupe1980/hems).
+What the sky is going to do, for [hems](https://github.com/hupe1980/ems).
 
-`hems-forecast::weather` parses ICON-D2 out of Open-Meteo and
-`hems-forecast::solar` turns irradiance into what a given array would make. Both
+`ems-forecast::weather` parses ICON-D2 out of Open-Meteo and
+`ems-forecast::solar` turns irradiance into what a given array would make. Both
 are pure functions. This is the process that fetches, caches and serves them.
 
 ## It serves weather, not a forecast
@@ -12,7 +12,7 @@ The distinction is the whole architecture. A weather model knows about the sky a
 knows nothing about the tree that shades the east string, the chimney, or the
 fact that this roof has not been cleaned since 2023.
 
-Turning modelled irradiance into a *forecast* is `hems-forecast::residual`'s job
+Turning modelled irradiance into a *forecast* is `ems-forecast::residual`'s job
 and it happens **on the box**, from that box's own metering — because the
 correction is a property of one roof and cannot be learned centrally without the
 meter that sees it. A fleet service that shipped finished production forecasts

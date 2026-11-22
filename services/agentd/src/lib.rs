@@ -22,7 +22,7 @@
 //!   [`advice::Advice`], so there is no path from an agent's answer into a
 //!   device;
 //! * a specialist's authority is derived by
-//!   [`hems_service::Authority::attenuate`], which refuses to widen, and
+//!   [`ems_service::Authority::attenuate`], which refuses to widen, and
 //!   [`advice::advisory`] is the only constructor — so no agent can hold a
 //!   capability that writes a household's record, and none can take the Data Act
 //!   export, which is a right of the *user*. Tests assert both.
@@ -121,12 +121,12 @@ mod tests {
         // The defaults describe a single-tenant deployment, which is the one a
         // `"*"` tenant is right for.
         let settings = Settings::default();
-        assert_eq!(settings.tenant, hems_service::auth::EVERY_TENANT);
+        assert_eq!(settings.tenant, ems_service::auth::EVERY_TENANT);
         // The shipped example, so one that has drifted from the struct it
         // documents fails the build rather than misleading an operator.
         let example: Settings =
             toml::from_str(include_str!("../agentd.example.toml")).expect("the example parses");
-        assert_eq!(example.tenant, hems_service::auth::EVERY_TENANT);
+        assert_eq!(example.tenant, ems_service::auth::EVERY_TENANT);
         assert_eq!(example.service.listen.port(), 7880);
 
         // …and the shape a shared deployment writes.

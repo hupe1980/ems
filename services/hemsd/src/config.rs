@@ -22,7 +22,7 @@
 //!
 //! # Everything has a default except the one thing that cannot have one
 //!
-//! `hems-service` reads a file, then the environment, then the defaults, and a
+//! `ems-service` reads a file, then the environment, then the defaults, and a
 //! file that is absent is a deployment nobody has customised rather than an
 //! error. Every field of [`SiteSettings`] therefore defaults to the reference
 //! household — the same house every figure in this project was measured on.
@@ -37,14 +37,14 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::asset::Programme;
-use hems_core::asset::{LegacyStatus, SteuVeExemption};
-use hems_core::prelude::{
+use ems_core::asset::Programme;
+use ems_core::asset::{LegacyStatus, SteuVeExemption};
+use ems_core::prelude::{
     BuildingClass, Current, Energy, GeoPoint, MaloId, MeloId, Para9Status, Power, Rc2, Site, Slot,
     Soc,
 };
-use hems_tariff::levies::Levies;
-use hems_tariff::tariff::{EnergyPrice, FeedIn, NetworkCharge, Tariff};
+use ems_tariff::levies::Levies;
+use ems_tariff::tariff::{EnergyPrice, FeedIn, NetworkCharge, Tariff};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +56,7 @@ use crate::site::{ConnectionConfig, Declared, HouseholdConfig, REFERENCE_ASSETS}
 pub struct Settings {
     /// The shell: where the health surface listens, how it logs, how long a
     /// shutdown may take.
-    pub service: hems_service::Settings,
+    pub service: ems_service::Settings,
     /// The house.
     pub site: SiteSettings,
     /// What the household pays and earns for a kilowatt-hour.
@@ -160,15 +160,15 @@ const fn default_dhw_t_max_c() -> f64 {
     60.0
 }
 
-impl AsMut<hems_service::Settings> for Settings {
-    /// The shell's own fields, so `hems_service::load` can let the environment
+impl AsMut<ems_service::Settings> for Settings {
+    /// The shell's own fields, so `ems_service::load` can let the environment
     /// override them.
     ///
     /// A daemon on a gateway box is configured from a file an installer edited
     /// and a daemon in a fleet from an orchestrator that only knows how to set
     /// environment variables. Both are true at once, so `HEMS_HEMSD_LISTEN`
     /// wins over the file — the file is what somebody wrote down last month.
-    fn as_mut(&mut self) -> &mut hems_service::Settings {
+    fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
     }
 }
@@ -281,14 +281,14 @@ impl RiskSettings {
     /// plan yet — the car is a *driver* away. A
     /// policy that could never fire would be a fifth name for the median.
     #[must_use]
-    pub fn model(self) -> hems_optimizer::Risk {
-        use hems_optimizer::Quantile;
+    pub fn model(self) -> ems_optimizer::Risk {
+        use ems_optimizer::Quantile;
         match self {
-            Self::Median => hems_optimizer::Risk::deterministic(),
-            Self::Expected => hems_optimizer::Risk::expected(),
-            Self::Hedged => hems_optimizer::Risk::hedged(),
+            Self::Median => ems_optimizer::Risk::deterministic(),
+            Self::Expected => ems_optimizer::Risk::expected(),
+            Self::Hedged => ems_optimizer::Risk::hedged(),
             // Dull *and* hungry: a household's bad day is the correlated one.
-            Self::Pessimistic => hems_optimizer::Risk::at_quantile(Quantile::P10, Quantile::P90),
+            Self::Pessimistic => ems_optimizer::Risk::at_quantile(Quantile::P10, Quantile::P90),
         }
     }
 }
@@ -327,8 +327,8 @@ pub struct Preferences {
 impl Preferences {
     /// These preferences as the optimiser's own type.
     #[must_use]
-    pub fn objective(&self) -> hems_optimizer::model::Objective {
-        hems_optimizer::model::Objective::cost()
+    pub fn objective(&self) -> ems_optimizer::model::Objective {
+        ems_optimizer::model::Objective::cost()
             .with_carbon_price(self.co2_eur_per_kg)
             .with_autarky_premium(self.autarky_eur_per_kwh)
     }
@@ -363,7 +363,7 @@ impl ControlSettings {
 /// is optimal for nobody, and nothing about the result looks wrong.
 ///
 /// Everything here is **net** ct/kWh, because that is how a German price sheet
-/// is written; `hems_tariff::Levies` adds the levies and the value-added tax.
+/// is written; `ems_tariff::Levies` adds the levies and the value-added tax.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct TariffSettings {
@@ -418,7 +418,7 @@ pub struct TariffSettings {
 ///
 /// Every field is optional. Left out, the box uses the figure the transmission
 /// system operators published for the year the quarter hour falls in
-/// (`hems_tariff::levies::PUBLISHED`) and, for the Konzessionsabgabe, the band
+/// (`ems_tariff::levies::PUBLISHED`) and, for the Konzessionsabgabe, the band
 /// of a municipality of 25 001 to 100 000 inhabitants. Set, a field replaces
 /// that figure in **every** year until it is removed — a price sheet is the
 /// authority for one customer, and it is rewritten each January.
@@ -505,7 +505,7 @@ impl TariffSettings {
     /// `site` is read for one thing only and it is the one a tariff cannot know:
     /// whether § 51 EEG has reached this plant, which turns on when its
     /// intelligent metering system was **fitted** and not on anything the
-    /// supplier agreed (`hems_grid::para9::para51_applies_from`).
+    /// supplier agreed (`ems_grid::para9::para51_applies_from`).
     #[must_use]
     pub fn tariff(&self, site: &Site, spot: BTreeMap<Slot, Decimal>) -> Tariff {
         let ct = |v: f64| Decimal::from_f64_retain(v).unwrap_or_default().round_dp(4);
@@ -532,7 +532,7 @@ impl TariffSettings {
                     arbeitspreis: ct(self.network_ct_per_kwh),
                     // 60 % off the working price, at a Marktlokation of its own
                     // — so 40 % remains, and the second metering point carries
-                    // its own annual charge. `hems_tariff::advisor` is what says
+                    // its own annual charge. `ems_tariff::advisor` is what says
                     // whether the trade pays for a given household.
                     remaining_share: Decimal::new(4, 1),
                     metering_eur_per_year: Decimal::new(25, 0),
@@ -575,14 +575,14 @@ impl TariffSettings {
                 FeedIn::eeg(ct(self.feed_in_ct_per_kwh))
             } else {
                 FeedIn {
-                    scheme: hems_tariff::tariff::Remuneration::None,
+                    scheme: ems_tariff::tariff::Remuneration::None,
                     para51_from: None,
                 }
             }
             .under_para51_from(
-                hems_grid::para9::GenerationProfile::of_site(site)
+                ems_grid::para9::GenerationProfile::of_site(site)
                     .as_ref()
-                    .and_then(hems_grid::para9::para51_applies_from),
+                    .and_then(ems_grid::para9::para51_applies_from),
             ),
             sharing: None,
             carbon_g_per_kwh: BTreeMap::new(),
@@ -601,7 +601,7 @@ impl TariffSettings {
 /// can *transcribe* it, and [`Modul3Settings`] is where. What makes that safe
 /// rather than a second way to be wrong is that the box **refuses to start** on
 /// a calendar that breaks the Anwendungshilfe: `run --check` runs
-/// `hems_grid::modul3::Modul3Calendar::assess` before a byte moves, and a
+/// `ems_grid::modul3::Modul3Calendar::assess` before a byte moves, and a
 /// household billed on a non-conformant calendar is a year of somebody's
 /// electricity priced against a tariff nobody may sell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -625,15 +625,15 @@ pub enum Modul {
 
 /// The network operator's Modul 3 calendar, as an installer transcribes it.
 ///
-/// The shape is [`hems_grid::modul3::Transcription`] — one transcription
+/// The shape is [`ems_grid::modul3::Transcription`] — one transcription
 /// format shared with `tariffd`'s curated per-Netzbetreiber catalogue, so a
 /// calendar copied out of a price sheet once is portable between a single box
 /// and a fleet. The Europe/Berlin calendar, the Bundesland's statutory
 /// holidays and the two awkward days of the year are `metering`'s
-/// (`hems_grid::modul3::Modul3Calendar`), so a Sunday is not a Hochtarif, the
+/// (`ems_grid::modul3::Modul3Calendar`), so a Sunday is not a Hochtarif, the
 /// repeated hour of the long October day is inside the same window twice, and
 /// the skipped hour of the short March day is inside none.
-pub type Modul3Settings = hems_grid::modul3::Transcription;
+pub type Modul3Settings = ems_grid::modul3::Transcription;
 
 /// Where the box asks for prices and weather.
 ///
@@ -745,7 +745,7 @@ pub struct SiteSettings {
     /// It matters because a load profile is indexed by day type and a public
     /// holiday counts as a Sunday: Fronleichnam is a working day in Berlin and
     /// is not in Bayern, so a box in the wrong Land learns the wrong Thursdays.
-    pub bundesland: hems_core::calendar::Bundesland,
+    pub bundesland: ems_core::calendar::Bundesland,
     /// The household's own annual consumption, kWh — **without** heat pump,
     /// car or battery: the *Haushaltsstrom* an ordinary household of this size
     /// uses.
@@ -890,7 +890,7 @@ impl Default for SiteSettings {
             battery_kwh: battery.kwh.kwh(),
             battery_kw: battery.power.kw(),
             reserve_soc: battery.reserve_soc.fraction(),
-            bundesland: hems_core::calendar::Bundesland::Be,
+            bundesland: ems_core::calendar::Bundesland::Be,
             household_kwh_per_year: None,
             battery_wear_eur_per_kwh: battery.wear_eur_per_kwh,
             fuse_a: reference.fuse.get(),
@@ -932,7 +932,7 @@ impl Default for SiteSettings {
 ///
 /// It is a **prior**, not a fact: the box identifies its own building from the
 /// household's own thermometer once it has watched a few excited days
-/// (`hems_forecast::building`). What the prior buys is the weeks before that,
+/// (`ems_forecast::building`). What the prior buys is the weeks before that,
 /// and the difference is not cosmetic — the fabric capacity decides whether
 /// pre-heating into a cheap hour pays at all, and it spans a factor of five
 /// across the classes.
@@ -1108,7 +1108,7 @@ impl Default for Para9Settings {
 impl From<Para9Status> for Para9Settings {
     fn from(p: Para9Status) -> Self {
         Self {
-            imsys_control_device: matches!(p.relief, hems_core::asset::CapRelief::ImsysWithControl),
+            imsys_control_device: matches!(p.relief, ems_core::asset::CapRelief::ImsysWithControl),
             imsys_since: p.imsys_since.map(iso_date),
             steckersolargeraet: p.steckersolargeraet,
             legacy_70_percent: p.legacy_70_percent,
@@ -1129,9 +1129,9 @@ impl Para9Settings {
             .transpose()?;
         Ok(Para9Status {
             relief: if self.imsys_control_device {
-                hems_core::asset::CapRelief::ImsysWithControl
+                ems_core::asset::CapRelief::ImsysWithControl
             } else {
-                hems_core::asset::CapRelief::None
+                ems_core::asset::CapRelief::None
             },
             imsys_since,
             steckersolargeraet: self.steckersolargeraet,
@@ -1489,7 +1489,7 @@ pub struct RegisterSettings {
     pub timeout_ms: u64,
     /// The map itself. At least one point, or the driver would poll nothing and
     /// report a device that is perfectly reachable and says nothing.
-    pub points: Vec<hems_drv::modbus::registers::Point>,
+    pub points: Vec<ems_drv::modbus::registers::Point>,
     /// The registers a command may write, if any.
     ///
     /// Empty by default, and a map with none is read-only — which is what every
@@ -1498,7 +1498,7 @@ pub struct RegisterSettings {
     /// serves and enumerates the raw values it may take, so nothing here is ever
     /// computed from a scale.
     #[serde(default)]
-    pub writes: Vec<hems_drv::modbus::registers::Write>,
+    pub writes: Vec<ems_drv::modbus::registers::Write>,
 }
 
 /// A heat-pump compressor on the household's own network, over EEBUS.
@@ -1566,7 +1566,7 @@ impl EebusEvSettings {
     /// `None` where the departure is not a time, or is beyond the horizon —
     /// which is a car that has all the time in the world and needs no deadline.
     #[must_use]
-    pub fn departure_slot(&self, horizon: hems_core::prelude::Horizon) -> Option<Slot> {
+    pub fn departure_slot(&self, horizon: ems_core::prelude::Horizon) -> Option<Slot> {
         let (hours, minutes) = self.departure.split_once(':')?;
         let hours: u32 = hours.trim().parse().ok()?;
         let minutes: u32 = minutes.trim().parse().ok()?;
@@ -1600,7 +1600,7 @@ impl EebusEvSettings {
 /// How a heat pump takes instructions, as a configuration file spells it.
 ///
 /// The domain has this enumeration too, in `snake_case` like everything else in
-/// `hems-core`; this file is `kebab-case` like everything else in a `hemsd`
+/// `ems-core`; this file is `kebab-case` like everything else in a `hemsd`
 /// configuration. One value written both ways in the same file is how an
 /// installer learns that a setting is fussy about something nobody documented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1623,7 +1623,7 @@ pub enum HeatPumpInterface {
     Compressor,
 }
 
-impl From<HeatPumpInterface> for hems_core::asset::HeatPumpControl {
+impl From<HeatPumpInterface> for ems_core::asset::HeatPumpControl {
     fn from(interface: HeatPumpInterface) -> Self {
         match interface {
             HeatPumpInterface::SgReady => Self::SgReady,
@@ -1634,13 +1634,13 @@ impl From<HeatPumpInterface> for hems_core::asset::HeatPumpControl {
     }
 }
 
-impl From<hems_core::asset::HeatPumpControl> for HeatPumpInterface {
-    fn from(control: hems_core::asset::HeatPumpControl) -> Self {
+impl From<ems_core::asset::HeatPumpControl> for HeatPumpInterface {
+    fn from(control: ems_core::asset::HeatPumpControl) -> Self {
         match control {
-            hems_core::asset::HeatPumpControl::SgReady => Self::SgReady,
-            hems_core::asset::HeatPumpControl::PowerCeiling => Self::PowerCeiling,
-            hems_core::asset::HeatPumpControl::OperationModes => Self::OperationModes,
-            hems_core::asset::HeatPumpControl::Compressor => Self::Compressor,
+            ems_core::asset::HeatPumpControl::SgReady => Self::SgReady,
+            ems_core::asset::HeatPumpControl::PowerCeiling => Self::PowerCeiling,
+            ems_core::asset::HeatPumpControl::OperationModes => Self::OperationModes,
+            ems_core::asset::HeatPumpControl::Compressor => Self::Compressor,
         }
     }
 }
@@ -1828,7 +1828,7 @@ mod tests {
             .assets
             .iter()
             .find_map(|a| match a {
-                hems_core::prelude::Asset::Pv(pv) => Some(pv),
+                ems_core::prelude::Asset::Pv(pv) => Some(pv),
                 _ => None,
             })
             .expect("a roof");
@@ -1839,8 +1839,8 @@ mod tests {
     #[test]
     fn a_bidirectional_wallbox_is_offered_as_a_producer() {
         // Three separate places read `Evse::bidirectional` — the envelope's
-        // floor in `hems_core::asset`, the roles in `hems_flex::map`, the
-        // discharge operation mode in `hems_flex::describe` — and each had a
+        // floor in `ems_core::asset`, the roles in `ems_flex::map`, the
+        // discharge operation mode in `ems_flex::describe` — and each had a
         // unit test for both branches. What nothing had was a way to *reach* the
         // true one: the daemon wrote `bidirectional: false` into every wallbox
         // in the country and no setting said otherwise, so a V2H household was
@@ -1861,7 +1861,7 @@ mod tests {
                 .assets
                 .iter()
                 .find_map(|a| match a {
-                    hems_core::prelude::Asset::Evse(e) => Some(e.clone()),
+                    ems_core::prelude::Asset::Evse(e) => Some(e.clone()),
                     _ => None,
                 })
                 .expect("a wallbox")
@@ -1873,21 +1873,20 @@ mod tests {
         // The roles. A manager told only `EnergyConsumer` has not been told the
         // wallbox can give anything back.
         assert!(
-            hems_flex::map::roles_for(&hems_core::prelude::Asset::Evse(v2h.clone()))
+            ems_flex::map::roles_for(&ems_core::prelude::Asset::Evse(v2h.clone()))
                 .contains(&s2_kit::types::common::RoleType::EnergyProducer)
         );
         assert!(
-            !hems_flex::map::roles_for(&hems_core::prelude::Asset::Evse(ordinary.clone()))
+            !ems_flex::map::roles_for(&ems_core::prelude::Asset::Evse(ordinary.clone()))
                 .contains(&s2_kit::types::common::RoleType::EnergyProducer)
         );
 
         // The envelope. The floor is what the arbiter is allowed to command, and
         // an ordinary wallbox's is zero however willing the plan is.
-        let floor = |e: &hems_core::prelude::Evse| {
-            hems_core::prelude::Asset::Evse(e.clone()).ratings().floor
-        };
-        assert!(floor(&v2h) < hems_core::prelude::Power::ZERO);
-        assert_eq!(floor(&ordinary), hems_core::prelude::Power::ZERO);
+        let floor =
+            |e: &ems_core::prelude::Evse| ems_core::prelude::Asset::Evse(e.clone()).ratings().floor;
+        assert!(floor(&v2h) < ems_core::prelude::Power::ZERO);
+        assert_eq!(floor(&ordinary), ems_core::prelude::Power::ZERO);
     }
 
     #[test]
@@ -1913,7 +1912,7 @@ mod tests {
         let limit = |s: &SiteSettings| {
             let household = crate::site::Household::build(&s.household().expect("a household"))
                 .expect("a site");
-            hems_grid::para9::GenerationProfile::of_site(&household.site)
+            ems_grid::para9::GenerationProfile::of_site(&household.site)
                 .expect("a roof")
                 .statutory_limit()
         };
@@ -1949,13 +1948,13 @@ mod tests {
             .and_then(|id| household.site.asset(id))
             .expect("a heat pump");
         assert!(matches!(
-            hems_grid::para14a::participation(
+            ems_grid::para14a::participation(
                 unit.meta().commissioned_at,
                 unit.meta().steuve_exemption,
                 unit.meta().legacy_status,
                 unit.meta().switched_voluntarily,
             ),
-            hems_grid::para14a::Participation::Legacy { .. }
+            ems_grid::para14a::Participation::Legacy { .. }
         ));
     }
 
@@ -1990,11 +1989,11 @@ mod tests {
             .expect("a site");
         assert_eq!(
             household.site.grid.import_ceiling(),
-            hems_core::prelude::Power::from_kw(14.0)
+            ems_core::prelude::Power::from_kw(14.0)
         );
         // …and it is deliberately *not* applied to export: an agreement about
         // how much a household may draw is not a feed-in limitation.
-        assert!(household.site.grid.export_ceiling() > hems_core::prelude::Power::from_kw(20.0));
+        assert!(household.site.grid.export_ceiling() > ems_core::prelude::Power::from_kw(20.0));
     }
 
     #[test]

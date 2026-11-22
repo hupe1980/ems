@@ -12,17 +12,17 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::prelude::*;
-use hems_forecast::{ArrayModel, Band, Calibration};
-use hems_grid::evidence::{EvidenceRecorder, Observation};
-use hems_grid::mispel::QuarterHour as MispelQuarterHour;
-use hems_grid::para14a::ControlMode;
-use hems_optimizer::model::{BatteryModel, DhwModel, HeatPumpModel, Problem, ThermalModel};
-use hems_optimizer::solve::solve;
-use hems_realtime::arbiter::{Arbiter, ArbiterConfig, Tick};
-use hems_realtime::guard::{GridLimits, SiteState};
-use hems_sim::{BatterySim, BuildingSim, EvseSim, PvSim, SteuerboxSim, TankSim, VehicleSim};
-use hems_tariff::PriceStack;
+use ems_core::prelude::*;
+use ems_forecast::{ArrayModel, Band, Calibration};
+use ems_grid::evidence::{EvidenceRecorder, Observation};
+use ems_grid::mispel::QuarterHour as MispelQuarterHour;
+use ems_grid::para14a::ControlMode;
+use ems_optimizer::model::{BatteryModel, DhwModel, HeatPumpModel, Problem, ThermalModel};
+use ems_optimizer::solve::solve;
+use ems_realtime::arbiter::{Arbiter, ArbiterConfig, Tick};
+use ems_realtime::guard::{GridLimits, SiteState};
+use ems_sim::{BatterySim, BuildingSim, EvseSim, PvSim, SteuerboxSim, TankSim, VehicleSim};
+use ems_tariff::PriceStack;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use time::{Duration, OffsetDateTime};
@@ -114,7 +114,7 @@ pub const CONTROL_PERIOD: Duration = Duration::minutes(1);
 /// north.
 ///
 /// Due south, like its roof. It is the plane the building's solar aperture is
-/// driven with (`hems_core::thermal::Rc2::solar_aperture_m2`), and it is a
+/// driven with (`ems_core::thermal::Rc2::solar_aperture_m2`), and it is a
 /// constant here for the same reason the roof's tilt is read from the site model
 /// rather than repeated: the simulator and the plan must not be able to disagree
 /// about which way the house is pointing.
@@ -138,8 +138,8 @@ const REPLAN_PERIOD: Duration = Duration::minutes(15);
 /// Half an hour each way, which is [`HeatPumpModel::min_on_slots`]'s default of
 /// two slots — the planner and the house have to describe **one** machine, or
 /// the day is measuring the gap between two models rather than the controller.
-fn compressor_sim() -> hems_sim::CompressorSim {
-    hems_sim::CompressorSim::new(Duration::minutes(30), Duration::minutes(30))
+fn compressor_sim() -> ems_sim::CompressorSim {
+    ems_sim::CompressorSim::new(Duration::minutes(30), Duration::minutes(30))
 }
 
 /// What reaches the battery when charging on one conductor.
@@ -196,7 +196,7 @@ pub struct Scenario {
     /// difference between planning against one median and planning against the
     /// three futures the forecast already carries is a *result*, and a result
     /// nobody can reproduce by flipping one field is a claim.
-    pub risk: hems_optimizer::Risk,
+    pub risk: ems_optimizer::Risk,
     /// Whether to plan against three futures on the days the household has
     /// something at stake.
     ///
@@ -221,7 +221,7 @@ pub struct Scenario {
     /// car is tight is a decision somebody can make from the table it prints,
     /// and a longer sweep is what would make it a default.
     ///
-    /// [`EvSession::tightness`]: hems_optimizer::EvSession::tightness
+    /// [`EvSession::tightness`]: ems_optimizer::EvSession::tightness
     pub adaptive_risk: bool,
     /// How many days of metering the box has behind it when the day opens.
     ///
@@ -251,13 +251,13 @@ pub struct Scenario {
     pub per_asset_weights: bool,
     /// What this household will pay to avoid something other than money.
     ///
-    /// [`hems_optimizer::model::Objective::cost`] on every reference day, so
+    /// [`ems_optimizer::model::Objective::cost`] on every reference day, so
     /// every figure in this
     /// workspace is the plain economic plan. It is here so that a carbon price
     /// and an autarky premium can be **measured** rather than merely settable:
     /// both are terms the solver has always read and nothing could switch on, so
     /// nobody knew what either was worth or what it cost.
-    pub objective: hems_optimizer::model::Objective,
+    pub objective: ems_optimizer::model::Objective,
     /// The § 42c energy-sharing community this household belongs to, if any.
     ///
     /// A named comparison, like `risk` and `per_asset_weights`: the difference
@@ -380,10 +380,10 @@ impl EvPlan {
 /// for the most relief the Festlegung allows commands exactly this, which is
 /// also the sharpest honest test of the household's response.
 fn lawful_minimum(config: &HouseholdConfig, date: time::Date) -> Power {
-    Household::build(config).map_or(hems_grid::para14a::MINDESTLEISTUNG, |h| {
-        hems_grid::para14a::minimum_power(
-            &hems_grid::classify_on(&h.site.assets, date),
-            hems_grid::para14a::ControlMode::Ems,
+    Household::build(config).map_or(ems_grid::para14a::MINDESTLEISTUNG, |h| {
+        ems_grid::para14a::minimum_power(
+            &ems_grid::classify_on(&h.site.assets, date),
+            ems_grid::para14a::ControlMode::Ems,
         )
     })
 }
@@ -412,12 +412,12 @@ impl Scenario {
             per_asset_weights: true,
             // Every reference figure in this workspace is the plain economic
             // plan; a preference is a comparison to ask for by name.
-            objective: hems_optimizer::model::Objective::cost(),
+            objective: ems_optimizer::model::Objective::cost(),
             prices_ct: winter_prices(),
             // Home at teatime, gone by seven in the morning with 20 kWh more in
             // it than it arrived with — so the plan has to find the cheap hours
             // of the night *and* work around the § 14a reduction on the way.
-            risk: hems_optimizer::Risk::default(),
+            risk: ems_optimizer::Risk::default(),
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
@@ -451,7 +451,7 @@ impl Scenario {
     pub fn summer_without_a_planner(config: HouseholdConfig) -> Self {
         Self {
             planner: false,
-            risk: hems_optimizer::Risk::default(),
+            risk: ems_optimizer::Risk::default(),
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
@@ -492,7 +492,7 @@ impl Scenario {
     #[must_use]
     pub fn autumn_without_a_planner(config: HouseholdConfig) -> Self {
         Self {
-            risk: hems_optimizer::Risk::default(),
+            risk: ems_optimizer::Risk::default(),
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
@@ -542,7 +542,7 @@ impl Scenario {
             // The arrival is what makes this scenario the one it says it is:
             // with the car on the cable from midnight the plan simply charges it
             // in the cheap hours of the night and never meets the reduction.
-            risk: hems_optimizer::Risk::default(),
+            risk: ems_optimizer::Risk::default(),
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
@@ -631,9 +631,9 @@ impl Scenario {
             per_asset_weights: true,
             // Every reference figure in this workspace is the plain economic
             // plan; a preference is a comparison to ask for by name.
-            objective: hems_optimizer::model::Objective::cost(),
+            objective: ems_optimizer::model::Objective::cost(),
             prices_ct: summer_prices(),
-            risk: hems_optimizer::Risk::default(),
+            risk: ems_optimizer::Risk::default(),
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
@@ -665,7 +665,7 @@ impl Scenario {
     #[must_use]
     pub fn summer_capped(config: &HouseholdConfig) -> Self {
         Self {
-            risk: hems_optimizer::Risk::default(),
+            risk: ems_optimizer::Risk::default(),
             community: None,
             adaptive_risk: false,
             warm_up_days: crate::forecasting::WARM_UP_DAYS,
@@ -730,7 +730,7 @@ impl Scenario {
     /// The instant the day starts, in UTC.
     #[must_use]
     pub fn start(&self) -> OffsetDateTime {
-        hems_core::calendar::day_start_utc(self.date)
+        ems_core::calendar::day_start_utc(self.date)
     }
 
     /// The same day, moved forward in whole weeks until § 42c allocation is a
@@ -751,7 +751,7 @@ impl Scenario {
     /// the credit (D179).
     #[must_use]
     pub fn on_a_day_sharing_reaches(mut self) -> Self {
-        while !hems_grid::sharing::applies_on(self.date) {
+        while !ems_grid::sharing::applies_on(self.date) {
             self.date += time::Duration::weeks(52);
         }
         self
@@ -761,27 +761,27 @@ impl Scenario {
 /// One command from a simulated Steuerbox, applied to the machine.
 ///
 /// The whole of what the simulator owes the state machine, and the reason the
-/// two can be separate crates at all: `hems-sim` simulates the *operator's* box
+/// two can be separate crates at all: `ems-sim` simulates the *operator's* box
 /// and says what it put on the wire; what a Controllable System makes of a write
-/// is the Controllable System's business. `hems-drv`'s own
+/// is the Controllable System's business. `ems-drv`'s own
 /// `steuerbox_against_the_machine.rs` makes the same translation, because it
 /// drives the same pair (D186).
 fn apply_to_the_machine(
-    lpc: &mut hems_drv::eebus::Lpc,
-    command: hems_sim::Command,
+    lpc: &mut ems_drv::eebus::Lpc,
+    command: ems_sim::Command,
     now: OffsetDateTime,
 ) {
-    use hems_drv::eebus::LimitWrite;
+    use ems_drv::eebus::LimitWrite;
     match command {
-        hems_sim::Command::Heartbeat => lpc.on_heartbeat(now),
-        hems_sim::Command::Limit { value, duration } => {
+        ems_sim::Command::Heartbeat => lpc.on_heartbeat(now),
+        ems_sim::Command::Limit { value, duration } => {
             let write = match duration.and_then(|d| std::time::Duration::try_from(d).ok()) {
                 Some(d) => LimitWrite::active_for(value.get(), d),
                 None => LimitWrite::active(value.get()),
             };
             lpc.on_limit(&write, now);
         }
-        hems_sim::Command::Release => {
+        ems_sim::Command::Release => {
             lpc.on_limit(&LimitWrite::deactivated(), now);
         }
     }
@@ -1175,15 +1175,15 @@ pub struct DayResult {
     /// Minutes in which the arbiter had no plan it was willing to follow.
     ///
     /// Should be zero for a box whose planner is running: a plan older than
-    /// [`hems_realtime::ArbiterConfig::max_plan_age`] is worse than none, so the
+    /// [`ems_realtime::ArbiterConfig::max_plan_age`] is worse than none, so the
     /// arbiter drops it — and if the planner re-solves less often than that
     /// tolerance, the house runs on the fallback for part of every cycle without
     /// anything saying so.
     pub minutes_without_a_plan: i64,
     /// Control ticks in which a device could not hold the command it was given.
     ///
-    /// See [`hems_core::report::DayKpis::clipped_ticks`] — the seam between the
-    /// arbiter and the hardware, which `hems_device::realisable` closes
+    /// See [`ems_core::report::DayKpis::clipped_ticks`] — the seam between the
+    /// arbiter and the hardware, which `ems_device::realisable` closes
     /// correctly and silently.
     pub clipped_ticks: i64,
     /// The energy the hardware refused over those ticks, kWh.
@@ -1215,7 +1215,7 @@ pub struct DayResult {
     ///
     /// Below one on any real roof: soiling, shading, mismatch and module
     /// tolerance. The simulator applies it and never tells the model, so this is
-    /// [`hems_forecast::ResidualModel`] finding it the way it would in the
+    /// [`ems_forecast::ResidualModel`] finding it the way it would in the
     /// field — and a figure stuck at exactly 1,00 means the corrector is not
     /// being fed.
     pub roof_correction: f64,
@@ -1223,7 +1223,7 @@ pub struct DayResult {
     pub history_days: usize,
     /// What the load forecast leans on where the household's own history is
     /// thin: BDEW's H25, and how it was scaled. `None` only with no prior.
-    pub load_prior: Option<hems_forecast::PriorBasis>,
+    pub load_prior: Option<ems_forecast::PriorBasis>,
     /// The share of the day's plan the prior still had a say in, 0–1. Zero on
     /// a box that has learned its household; one on its first evening.
     pub load_prior_share: f64,
@@ -1233,7 +1233,7 @@ pub struct DayResult {
     /// and what would have to move if the monitor stopped working: a cold box
     /// answers `Learning { days: 0 }` and a warmed one `Healthy`, so the figure
     /// is not structurally constant across the reference days (R20, D199).
-    pub roof_health: hems_forecast::Health,
+    pub roof_health: ems_forecast::Health,
     /// The largest **quarter-hour average** power that left the connection
     /// point, kW.
     ///
@@ -1273,7 +1273,7 @@ pub struct DayResult {
     /// module, kilowatt-hours per year.
     ///
     /// `None` where the working price is already zero, or where the day carries
-    /// no consumption to price. This is [`hems_tariff::advisor`] answering the
+    /// no consumption to price. This is [`ems_tariff::advisor`] answering the
     /// question a household actually asks and no supplier can answer
     /// neutrally — *is the module we are on the right one?* — as a **threshold**
     /// rather than as a projection. One day is not a year, and a comparison that
@@ -1340,7 +1340,7 @@ pub struct DayResult {
     /// a KPI table need. What a **network operator** asks for is the record
     /// itself, and `[A1 7.3]` keeps it for two years — so the day has to carry
     /// it out, which is what `--store` writes down.
-    pub evidence: Vec<hems_grid::ControlEvent>,
+    pub evidence: Vec<ems_grid::ControlEvent>,
 }
 
 impl DayResult {
@@ -1355,12 +1355,12 @@ impl DayResult {
     /// The narrow record `obsd` aggregates — a dozen numbers rather than every
     /// field of this struct, because a fleet service coupled to an edge daemon's
     /// internal report is a fleet service that cannot be deployed independently
-    /// of it. Both sides share [`hems_core::report::DayKpis`], so a renamed
+    /// of it. Both sides share [`ems_core::report::DayKpis`], so a renamed
     /// field is a compile error rather than a dashboard that reads zero for six
     /// weeks.
     #[must_use]
-    pub fn kpis(&self, site: &str, date: time::Date) -> hems_core::report::DayKpis {
-        hems_core::report::DayKpis {
+    pub fn kpis(&self, site: &str, date: time::Date) -> ems_core::report::DayKpis {
+        ems_core::report::DayKpis {
             site: site.to_owned(),
             date,
             imported_kwh: self.imported_kwh,
@@ -1368,7 +1368,7 @@ impl DayResult {
             produced_kwh: self.produced_kwh,
             self_sufficiency: self.self_sufficiency,
             shared_kwh: self.shared_kwh,
-            economics: Some(hems_core::report::Economics {
+            economics: Some(ems_core::report::Economics {
                 cost: self.cost,
                 // The simulator has one because it can re-run the day as an
                 // unmanaged house. A box on a wall cannot (D116).
@@ -1382,7 +1382,7 @@ impl DayResult {
             clipped_kwh: self.clipped_kwh,
             control_events: self.control_events,
             below_minimum_commanded: self.commanded_below_minimum,
-            forecast: Some(hems_core::report::ForecastScores {
+            forecast: Some(ems_core::report::ForecastScores {
                 pv_coverage: self.pv_forecast.coverage,
 
                 pv_crps: self.pv_forecast.crps,
@@ -1515,9 +1515,9 @@ pub struct Frame {
     /// The plan in force, as an index into [`Recording::plans`].
     pub plan: Option<usize>,
     /// The car as the planner would have seen it, with a full target.
-    pub car: Option<hems_optimizer::model::EvSession>,
+    pub car: Option<ems_optimizer::model::EvSession>,
     /// The tank as the planner would have seen it.
-    pub tank: Option<hems_optimizer::model::DhwModel>,
+    pub tank: Option<ems_optimizer::model::DhwModel>,
 }
 
 /// A whole simulated day, minute by minute.
@@ -1567,14 +1567,14 @@ fn run_with(
     // allocation nobody would perform and credit the household for it. Two of
     // these days did, and reported it, because `sharing::applies_on` existed and
     // was called by nothing (D179).
-    if scenario.community.is_some() && !hems_grid::sharing::applies_on(scenario.date) {
+    if scenario.community.is_some() && !ems_grid::sharing::applies_on(scenario.date) {
         anyhow::bail!(
             "this household is in a § 42c community on {}, and a network operator's \
              duty to allocate begins on {} — `Scenario::on_a_day_sharing_reaches` \
              moves the day forward in whole weeks, so the weekday and the season \
              survive",
             scenario.date,
-            hems_grid::sharing::SHARING_START,
+            ems_grid::sharing::SHARING_START,
         );
     }
     let household = Household::build(&scenario.config)?;
@@ -1629,7 +1629,7 @@ fn run_with(
         .config
         .dishwasher
         .clone()
-        .map(hems_sim::ApplianceSim::new);
+        .map(ems_sim::ApplianceSim::new);
     let mut battery = BatterySim::new(house.battery.kwh, house.battery.power);
     // Thirty per cent, or the backup reserve if the household asked for more: a
     // house that boots below its own promise is a real case, but it is not the
@@ -1663,22 +1663,22 @@ fn run_with(
     // — on nothing more than a lost heartbeat — is a configuration fault dressed
     // up as caution. `[A1 4.5.2]`'s minimum grows with the number of
     // controllable devices, and this household is owed 10,5 kW.
-    let failsafe_limit = hems_grid::para14a::minimum_power(
-        &hems_grid::classify_at(&site.assets, start),
-        hems_grid::para14a::ControlMode::Ems,
+    let failsafe_limit = ems_grid::para14a::minimum_power(
+        &ems_grid::classify_at(&site.assets, start),
+        ems_grid::para14a::ControlMode::Ems,
     )
-    .max(hems_grid::para14a::MINDESTLEISTUNG);
+    .max(ems_grid::para14a::MINDESTLEISTUNG);
     // **The machine a real box runs**, driven directly rather than through a
-    // socket. It was `hems_grid::lpc::LpcMachine` — a second implementation of
+    // socket. It was `ems_grid::lpc::LpcMachine` — a second implementation of
     // the same certifiable state machine — so every § 14a figure the reference
     // days produced came from a machine no household has (D186).
-    let mut lpc = hems_drv::eebus::Lpc::new(
+    let mut lpc = ems_drv::eebus::Lpc::new(
         household.grid_meter.clone(),
-        hems_drv::eebus::Use::Lpc,
+        ems_drv::eebus::Use::Lpc,
         failsafe_limit,
         // The Failsafe Duration Minimum `[LPC-022]` allows, from the crate that
         // enforces the range rather than from a constant restated here.
-        *hems_drv::eebus::FAILSAFE_DURATION_RANGE.start(),
+        *ems_drv::eebus::FAILSAFE_DURATION_RANGE.start(),
         start,
     );
 
@@ -1687,7 +1687,7 @@ fn run_with(
     // § 42c Abs. 3 Nr. 3: the community's own price replaces the supplier's
     // energy component on the allocated kilowatt-hours, and nothing else.
     if let Some(c) = scenario.community {
-        tariff = tariff.in_community(hems_tariff::tariff::SharingTariff::at(c.price_ct));
+        tariff = tariff.in_community(ems_tariff::tariff::SharingTariff::at(c.price_ct));
     }
     let prices = PriceStack::build(&tariff, day);
     // The § 51 EEG hours this day actually contained. A property of the tariff
@@ -1760,9 +1760,9 @@ fn run_with(
     // bound on a state is only a bound on a rate once you know how long the rate
     // is held for.
     let arbiter = Arbiter::new(ArbiterConfig {
-        guard: hems_realtime::GuardConfig {
+        guard: ems_realtime::GuardConfig {
             tick_period: CONTROL_PERIOD,
-            ..hems_realtime::GuardConfig::default()
+            ..ems_realtime::GuardConfig::default()
         },
         ..ArbiterConfig::default()
     });
@@ -1773,7 +1773,7 @@ fn run_with(
     let mut previous: BTreeMap<AssetId, Power> = BTreeMap::new();
     // The previous plan's discrete decisions, with the slot they were made in so
     // the next solve can shift them onto its own horizon.
-    let mut last_commitment: Option<(Slot, hems_optimizer::Commitment)> = None;
+    let mut last_commitment: Option<(Slot, ems_optimizer::Commitment)> = None;
     // Production and load accumulated over the quarter hour in progress, so the
     // forecast can be scored against what a meter would have registered rather
     // than against an instant.
@@ -1789,7 +1789,7 @@ fn run_with(
         std::collections::BTreeMap::new();
     // The arbiter's conductor policy, carried from tick to tick the same way the
     // previous setpoints are.
-    let mut phase_state: BTreeMap<AssetId, hems_realtime::PhaseState> = BTreeMap::new();
+    let mut phase_state: BTreeMap<AssetId, ems_realtime::PhaseState> = BTreeMap::new();
     let overrides = BTreeMap::new();
 
     let stores_open = stored_at_start(&battery, &tank);
@@ -1855,7 +1855,7 @@ fn run_with(
         // is the only way a real box gets it too, and a simulator that fed it in
         // would be testing a path production does not have.
         result.feed_in_ceiling_kw =
-            hems_grid::para9::site_feed_in_ceiling(site, None, None).map(|(p, _)| p.kw());
+            ems_grid::para9::site_feed_in_ceiling(site, None, None).map(|(p, _)| p.kw());
         let limits = GridLimits {
             steuve_ceiling: ceiling,
             steuve_since: ceiling_since,
@@ -1886,7 +1886,7 @@ fn run_with(
             let horizon_prices = PriceStack::build(&tariff, horizon);
             let horizon_draw: Vec<f64> = horizon
                 .slots()
-                .map(|s| hems_forecast::hotwater::draw(s).get())
+                .map(|s| ems_forecast::hotwater::draw(s).get())
                 .collect();
             // What the community expects to be able to allocate this member, slot
             // by slot. Zero-length where the household is not in one, which is
@@ -1950,7 +1950,7 @@ fn run_with(
                             compressor: building
                                 .compressor
                                 .as_ref()
-                                .map(hems_sim::CompressorSim::state)
+                                .map(ems_sim::CompressorSim::state)
                                 .unwrap_or_default(),
                             max_cooling: house.heat_pump.cooling_electrical.unwrap_or(Power::ZERO),
                             ..HeatPumpModel::modulating(house.heat_pump.power)
@@ -1996,7 +1996,7 @@ fn run_with(
                 let earliest = Slot::containing((start + from).max(now));
                 let deadline = Slot::containing(start + until);
                 if deadline > earliest {
-                    problem = problem.with_shiftable(hems_optimizer::ShiftableRun {
+                    problem = problem.with_shiftable(ems_optimizer::ShiftableRun {
                         programme: sim.programme.clone(),
                         earliest: Some(earliest),
                         deadline: Some(deadline),
@@ -2056,7 +2056,7 @@ fn run_with(
                     needed > Energy::ZERO
                 };
                 if departure > Slot::containing(now) && worth_planning {
-                    problem = problem.with_ev(hems_optimizer::model::EvSession {
+                    problem = problem.with_ev(ems_optimizer::model::EvSession {
                         energy_now,
                         energy_target,
                         capacity: vehicle.capacity,
@@ -2112,7 +2112,7 @@ fn run_with(
                     .ev
                     .is_some_and(|e| e.tightness(Slot::containing(now)) > TIGHT_SESSION)
             {
-                problem.risk = hems_optimizer::Risk::hedged();
+                problem.risk = ems_optimizer::Risk::hedged();
                 result.risk_re_solves += 1;
             }
             match solve(&problem, &household.names, now) {
@@ -2171,7 +2171,7 @@ fn run_with(
                             .plan
                             .expected_cost
                             .as_ref()
-                            .map(hems_core::prelude::CostBreakdown::billed_eur);
+                            .map(ems_core::prelude::CostBreakdown::billed_eur);
                     }
                     plan = Some(solved.plan);
                 }
@@ -2337,7 +2337,7 @@ fn run_with(
             // days measure *this* box's planner against a household, and a second
             // optimiser in the loop would be measuring two things at once. The
             // arbiter's S2 voice is tested where it is decided, in
-            // `hems-realtime`, and end to end in `tests/managed_by_a_cem.rs`.
+            // `ems-realtime`, and end to end in `tests/managed_by_a_cem.rs`.
             cem: &BTreeMap::new(),
             previous: &previous,
             delivered: &delivered,
@@ -2399,7 +2399,7 @@ fn run_with(
             .get(&ids.heat_pump)
             .copied()
             .unwrap_or_default()
-            == hems_core::prelude::ThermalMode::Cool;
+            == ems_core::prelude::ThermalMode::Cool;
         let hp_actual = if cooling {
             building.step_cooling(commanded_hp, outdoor_now, window_now, step)
         } else {
@@ -2411,7 +2411,7 @@ fn run_with(
                 .get(&ids.dhw)
                 .copied()
                 .unwrap_or(Power::ZERO),
-            weather.draw_in(slot, hems_forecast::hotwater::draw(slot)) * (step / SLOT),
+            weather.draw_in(slot, ems_forecast::hotwater::draw(slot)) * (step / SLOT),
             step,
         );
         previous.insert(ids.battery.clone(), battery_actual);
@@ -2656,7 +2656,7 @@ fn run_with(
                 // overstates the surplus available to cover the controllable
                 // devices, which understates the netzwirksamer Leistungsbezug —
                 // the one direction a compliance record may never be wrong in.
-                netzwirksam: hems_grid::netzwirksamer_leistungsbezug(
+                netzwirksam: ems_grid::netzwirksamer_leistungsbezug(
                     steuve_consumption,
                     load_now.inflow()
                         + appliance_now.inflow()
@@ -2701,7 +2701,7 @@ fn run_with(
             readings.insert(ids.dhw.clone(), (Some(dhw_actual), None));
             readings.insert(ids.pv.clone(), (Some(pv_now), None));
             let car = evse.vehicle.as_ref().filter(|_| plugged_in).map(|v| {
-                hems_optimizer::model::EvSession {
+                ems_optimizer::model::EvSession {
                     energy_now: v.stored,
                     energy_target: v.capacity,
                     capacity: v.capacity,
@@ -2783,7 +2783,7 @@ fn run_with(
         .iter()
         .filter(|e| e.rule == GuardRule::Lpc)
         .find_map(|e| e.acted)
-        .map(|a| a == hems_grid::Action::Commanded);
+        .map(|a| a == ems_grid::Action::Commanded);
     // The compliance verdict now comes from the record itself rather than from a
     // separate running check — one source, and it is the one an operator would
     // be asked to produce.
@@ -2797,16 +2797,16 @@ fn run_with(
         .closed()
         .iter()
         .filter(|e| e.rule == GuardRule::Lpc)
-        .any(hems_grid::ControlEvent::below_minimum);
+        .any(ems_grid::ControlEvent::below_minimum);
     result.failsafe_below_minimum = evidence
         .closed()
         .iter()
         .filter(|e| e.rule != GuardRule::Lpc)
-        .any(hems_grid::ControlEvent::below_minimum);
+        .any(ems_grid::ControlEvent::below_minimum);
     result.worst_overshoot_w = evidence
         .closed()
         .iter()
-        .filter_map(hems_grid::ControlEvent::worst_overshoot)
+        .filter_map(ems_grid::ControlEvent::worst_overshoot)
         .map(Power::get)
         .fold(0.0, f64::max);
     // The record itself, not only the numbers taken off it. `[A1 7.3]` keeps it
@@ -2820,7 +2820,7 @@ fn run_with(
     let mean_import = prices
         .slots
         .iter()
-        .map(hems_tariff::SlotPrice::import_f64)
+        .map(ems_tariff::SlotPrice::import_f64)
         .sum::<f64>()
         / prices.slots.len().max(1) as f64;
     result.cost.stored_eur =
@@ -2922,13 +2922,13 @@ fn run_with(
         .roof
         .ratio_at(Slot::containing(start + Duration::hours(12)));
     result.history_days = learned.days;
-    result.load_prior = prior.as_ref().map(hems_forecast::Prior::basis);
+    result.load_prior = prior.as_ref().map(ems_forecast::Prior::basis);
     result.load_prior_share = learned.load.prior_share(Horizon::new(start, 96));
     result.roof_health = learned.health.verdict();
 
     // ── Is the household on the right network-charge module? ────────────────
     //
-    // `hems_tariff::advisor` prices the day's own quarter-hour consumption
+    // `ems_tariff::advisor` prices the day's own quarter-hour consumption
     // under each § 14a module and annualises it. It had no caller for four
     // versions, which is the failure mode R20 exists for: a module nobody
     // invokes is not a feature.
@@ -2944,7 +2944,7 @@ fn run_with(
         .collect();
     if !consumption.is_empty() {
         let comparisons =
-            hems_tariff::compare_moduls(&consumption, &crate::site::modul_choices(&tariff));
+            ems_tariff::compare_moduls(&consumption, &crate::site::modul_choices(&tariff));
         // The **energy** halves, on this day, with nothing annualised: that is
         // what the day is evidence for. The fixed halves are annual by nature,
         // and the two are combined only in the break-even below — a threshold
@@ -2957,7 +2957,7 @@ fn run_with(
                 .map_or(0.0, |c| c.energy_cost_eur.to_f64().unwrap_or(0.0))
         };
         result.modul2_delta_today_eur = today("Modul 2") - today("Modul 1");
-        result.modul2_break_even_kwh_per_year = hems_tariff::advisor::modul2_break_even_kwh(
+        result.modul2_break_even_kwh_per_year = ems_tariff::advisor::modul2_break_even_kwh(
             Decimal::new(1000, 2),
             Decimal::new(4, 1),
             Decimal::new(25, 0),
@@ -2995,19 +2995,19 @@ fn run_with(
     // which is exactly how a hot-water tank sat in this figure for four versions
     // with nothing to send.
     {
-        let modes: BTreeMap<AssetId, hems_core::prelude::PhaseMode> = phase_state
+        let modes: BTreeMap<AssetId, ems_core::prelude::PhaseMode> = phase_state
             .iter()
             .map(|(id, p)| (id.clone(), p.mode))
             .collect();
-        let mut context = hems_flex::DescribeContext::new(start, start + Duration::days(1), &modes);
+        let mut context = ems_flex::DescribeContext::new(start, start + Duration::days(1), &modes);
         if let Some(vehicle) = evse.vehicle.as_ref().filter(|_| scenario.ev.is_some()) {
-            context = context.with_ev_session(hems_flex::EvStorage {
+            context = context.with_ev_session(ems_flex::EvStorage {
                 stored: vehicle.stored,
                 capacity: vehicle.capacity,
                 efficiency: vehicle.efficiency,
             });
         }
-        let described = hems_flex::describe_site(site, &context);
+        let described = ems_flex::describe_site(site, &context);
         result.s2_resources = described.described();
         result.s2_undescribed = described.undescribed.len();
     }
@@ -3016,7 +3016,7 @@ fn run_with(
     // energies, and not the sum of the loads this simulator happens to be able
     // to see. The two had drifted, and a fleet that averages a simulated day
     // beside a real one was averaging two different questions (D125).
-    result.self_sufficiency = hems_core::report::self_sufficiency(
+    result.self_sufficiency = ems_core::report::self_sufficiency(
         result.imported_kwh,
         result.produced_kwh,
         result.exported_kwh,
@@ -3072,7 +3072,7 @@ fn unmanaged_wallbox_power(site: &Site) -> Power {
 /// promise.
 fn unmanaged_appliance(
     scenario: &Scenario,
-    sim: Option<&mut hems_sim::ApplianceSim>,
+    sim: Option<&mut ems_sim::ApplianceSim>,
     now: OffsetDateTime,
     step: Duration,
 ) -> Power {
@@ -3262,7 +3262,7 @@ impl CommunityMeter {
 /// What a § 42c community allocated one member over a day, and what it saved.
 ///
 /// Settled from the day's own quarter-hour meter registers through the same
-/// arithmetic a Nachweis would use — `hems_grid::sharing`, which is `metering`'s
+/// arithmetic a Nachweis would use — `ems_grid::sharing`, which is `metering`'s
 /// allocation with the § 42c cascade on top — rather than from the plan's idea
 /// of it. The plan is a forecast; this is what happened, and the difference
 /// between them is a seam worth being able to see.
@@ -3283,23 +3283,23 @@ fn settle_sharing(
 ) -> (f64, f64) {
     let key = Decimal::try_from(membership.key.clamp(0.0, 1.0)).unwrap_or_default();
     let others = ((Decimal::ONE - key) / Decimal::TWO).max(Decimal::ZERO);
-    let community = hems_grid::sharing::Community::new(
+    let community = ems_grid::sharing::Community::new(
         "11YDE-VE-------2",
         vec![
-            hems_grid::sharing::Member::new("DE0001111111111111111111111111111", key),
-            hems_grid::sharing::Member::new("DE0002222222222222222222222222222", others),
-            hems_grid::sharing::Member::new("DE0003333333333333333333333333333", others),
+            ems_grid::sharing::Member::new("DE0001111111111111111111111111111", key),
+            ems_grid::sharing::Member::new("DE0002222222222222222222222222222", others),
+            ems_grid::sharing::Member::new("DE0003333333333333333333333333333", others),
         ],
     );
     let (mut kwh, mut credit) = (0.0, 0.0);
     for (slot, drawn) in draw {
         let neighbour = Decimal::try_from(household_load(*slot).kw() * 0.25).unwrap_or_default();
-        let Ok(allocation) = hems_grid::sharing::allocate_by(
+        let Ok(allocation) = ems_grid::sharing::allocate_by(
             &community,
             *slot,
             generation.get(slot).copied().unwrap_or_default(),
             &[*drawn, neighbour, neighbour],
-            hems_grid::sharing::Aufteilung::Dynamisch,
+            ems_grid::sharing::Aufteilung::Dynamisch,
         ) else {
             continue;
         };
@@ -3308,7 +3308,7 @@ fn settle_sharing(
         credit -= mine
             * prices
                 .at(*slot)
-                .map_or(0.0, hems_tariff::SlotPrice::sharing_discount_f64);
+                .map_or(0.0, ems_tariff::SlotPrice::sharing_discount_f64);
     }
     (kwh, credit)
 }
@@ -3332,7 +3332,7 @@ fn baseline_cost(
     let start = scenario.start();
     // The same § 9 EEG ceiling the managed house lives under. It is a property
     // of the installation, not of who is controlling it.
-    let feed_in_ceiling = hems_grid::para9::site_feed_in_ceiling(site, None, None).map(|(p, _)| p);
+    let feed_in_ceiling = ems_grid::para9::site_feed_in_ceiling(site, None, None).map(|(p, _)| p);
     let evse_power = unmanaged_wallbox_power(site);
     let step = CONTROL_PERIOD;
     let hours = step.as_seconds_f64() / 3600.0;
@@ -3389,7 +3389,7 @@ fn baseline_cost(
         _ => (
             TankSim::new(
                 Energy::from_kwh(
-                    house.dhw.litres * hems_core::asset::WATER_KWH_PER_LITRE_KELVIN * 15.0,
+                    house.dhw.litres * ems_core::asset::WATER_KWH_PER_LITRE_KELVIN * 15.0,
                 ),
                 house.dhw.heater,
             ),
@@ -3405,7 +3405,7 @@ fn baseline_cost(
         .config
         .dishwasher
         .clone()
-        .map(hems_sim::ApplianceSim::new);
+        .map(ems_sim::ApplianceSim::new);
     // The unmanaged household is in the **same § 42c community**. It joined and
     // then did nothing about it: the Aufteilungsschlüssel still allocates it
     // whatever its own draw happens to overlap. Leaving that out would credit
@@ -3453,7 +3453,7 @@ fn baseline_cost(
         let device_ceiling = scenario
             .grid_event
             .filter(|(from, until, _)| now >= start + *from && now < start + *until)
-            .map(|_| hems_grid::para14a::MINDESTLEISTUNG);
+            .map(|_| ems_grid::para14a::MINDESTLEISTUNG);
         let bounded = |p: Power| device_ceiling.map_or(p, |c| p.min(c));
 
         let ev = unmanaged_wallbox(
@@ -3495,7 +3495,7 @@ fn baseline_cost(
             } else {
                 Power::ZERO
             },
-            weather.draw_in(slot, hems_forecast::hotwater::draw(slot)) * (step / SLOT),
+            weather.draw_in(slot, ems_forecast::hotwater::draw(slot)) * (step / SLOT),
             step,
         );
         cost.unserved_eur += dhw_short.kwh() * HOT_WATER_SHORTFALL_EUR_PER_KWH;
@@ -3579,7 +3579,7 @@ fn baseline_cost(
     let mean_import = prices
         .slots
         .iter()
-        .map(hems_tariff::SlotPrice::import_f64)
+        .map(ems_tariff::SlotPrice::import_f64)
         .sum::<f64>()
         / prices.slots.len().max(1) as f64;
     // **The same rule the managed household is charged by**, `.max(0.0)` and
@@ -3661,8 +3661,8 @@ pub(crate) fn household_load(slot: Slot) -> Power {
     reason = "each argument is one accumulator of the loop this was lifted out of"
 )]
 fn score_slot(
-    pv_forecast: &hems_forecast::Forecast,
-    load_forecast: &hems_forecast::Forecast,
+    pv_forecast: &ems_forecast::Forecast,
+    load_forecast: &ems_forecast::Forecast,
     slot: Slot,
     covered: Duration,
     pv_wh: f64,

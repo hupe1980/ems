@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::prelude::{Horizon, Slot};
-use hems_forecast::WeatherSeries;
+use ems_core::prelude::{Horizon, Slot};
+use ems_forecast::WeatherSeries;
 use time::OffsetDateTime;
 
 use crate::upstream::Upstream;
@@ -29,7 +29,7 @@ pub struct Run {
     /// irradiance was fetched at, and a configuration edited between the fetch
     /// and the question would otherwise move a household's sun without moving
     /// its sky.
-    pub at: hems_core::prelude::GeoPoint,
+    pub at: ems_core::prelude::GeoPoint,
     /// When it was fetched.
     pub fetched_at: OffsetDateTime,
 }
@@ -212,7 +212,7 @@ pub fn is_ready(
 mod tests {
     use super::*;
     use crate::upstream::UpstreamError;
-    use hems_forecast::weather::WeatherPoint;
+    use ems_forecast::weather::WeatherPoint;
     use std::sync::Mutex;
     use time::macros::datetime;
 

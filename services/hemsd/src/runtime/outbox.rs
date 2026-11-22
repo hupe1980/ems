@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use hems_service::{Secret, Shutdown};
+use ems_service::{Secret, Shutdown};
 use tokio::sync::Mutex;
 
 /// Where the fleet's copy lives, and what may write to it.
@@ -119,7 +119,7 @@ impl Reporter {
     /// household's day across a network in the clear.
     pub fn new(
         settings: &ObsdSettings,
-        http: &hems_service::HttpSettings,
+        http: &ems_service::HttpSettings,
     ) -> anyhow::Result<Option<Self>> {
         let Some(url) = &settings.url else {
             return Ok(None);
@@ -133,7 +133,7 @@ impl Reporter {
         // finding out on the thirtieth night.
         crate::report::is_confidential(&endpoint)?;
         Ok(Some(Self {
-            client: hems_service::http::client(hems_service::identity!(), http)?,
+            client: ems_service::http::client(ems_service::identity!(), http)?,
             endpoint,
             secret: secret.resolve_from_process()?.into_bytes(),
         }))
@@ -224,7 +224,7 @@ impl Outbox {
     /// carries the record a network operator asks about (D85).
     pub fn new(
         settings: &HistdSettings,
-        http: &hems_service::HttpSettings,
+        http: &ems_service::HttpSettings,
     ) -> anyhow::Result<Option<Self>> {
         let (Some(url), Some(site)) = (&settings.url, &settings.site) else {
             return Ok(None);
@@ -237,7 +237,7 @@ impl Outbox {
         };
         crate::report::is_confidential(url)?;
         Ok(Some(Self {
-            client: hems_service::http::client(hems_service::identity!(), http)?,
+            client: ems_service::http::client(ems_service::identity!(), http)?,
             url: url.trim_end_matches('/').to_string(),
             site: site.clone(),
             token,
@@ -315,13 +315,13 @@ impl Outbox {
         // The **registers** and not the box's own record of the roof beside
         // them: `histd` holds what a settlement is computed from, and the
         // production figure is a KPI the day report already carries (D124).
-        let registers: Vec<hems_grid::mispel::QuarterHour> =
+        let registers: Vec<ems_grid::mispel::QuarterHour> =
             pending.iter().map(|r| r.registers).collect();
         if let Err(error) = self.put_quarter_hours(&registers).await {
             tracing::warn!(%error, "the fleet did not take the quarter-hour registers; keeping them");
             return Ok(0);
         }
-        let slots: Vec<hems_core::prelude::Slot> = registers.iter().map(|q| q.slot).collect();
+        let slots: Vec<ems_core::prelude::Slot> = registers.iter().map(|q| q.slot).collect();
         store.lock().await.mark_forwarded(&[], &slots, now)?;
         Ok(slots.len())
     }
@@ -329,7 +329,7 @@ impl Outbox {
     /// One batch of registers, to the endpoint `histd` already serves.
     async fn put_quarter_hours(
         &self,
-        quarters: &[hems_grid::mispel::QuarterHour],
+        quarters: &[ems_grid::mispel::QuarterHour],
     ) -> anyhow::Result<()> {
         let response = self
             .client
@@ -344,7 +344,7 @@ impl Outbox {
     }
 
     /// One event, to the endpoint `histd` already serves.
-    async fn put_event(&self, event: &hems_grid::evidence::ControlEvent) -> anyhow::Result<()> {
+    async fn put_event(&self, event: &ems_grid::evidence::ControlEvent) -> anyhow::Result<()> {
         let response = self
             .client
             .post(format!("{}/v1/sites/{}/events", self.url, self.site))

@@ -125,14 +125,14 @@ fn version(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "object", "required": ["name", "version"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } } })
 }
 
-/// `boost`, `pause` or `away`: [`hems_core::setpoint::UserOverride`], which
+/// `boost`, `pause` or `away`: [`ems_core::setpoint::UserOverride`], which
 /// lives in a crate that does not know about schemas. A test holds the list to
 /// what the type serialises as.
 pub fn user_override(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "string", "enum": ["boost", "pause", "away"] })
 }
 
-/// [`hems_forecast::Health`]: tagged by `verdict`, with the figures behind it.
+/// [`ems_forecast::Health`]: tagged by `verdict`, with the figures behind it.
 pub fn roof_health(_: &mut SchemaGenerator) -> Schema {
     json_schema!({
         "type": ["object", "null"],
@@ -142,7 +142,7 @@ pub fn roof_health(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
-/// What a SunSpec device says it is: [`hems_drv::modbus::probe::Identity`].
+/// What a SunSpec device says it is: [`ems_drv::modbus::probe::Identity`].
 pub fn sunspec_identity(_: &mut SchemaGenerator) -> Schema {
     json_schema!({
         "type": ["object", "null"],
@@ -727,7 +727,7 @@ pub fn routes() -> Vec<Route> {
         r(
             "POST",
             "/v1/subscriptions/{id}/test",
-            "Send it a de.hems.test.ping now",
+            "Send it a de.ems.test.ping now",
             Household,
             &[],
             None,
@@ -791,37 +791,37 @@ fn webhooks(generator: &mut SchemaGenerator) -> Value {
     use crate::runtime::webhooks as w;
     let data: [(&str, &str, Schema); 7] = [
         (
-            hems_events::GRID_LPC_LIMIT_RECEIVED,
+            ems_events::GRID_LPC_LIMIT_RECEIVED,
             "The network operator reduced the connection (§ 14a)",
             generator.subschema_for::<w::LimitReceived>(),
         ),
         (
-            hems_events::GRID_LPC_LIMIT_RELEASED,
+            ems_events::GRID_LPC_LIMIT_RELEASED,
             "The reduction ended",
             generator.subschema_for::<w::LimitReleased>(),
         ),
         (
-            hems_events::GRID_LPC_FAILSAFE_ENTERED,
+            ems_events::GRID_LPC_FAILSAFE_ENTERED,
             "The control box fell silent; the failsafe value applies",
             generator.subschema_for::<w::FailsafeEntered>(),
         ),
         (
-            hems_events::SITE_GOAL_AT_RISK,
+            ems_events::SITE_GOAL_AT_RISK,
             "A goal turned tight or impossible",
             generator.subschema_for::<w::GoalAtRisk>(),
         ),
         (
-            hems_events::DEVICE_DEVIATION_DETECTED,
+            ems_events::DEVICE_DEVIATION_DETECTED,
             "A device has not done what it was asked for ten minutes",
             generator.subschema_for::<w::DeviationDetected>(),
         ),
         (
-            hems_events::SITE_DAY_CLOSED,
+            ems_events::SITE_DAY_CLOSED,
             "A day closed: the receipt, in whole cents and Wh",
             generator.subschema_for::<crate::month::ClosedDay>(),
         ),
         (
-            hems_events::TEST_PING,
+            ems_events::TEST_PING,
             "Sent on request, to check a receiver",
             generator.subschema_for::<w::TestPing>(),
         ),
@@ -1037,7 +1037,7 @@ mod tests {
         for source in [
             include_str!("runtime/api.rs"),
             include_str!("runtime/s2.rs"),
-            include_str!("../../../crates/hems-service/src/metrics.rs"),
+            include_str!("../../../crates/ems-service/src/metrics.rs"),
         ] {
             served.extend(mounted(source));
         }
@@ -1055,7 +1055,7 @@ mod tests {
         // The catch-all that turns an unknown path into a problem is not an
         // operation; it is the absence of one.
         served.retain(|(_, path)| !path.contains("{*"));
-        let serve = include_str!("../../../crates/hems-service/src/serve.rs");
+        let serve = include_str!("../../../crates/ems-service/src/serve.rs");
         let shared = &serve[serve.find("fn shared_routes").expect("the shared routes")..];
         served.extend(mounted(&shared[..shared.find("\n}\n").expect("their end")]));
 
@@ -1132,7 +1132,7 @@ mod tests {
 
     #[test]
     fn the_hand_written_shapes_are_what_the_types_serialise_as() {
-        use hems_core::setpoint::UserOverride as U;
+        use ems_core::setpoint::UserOverride as U;
         let mut generator = SchemaGenerator::default();
         let listed = user_override(&mut generator).to_value()["enum"].clone();
         let real: Vec<Value> = [U::Boost, U::Pause, U::Away]
@@ -1142,7 +1142,7 @@ mod tests {
         assert_eq!(listed, Value::from(real));
 
         let health =
-            serde_json::to_value(hems_forecast::Health::Learning { days: 3 }).expect("a verdict");
+            serde_json::to_value(ems_forecast::Health::Learning { days: 3 }).expect("a verdict");
         assert_eq!(health["verdict"], "learning");
     }
 

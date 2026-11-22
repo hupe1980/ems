@@ -10,7 +10,7 @@ group = "Start"
 ## Quickstart
 
 ```console
-$ git clone https://github.com/hupe1980/hems && cd hems
+$ git clone https://github.com/hupe1980/ems && cd ems
 $ cargo run -p hemsd -- demo                     # open http://127.0.0.1:8080
 ```
 
@@ -122,8 +122,8 @@ acknowledged is a backlog rather than a gap.
 The domain crates are independent and none of them does any I/O.
 
 ```rust
-use hems_grid::para14a::{ControlMode, SteuVe, minimum_power};
-use hems_core::prelude::{AssetId, Fallgruppe, Power};
+use ems_grid::para14a::{ControlMode, SteuVe, minimum_power};
+use ems_core::prelude::{AssetId, Fallgruppe, Power};
 
 let devices = [
     SteuVe { assets: vec![AssetId::new("wallbox")?], fallgruppe: Fallgruppe::Ladepunkt,     power: Power::from_kw(11.0) },
@@ -136,16 +136,16 @@ assert!((minimum_power(&devices, ControlMode::Ems).kw() - 7.56).abs() < 1e-9);
 
 | Crate | What it is | Page |
 |---|---|---|
-| `hems-core` | the domain model: assets, circuits, the slot grid, setpoints that name a reason | [Domain model](@/docs/domain-model.md) |
-| `hems-grid` | § 14a, § 9 EEG, Modul 3, MiSpeL, § 42c, the LPC machine, the evidence record | [Grid rules](@/docs/grid-rules.md) |
-| `hems-tariff` | the price stack, five day-ahead parsers, the Modul advisor | [Tariffs](@/docs/tariffs.md) |
-| `hems-forecast` | solar geometry, the residual corrector, load and session models, the metrics | [Forecasting](@/docs/forecasting.md) |
-| `hems-optimizer` | the receding-horizon MILP and the shadow prices | [The planner](@/docs/optimizer.md) |
-| `hems-realtime` | the guard plane, the allocator, the one-second arbiter | [Architecture](@/docs/architecture.md) |
-| `hems-device`, `hems-drv` | what a wanted power becomes on hardware, and the driver contract | [Devices and drivers](@/docs/devices.md) |
-| `hems-flex` | the household's flexibility in S2 / EN 50491-12-2 | [Flexibility](@/docs/flexibility.md) |
-| `hems-sim` | deterministic hardware and a seeded weather | [Simulation](@/docs/simulation.md) |
-| `hems-service` | the shell the daemons share | [The fleet](@/docs/services.md) |
+| `ems-core` | the domain model: assets, circuits, the slot grid, setpoints that name a reason | [Domain model](@/docs/domain-model.md) |
+| `ems-grid` | § 14a, § 9 EEG, Modul 3, MiSpeL, § 42c, the LPC machine, the evidence record | [Grid rules](@/docs/grid-rules.md) |
+| `ems-tariff` | the price stack, five day-ahead parsers, the Modul advisor | [Tariffs](@/docs/tariffs.md) |
+| `ems-forecast` | solar geometry, the residual corrector, load and session models, the metrics | [Forecasting](@/docs/forecasting.md) |
+| `ems-optimizer` | the receding-horizon MILP and the shadow prices | [The planner](@/docs/optimizer.md) |
+| `ems-realtime` | the guard plane, the allocator, the one-second arbiter | [Architecture](@/docs/architecture.md) |
+| `ems-device`, `ems-drv` | what a wanted power becomes on hardware, and the driver contract | [Devices and drivers](@/docs/devices.md) |
+| `ems-flex` | the household's flexibility in S2 / EN 50491-12-2 | [Flexibility](@/docs/flexibility.md) |
+| `ems-sim` | deterministic hardware and a seeded weather | [Simulation](@/docs/simulation.md) |
+| `ems-service` | the shell the daemons share | [The fleet](@/docs/services.md) |
 
 ## A house without hardware
 

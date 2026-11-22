@@ -21,9 +21,9 @@
 
 use std::sync::Arc;
 
-use hems_core::prelude::{AssetId, Power};
-use hems_drv::modbus::{Cadence, SunSpec};
-use hems_service::Shutdown;
+use ems_core::prelude::{AssetId, Power};
+use ems_drv::modbus::{Cadence, SunSpec};
+use ems_service::Shutdown;
 use hemsd::drivers::{Attached, DriverId, Registry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -31,7 +31,7 @@ use tokio::sync::Mutex;
 
 /// A SunSpec inverter that answers on base 40 000, over a socket.
 ///
-/// The register layout is the one `hems-drv`'s own device test uses — model 1,
+/// The register layout is the one `ems-drv`'s own device test uses — model 1,
 /// then 103 with a real `W`/`W_SF` pair, then 123, then the sentinel — because
 /// the point here is the *transport*, and a second invented layout would test
 /// the wrong thing.
@@ -150,7 +150,7 @@ fn registry() -> (
     Arc<Mutex<Registry>>,
     DriverId,
     AssetId,
-    hems_core::prelude::Site,
+    ems_core::prelude::Site,
 ) {
     let household = hemsd::Household::build(&hemsd::HouseholdConfig::default())
         .expect("the reference household");
@@ -382,9 +382,9 @@ async fn a_grid_driver_with_no_transport_still_runs_its_clock() {
     let mut registry = Registry::new();
     let _driver = registry
         .register(
-            Box::new(hems_drv::eebus::Lpc::new(
+            Box::new(ems_drv::eebus::Lpc::new(
                 AssetId::new("netzanschluss").expect("a valid identifier"),
-                hems_drv::eebus::Use::Lpc,
+                ems_drv::eebus::Use::Lpc,
                 Power::from_kw(10.5),
                 std::time::Duration::from_secs(2 * 3600),
                 start,
@@ -440,9 +440,9 @@ async fn a_reduction_a_running_box_lived_through_reaches_its_two_year_record() {
     let start = time::OffsetDateTime::now_utc();
 
     // A Steuerbox that takes control and then reduces the household to 4,2 kW.
-    let mut lpc = hems_drv::eebus::Lpc::new(
+    let mut lpc = ems_drv::eebus::Lpc::new(
         AssetId::new("netzanschluss").expect("a valid identifier"),
-        hems_drv::eebus::Use::Lpc,
+        ems_drv::eebus::Use::Lpc,
         Power::from_kw(10.5),
         std::time::Duration::from_secs(2 * 3600),
         start,
@@ -453,7 +453,7 @@ async fn a_reduction_a_running_box_lived_through_reaches_its_two_year_record() {
         t += 60;
     }
     lpc.on_limit(
-        &hems_drv::eebus::LimitWrite::active(4_200.0),
+        &ems_drv::eebus::LimitWrite::active(4_200.0),
         start + time::Duration::seconds(130),
     );
 
@@ -472,14 +472,14 @@ async fn a_reduction_a_running_box_lived_through_reaches_its_two_year_record() {
     // What the control loop does with it, in one step: observe, then persist
     // whatever that closed.
     let mut store = hemsd::store::Store::in_memory().expect("a store");
-    let mut evidence = hems_grid::evidence::EvidenceRecorder::new();
+    let mut evidence = ems_grid::evidence::EvidenceRecorder::new();
 
     let assets: Vec<AssetId> = Vec::new();
     evidence.observe(
-        hems_grid::evidence::Observation {
+        ems_grid::evidence::Observation {
             ceiling: Some(Power::from_kw(4.2)),
-            rule: hems_core::setpoint::GuardRule::Lpc,
-            mode: hems_grid::para14a::ControlMode::Ems,
+            rule: ems_core::setpoint::GuardRule::Lpc,
+            mode: ems_grid::para14a::ControlMode::Ems,
             minimum_power: Power::from_kw(10.5),
             netzwirksam: Power::from_kw(3.0),
             applied: true,
@@ -490,10 +490,10 @@ async fn a_reduction_a_running_box_lived_through_reaches_its_two_year_record() {
     // …and ninety minutes later it lifts.
     let closed = evidence
         .observe(
-            hems_grid::evidence::Observation {
+            ems_grid::evidence::Observation {
                 ceiling: None,
-                rule: hems_core::setpoint::GuardRule::Lpc,
-                mode: hems_grid::para14a::ControlMode::Ems,
+                rule: ems_core::setpoint::GuardRule::Lpc,
+                mode: ems_grid::para14a::ControlMode::Ems,
                 minimum_power: Power::from_kw(10.5),
                 netzwirksam: Power::from_kw(3.0),
                 applied: false,
@@ -566,9 +566,9 @@ async fn what_the_fleet_acknowledges_leaves_the_backlog_and_nothing_else_does() 
     let start = time::OffsetDateTime::now_utc();
     for i in 0..4 {
         let at = start + time::Duration::hours(i);
-        let mut event = hems_grid::evidence::ControlEvent::received(
-            hems_core::setpoint::GuardRule::Lpc,
-            hems_grid::para14a::ControlMode::Ems,
+        let mut event = ems_grid::evidence::ControlEvent::received(
+            ems_core::setpoint::GuardRule::Lpc,
+            ems_grid::para14a::ControlMode::Ems,
             Power::from_kw(4.2),
             Power::from_kw(10.5),
             at,
@@ -583,11 +583,11 @@ async fn what_the_fleet_acknowledges_leaves_the_backlog_and_nothing_else_does() 
         &hemsd::runtime::outbox::HistdSettings {
             url: Some(url),
             site: Some("reference-household".into()),
-            token: Some(hems_service::Secret::literal("tok-test")),
+            token: Some(ems_service::Secret::literal("tok-test")),
             every_s: 300,
             batch: 50,
         },
-        &hems_service::HttpSettings::default(),
+        &ems_service::HttpSettings::default(),
     )
     .expect("a client")
     .expect("a configured histd");
@@ -631,7 +631,7 @@ async fn a_boost_reaches_the_arbiter_and_still_loses_to_the_grid() {
                 .evse
                 .clone()
                 .expect("the reference household has a charge point"),
-            hems_core::setpoint::UserOverride::Boost,
+            ems_core::setpoint::UserOverride::Boost,
             None,
             now,
         )
@@ -640,18 +640,18 @@ async fn a_boost_reaches_the_arbiter_and_still_loses_to_the_grid() {
     assert_eq!(wanted.len(), 1, "the boost is in force");
 
     // The arbiter, with a § 14a reduction to 4,2 kW running.
-    let arbiter = hems_realtime::Arbiter::new(hems_realtime::ArbiterConfig::default());
-    let limits = hems_realtime::guard::GridLimits {
+    let arbiter = ems_realtime::Arbiter::new(ems_realtime::ArbiterConfig::default());
+    let limits = ems_realtime::guard::GridLimits {
         steuve_ceiling: Some(Power::from_kw(4.2)),
         steuve_since: Some(now),
-        ..hems_realtime::guard::GridLimits::default()
+        ..ems_realtime::guard::GridLimits::default()
     };
-    let state = hems_realtime::guard::SiteState::default();
+    let state = ems_realtime::guard::SiteState::default();
     let previous = std::collections::BTreeMap::new();
     let delivered = std::collections::BTreeMap::new();
     let phases = std::collections::BTreeMap::new();
 
-    let decision = arbiter.tick(hems_realtime::Tick {
+    let decision = arbiter.tick(ems_realtime::Tick {
         now,
         site: &household.site,
         state: &state,

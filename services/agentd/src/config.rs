@@ -12,7 +12,7 @@ pub struct Settings {
     /// environment override is unaffected — it goes through `AsMut<Settings>`
     /// rather than through the file's shape.
     #[serde(default)]
-    pub service: hems_service::Settings,
+    pub service: ems_service::Settings,
     /// Where the journal lives.
     ///
     /// An embedded file for one instance. It is the **plan of record**: a run,
@@ -66,7 +66,7 @@ pub struct Settings {
     /// a plane whose every review is refused looks, from the queue, exactly like
     /// a fleet in good order.
     #[serde(default)]
-    pub obsd_token: Option<hems_service::Secret>,
+    pub obsd_token: Option<ems_service::Secret>,
     /// How long to wait for `obsd`, seconds.
     ///
     /// A whole window of a fleet is a large document, and this is a background
@@ -87,18 +87,18 @@ pub struct Settings {
     /// reduction, so it needs `hems.fleet.read` — the same credential model
     /// `obsd` and `histd` use, and empty means nothing is served.
     #[serde(default)]
-    pub operators: Vec<hems_service::OperatorCredential>,
+    pub operators: Vec<ems_service::OperatorCredential>,
     /// The Model Context Protocol surface, off by default.
     ///
     /// It speaks about households, so a token is **required** when it is
     /// switched on and every call is authorised as whatever that token already
     /// carries here.
     #[serde(default)]
-    pub mcp: hems_service::McpSettings,
+    pub mcp: ems_service::McpSettings,
 }
 
-impl AsMut<hems_service::Settings> for Settings {
-    fn as_mut(&mut self) -> &mut hems_service::Settings {
+impl AsMut<ems_service::Settings> for Settings {
+    fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
     }
 }
@@ -106,16 +106,16 @@ impl AsMut<hems_service::Settings> for Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            service: hems_service::Settings::default(),
+            service: ems_service::Settings::default(),
             journal: PathBuf::from("agentd-journal.redb"),
-            tenant: hems_service::auth::EVERY_TENANT.to_owned(),
+            tenant: ems_service::auth::EVERY_TENANT.to_owned(),
             tenants: std::collections::BTreeMap::new(),
             obsd: "http://127.0.0.1:7780".to_owned(),
             obsd_token: None,
             obsd_timeout_s: 30,
             review_every_s: 6 * 3_600,
             operators: Vec::new(),
-            mcp: hems_service::McpSettings::default(),
+            mcp: ems_service::McpSettings::default(),
         }
     }
 }

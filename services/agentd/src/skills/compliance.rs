@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::advice::{Advice, AtRisk, Proposal};
 use crate::upstream::Window;
-use hems_core::report::Summary;
+use ems_core::report::Summary;
 
 /// The specialist.
 #[derive(Debug, Default)]
@@ -231,7 +231,7 @@ fn roofs_over_the_feed_in_ceiling(fleet: &Summary) -> Option<Advice> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::report::{Finding, Summary};
+    use ems_core::report::{Finding, Summary};
     use time::macros::date;
 
     /// A finding as `obsd` names one.

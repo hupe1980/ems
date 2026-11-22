@@ -1,6 +1,6 @@
 //! A network operator's Steuerbox limits the household, over a real socket.
 //!
-//! This is the last seam. `crates/hems-drv/tests/eebus_spine.rs` proves the
+//! This is the last seam. `crates/ems-drv/tests/eebus_spine.rs` proves the
 //! protocol with the datagrams moved by hand; this one puts TCP, TLS 1.2 with
 //! mutual authentication, a WebSocket upgrade and the SHIP handshake underneath
 //! and runs `hemsd`'s own listener on top — so what is being asserted is that a
@@ -17,8 +17,8 @@ use eebus::spine::{Engine, LocalDevice, LocalEntity};
 use eebus::tls::ShipTls;
 use eebus::usecases::limitation::{self, EnergyGuardActor, GuardEvent, LimitWrite};
 use eebus::usecases::lpc;
-use hems_core::prelude::{AssetId, Power};
-use hems_service::Shutdown;
+use ems_core::prelude::{AssetId, Power};
+use ems_service::Shutdown;
 use hemsd::drivers::{Attached, DriverId, Registry};
 use tokio::sync::Mutex;
 
@@ -43,9 +43,9 @@ fn household() -> (Arc<Mutex<Registry>>, DriverId, AssetId, hemsd::Household) {
     let mut registry = Registry::new();
     let driver = registry
         .register(
-            Box::new(hems_drv::eebus::Lpc::new(
+            Box::new(ems_drv::eebus::Lpc::new(
                 asset.clone(),
-                hems_drv::eebus::Use::Lpc,
+                ems_drv::eebus::Use::Lpc,
                 // The household's own § 14a minimum, not a vendor default.
                 Power::from_kw(10.5),
                 std::time::Duration::from_secs(2 * 3600),
@@ -653,12 +653,12 @@ async fn a_failsafe_the_operator_writes_survives_the_next_power_cut() {
 }
 
 /// The failsafe the box's own driver has reported, if any.
-async fn reported(registry: &Arc<Mutex<Registry>>) -> Option<hems_drv::Failsafe> {
+async fn reported(registry: &Arc<Mutex<Registry>>) -> Option<ems_drv::Failsafe> {
     let mut guard = registry.lock().await;
     let _ = guard.observe(None, time::OffsetDateTime::now_utc());
     guard
         .failsafe()
-        .get(&hems_drv::LimitDirection::Consumption)
+        .get(&ems_drv::LimitDirection::Consumption)
         .copied()
 }
 

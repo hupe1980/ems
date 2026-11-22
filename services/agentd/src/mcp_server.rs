@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use hems_service::mcp::McpAuth;
+use ems_service::mcp::McpAuth;
 use http::request::Parts;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::Extension;
@@ -134,8 +134,8 @@ impl Handler {
     /// An aggregate is not any one household's data however wide that
     /// household's own reach, so this asks for the fleet capability by name
     /// rather than inferring it from a site check (D112).
-    fn fleet_caller(&self, parts: &Parts) -> Result<hems_service::Authority, McpError> {
-        let caller = hems_service::mcp::caller(&self.state.auth, parts)?;
+    fn fleet_caller(&self, parts: &Parts) -> Result<ems_service::Authority, McpError> {
+        let caller = ems_service::mcp::caller(&self.state.auth, parts)?;
         if caller.may_read_the_fleet() {
             Ok(caller)
         } else {
@@ -200,7 +200,7 @@ pub fn router(
     auth: McpAuth,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
-    hems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
+    ems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
 }
 
 /// One JSON document as a tool result.

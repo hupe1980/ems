@@ -401,7 +401,7 @@ commissioned = "2025-03-01"
 #
 # Everything is **net** ct/kWh, because that is how a German price sheet is
 # written; the levies and the value-added tax are added on top from
-# `hems_tariff::Levies`.
+# `ems_tariff::Levies`.
 [tariff]
 # § 41a EnWG has obliged every supplier to offer a dynamic tariff since
 # 01.01.2025, and since 01.10.2025 the market time unit has been a quarter hour

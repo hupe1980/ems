@@ -21,7 +21,7 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::get;
-use hems_core::prelude::Power;
+use ems_core::prelude::Power;
 use tokio::sync::RwLock;
 
 use crate::poller::Run;
@@ -144,7 +144,7 @@ async fn production_handler(
     // for, not at anything the caller supplies. A household may describe its own
     // roof — the array is its property — and it may not move its own latitude,
     // because the irradiance it is being given is somebody else's sky otherwise.
-    let model = hems_forecast::ArrayModel::new(
+    let model = ems_forecast::ArrayModel::new(
         Power::from_kw(array.kwp),
         Power::from_kw(array.ac_kw.unwrap_or(array.kwp * 0.8)),
         array.tilt,

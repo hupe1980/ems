@@ -19,22 +19,22 @@ name = "hemsd"
 path = "src/lib.rs"
 
 [dependencies]
-hems-core      = { workspace = true }
+ems-core      = { workspace = true }
 # Both protocols: this is the process that owns the sockets, so it is the one
 # place the transports are allowed to exist.
-hems-drv       = { workspace = true, features = ["eebus", "modbus"] }
-hems-events    = { workspace = true }
-hems-flex      = { workspace = true }
-hems-forecast  = { workspace = true }
-hems-grid      = { workspace = true }
+ems-drv       = { workspace = true, features = ["eebus", "modbus"] }
+ems-events    = { workspace = true }
+ems-flex      = { workspace = true }
+ems-forecast  = { workspace = true }
+ems-grid      = { workspace = true }
 # The daemon is built with HiGHS: a gateway box solves a 96-slot horizon every
 # quarter of an hour, and the pure-Rust fallback is for library consumers who
 # would rather not have a C++ toolchain than for the thing doing the solving.
-hems-optimizer = { workspace = true, features = ["highs"] }
-hems-realtime  = { workspace = true }
-hems-service   = { workspace = true, features = ["tls"] }
+ems-optimizer = { workspace = true, features = ["highs"] }
+ems-realtime  = { workspace = true }
+ems-service   = { workspace = true, features = ["tls"] }
 
-# **The I/O half of EEBUS, which `hems-drv` may not have.** That crate is on the
+# **The I/O half of EEBUS, which `ems-drv` may not have.** That crate is on the
 # purity list and owns the SPINE engine, so what crosses its edge is a datagram
 # (D88); everything under one — the node, TLS 1.2 with mutual authentication,
 # the SHIP handshake, the key the SKI follows, `_ship._tcp` — is the daemon's.
@@ -45,15 +45,15 @@ hems-service   = { workspace = true, features = ["tls"] }
 # crate with `default-features = false`.
 eebus        = { workspace = true, features = ["runtime", "mdns", "aws-lc-rs", "conformance"] }
 if-addrs     = { workspace = true }
-hems-sim       = { workspace = true }
+ems-sim       = { workspace = true }
 # The S2 data model, so this daemon can decode a frame into the `Message` that
-# `hems-flex` decides about. `default-features = false` keeps the crate's own
+# `ems-flex` decides about. `default-features = false` keeps the crate's own
 # transport out: the box is the *server*, axum already binds its socket, and
 # `s2-kit`'s own driver dials a connection rather than accepting one — it cannot
 # say which *resource* an inbound connection is for, which is the one thing a
 # multi-resource household needs (see `runtime::s2`).
 s2-kit       = { workspace = true }
-hems-tariff    = { workspace = true }
+ems-tariff    = { workspace = true }
 metering       = { workspace = true }
 
 anyhow       = { workspace = true }
@@ -115,7 +115,7 @@ house = ["dep:tokio-modbus", "dep:sunspec"]
 # The **CEM's** half of S2, for the one test that needs a real one. The client
 # connector is the standard crate's own, so what drives the box across a socket
 # in `managed_by_a_cem.rs` is the reference implementation rather than a second
-# opinion about the wire — which is the whole reason `hems-flex` takes the
+# opinion about the wire — which is the whole reason `ems-flex` takes the
 # generated types in the first place.
 #
 # The **`tokio` feature** here and nowhere else: it carries `io::Driver` and

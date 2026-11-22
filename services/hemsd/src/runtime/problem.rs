@@ -23,7 +23,7 @@ use axum::response::{IntoResponse, Response};
 pub const MEDIA_TYPE: &str = "application/problem+json";
 
 /// Where each `type` is documented, as an anchor on the API page.
-pub const TYPES: &str = "https://hupe1980.github.io/hems/docs/api/#";
+pub const TYPES: &str = "https://hupe1980.github.io/ems/docs/api/#";
 
 /// The largest refusal body read back into a problem. A refusal is a sentence;
 /// anything longer is not one, and is replaced rather than read whole.

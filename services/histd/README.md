@@ -1,7 +1,7 @@
 # histd
 
 The fleet's record of what every box did, for
-[hems](https://github.com/hupe1980/hems).
+[hems](https://github.com/hupe1980/ems).
 
 Two records with two different owners and two different reasons to exist, and
 keeping them apart is most of the design.

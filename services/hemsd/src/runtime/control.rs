@@ -14,7 +14,7 @@
 //!    every desire into what the grid, the fuses and the hardware leave open.
 //! 3. The setpoints go back to the drivers.
 //!
-//! Step 2 is `hems-realtime`'s and takes time as a parameter, so the property
+//! Step 2 is `ems-realtime`'s and takes time as a parameter, so the property
 //! that no input can make it exceed a grid limit is a unit test rather than a
 //! hope about this file. What this file adds is the clock and the sockets.
 //!
@@ -30,10 +30,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use hems_core::prelude::{AssetId, Energy, Power, Site, Slot, UserOverride};
-use hems_realtime::guard::GuardConfig;
-use hems_realtime::{Arbiter, ArbiterConfig, PhaseState, Tick};
-use hems_service::{Health, Shutdown};
+use ems_core::prelude::{AssetId, Energy, Power, Site, Slot, UserOverride};
+use ems_realtime::guard::GuardConfig;
+use ems_realtime::{Arbiter, ArbiterConfig, PhaseState, Tick};
+use ems_service::{Health, Shutdown};
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
@@ -164,7 +164,7 @@ pub struct Status {
     pub overriding: BTreeMap<AssetId, String>,
     /// Why each asset was told what it was told — the reason its setpoint
     /// carries, for the household page to render as a sentence.
-    pub reasons: BTreeMap<AssetId, hems_core::setpoint::Reason>,
+    pub reasons: BTreeMap<AssetId, ems_core::setpoint::Reason>,
     /// What the grid meter read this tick: positive draws from the grid.
     pub grid: Option<Power>,
     /// The minimum power the household is owed under a reduction, `[A1 4.5]`.
@@ -173,7 +173,7 @@ pub struct Status {
     /// operator's control box, so the stored failsafe value stands in.
     pub in_failsafe: bool,
     /// The last day the box closed, as it reported it to the fleet.
-    pub last_day: Option<hems_core::report::DayKpis>,
+    pub last_day: Option<ems_core::report::DayKpis>,
     /// What each asset's own meter read this tick, and its state of charge
     /// where it has one.
     pub readings: BTreeMap<AssetId, (Option<Power>, Option<f64>)>,
@@ -190,7 +190,7 @@ pub struct Status {
     ///
     /// Updated on the local-day boundary, because a performance ratio is a daily
     /// figure. `None` until the box has closed its first day.
-    pub roof_health: Option<hems_forecast::Health>,
+    pub roof_health: Option<ems_forecast::Health>,
 }
 
 /// The household this loop is deciding for, and the two facts about it that are
@@ -225,7 +225,7 @@ pub struct Managed {
     /// How the network operator addresses this site, `[A1 4.4]` — which the
     /// evidence record has to state, because the minimum a reduction may not go
     /// below depends on it.
-    pub control_mode: hems_grid::para14a::ControlMode,
+    pub control_mode: ems_grid::para14a::ControlMode,
     /// What the geometric model said the roof would make in each slot, shared
     /// with the planner that computed it.
     ///
@@ -263,14 +263,14 @@ pub struct Live {
     /// What the last tick decided, for the API and the health surface.
     pub status: Arc<Mutex<Status>>,
     /// The plan in force, published by the planner.
-    pub plan: Arc<tokio::sync::RwLock<Option<hems_core::prelude::Plan>>>,
+    pub plan: Arc<tokio::sync::RwLock<Option<ems_core::prelude::Plan>>>,
     /// The prices the plan was made against, for the quarter-hour registers.
     ///
     /// The registers MiSpeL and § 42c settle from carry two *prices* as well as
     /// the metered quantities, and this loop has no tariff of its own — so
     /// without them it could only write a register with two zeros in it, which
     /// is worse than no register at all.
-    pub prices: Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    pub prices: Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     /// What the box has learned about its own roof and household.
     pub learned: Arc<Mutex<crate::runtime::planner::Learned>>,
     /// The box's own two years, where it has one.
@@ -409,7 +409,7 @@ fn carried_from(started: OffsetDateTime) -> Carried {
         phases: BTreeMap::new(),
         delivered: BTreeMap::new(),
         delivered_slot: Slot::containing(started),
-        local_day: hems_core::calendar::local_day(started),
+        local_day: ems_core::calendar::local_day(started),
         // A box that has just started did not watch the earlier part of today,
         // and saying so is the difference between "nothing went wrong" and
         // "nobody was looking" (D116).
@@ -435,7 +435,7 @@ fn carried_from(started: OffsetDateTime) -> Carried {
         storage_feed_wh: 0.0,
         storage_samples: 0,
         failsafe: None,
-        evidence: hems_grid::evidence::EvidenceRecorder::new(),
+        evidence: ems_grid::evidence::EvidenceRecorder::new(),
     }
 }
 /// The quarter hour is over: teach the forecasts, write the registers, close the
@@ -449,7 +449,7 @@ fn carried_from(started: OffsetDateTime) -> Carried {
 async fn close_the_quarter_hour(
     managed: &Managed,
     learned: &Arc<Mutex<crate::runtime::planner::Learned>>,
-    prices: &Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    prices: &Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     store: Option<&Arc<Mutex<crate::store::Store>>>,
     carried: &mut Carried,
     period: std::time::Duration,
@@ -486,7 +486,7 @@ async fn close_the_quarter_hour(
 /// The same reason chain a setpoint carries (P7), summarised per asset: the
 /// answer to *why is my car charging slowly*, which is the commonest question a
 /// household has and the one a screen of watts cannot answer.
-fn binding_rules(decision: &hems_realtime::Decision) -> BTreeMap<AssetId, String> {
+fn binding_rules(decision: &ems_realtime::Decision) -> BTreeMap<AssetId, String> {
     decision
         .commanded
         .iter()
@@ -574,7 +574,7 @@ async fn record(
     managed: &Managed,
     carried: &mut Carried,
     observed: &Observed,
-    decision: &hems_realtime::arbiter::Decision,
+    decision: &ems_realtime::arbiter::Decision,
     store: Option<&Arc<Mutex<crate::store::Store>>>,
     now: OffsetDateTime,
 ) {
@@ -585,12 +585,12 @@ async fn record(
         .flat_map(|s| s.assets.iter().cloned())
         .collect();
     carried.evidence.observe(
-        hems_grid::evidence::Observation {
+        ems_grid::evidence::Observation {
             ceiling: observed.limits.steuve_ceiling,
             rule: if observed.limits.in_failsafe {
-                hems_core::setpoint::GuardRule::Failsafe
+                ems_core::setpoint::GuardRule::Failsafe
             } else {
-                hems_core::setpoint::GuardRule::Lpc
+                ems_core::setpoint::GuardRule::Lpc
             },
             mode: managed.control_mode,
             minimum_power: decision.verdict.minimum_power,
@@ -760,7 +760,7 @@ async fn close_the_day(
     store: Option<&Arc<Mutex<crate::store::Store>>>,
     now: OffsetDateTime,
 ) {
-    let today = hems_core::calendar::local_day(now);
+    let today = ems_core::calendar::local_day(now);
     if today == carried.local_day {
         return;
     }
@@ -773,7 +773,7 @@ async fn close_the_day(
     // evidence store is writable, and the two failures are unrelated (D199).
     let roof = learned.lock().await.close_roof_day();
     carried.roof_health = Some(roof);
-    if let hems_forecast::Health::Degraded {
+    if let ems_forecast::Health::Degraded {
         recent,
         baseline,
         days,
@@ -817,9 +817,9 @@ async fn close_the_day(
             if let Err(error) = guard.put_closed_day(&crate::month::ClosedDay::of_report(&day)) {
                 tracing::warn!(%error, %finished, "the closed day could not be kept");
             }
-            let event = hems_events::Event::new(
-                hems_events::SITE_DAY_REPORTED,
-                format!("hems://sites/{site}"),
+            let event = ems_events::Event::new(
+                ems_events::SITE_DAY_REPORTED,
+                format!("ems://sites/{site}"),
                 // Derived from what the report is *about*, so a box that
                 // recomputes a day is correcting one message rather than
                 // sending a second (D110).
@@ -831,7 +831,7 @@ async fn close_the_day(
             match event.to_bytes() {
                 Ok(body) => {
                     if let Err(error) =
-                        guard.queue_event(&event.id, hems_events::SITE_DAY_REPORTED, &body, now)
+                        guard.queue_event(&event.id, ems_events::SITE_DAY_REPORTED, &body, now)
                     {
                         tracing::error!(%error, %finished, "the day report could not be queued");
                     } else {
@@ -858,7 +858,7 @@ async fn close_the_day(
 async fn register(
     managed: &Managed,
     carried: &Carried,
-    prices: &Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    prices: &Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     store: Option<&Arc<Mutex<crate::store::Store>>>,
 ) {
     let (Some(store), true) = (store, carried.samples > 0) else {
@@ -880,7 +880,7 @@ async fn register(
             .unwrap_or_default()
             .round_dp(6)
     };
-    let quarter = hems_grid::mispel::QuarterHour {
+    let quarter = ems_grid::mispel::QuarterHour {
         slot,
         grid_draw: kwh(carried.grid_draw_wh),
         grid_feed_in: kwh(carried.grid_feed_wh),
@@ -894,7 +894,7 @@ async fn register(
         // is a settlement claiming the battery stood still.
         //
         // A site with no battery at all reports `None` for the same reason, and
-        // that is the case where `hems_grid::mispel` refuses A4 — correctly, as
+        // that is the case where `ems_grid::mispel` refuses A4 — correctly, as
         // A4 is *defined* by a separately metered store.
         storage_consumption: (carried.storage_samples > 0).then(|| kwh(carried.storage_draw_wh)),
         storage_generation: (carried.storage_samples > 0).then(|| kwh(carried.storage_feed_wh)),
@@ -930,7 +930,7 @@ async fn register(
 ///
 /// The **roof**: what the geometric model said this slot should have made,
 /// against what the inverter actually delivered. That ratio is the whole of
-/// `hems_forecast::residual` — a tree shading the east string, a datasheet that
+/// `ems_forecast::residual` — a tree shading the east string, a datasheet that
 /// was optimistic, dust on the glass — and it is what turns a *model* into a
 /// forecast of **this** roof.
 ///
@@ -1002,13 +1002,13 @@ async fn teach(
 /// bury the real fault inside it.
 async fn deliver(
     registry: &Shared,
-    setpoints: &[hems_core::prelude::Setpoint],
+    setpoints: &[ems_core::prelude::Setpoint],
     now: OffsetDateTime,
 ) {
     let mut guard = registry.lock().await;
     for setpoint in setpoints {
         if let Err(error) = guard.command(setpoint, now)
-            && !matches!(error, hems_drv::DriverError::NoDriver(_))
+            && !matches!(error, ems_drv::DriverError::NoDriver(_))
         {
             tracing::warn!(
                 asset = %setpoint.asset,
@@ -1032,7 +1032,7 @@ async fn deliver(
 /// Written on **change** rather than every tick, because a tick is a second and
 /// this store is an SD card.
 async fn keep_the_failsafe(
-    reported: Option<hems_drv::Failsafe>,
+    reported: Option<ems_drv::Failsafe>,
     carried: &mut Carried,
     store: Option<&Arc<Mutex<crate::store::Store>>>,
 ) {
@@ -1114,7 +1114,7 @@ async fn teach_the_house(
     let Some(id) = managed.heat_pump.as_ref() else {
         return;
     };
-    let Some(hems_core::prelude::Asset::HeatPump(hp)) = managed.site.asset(id) else {
+    let Some(ems_core::prelude::Asset::HeatPump(hp)) = managed.site.asset(id) else {
         return;
     };
     // The appliance's own sensor first, and the forecast only where there is
@@ -1153,9 +1153,7 @@ async fn teach_the_house(
 }
 
 /// Why each asset was told what it was told this tick.
-fn reasons_of(
-    decision: &hems_realtime::Decision,
-) -> BTreeMap<AssetId, hems_core::setpoint::Reason> {
+fn reasons_of(decision: &ems_realtime::Decision) -> BTreeMap<AssetId, ems_core::setpoint::Reason> {
     decision
         .setpoints
         .iter()
@@ -1174,7 +1172,7 @@ fn readings_of(
         .map(|(id, m)| {
             (
                 id.clone(),
-                (m.power, m.soc.map(hems_core::units::Soc::fraction)),
+                (m.power, m.soc.map(ems_core::units::Soc::fraction)),
             )
         })
         .collect()
@@ -1184,9 +1182,9 @@ fn readings_of(
 struct Carried {
     /// The roof's verdict, settled on the local-day boundary and carried until
     /// the next one.
-    roof_health: Option<hems_forecast::Health>,
+    roof_health: Option<ems_forecast::Health>,
     /// The last day the box closed, for the household's receipt.
-    last_day: Option<hems_core::report::DayKpis>,
+    last_day: Option<ems_core::report::DayKpis>,
     /// How exposed this household is to § 14a control, refreshed slowly.
     ///
     /// A summary of up to two years of record, and a tick is a second, so it is
@@ -1275,13 +1273,13 @@ struct Carried {
     storage_feed_wh: f64,
     storage_samples: usize,
     /// The failsafe last written down, so an unchanged one is not rewritten.
-    failsafe: Option<hems_drv::Failsafe>,
+    failsafe: Option<ems_drv::Failsafe>,
     /// The § 14a record, built as the loop runs.
     ///
     /// `[A1 7.2]` is a document about what a household *did* while a reduction
     /// was in force, and the only place that can be built is here: a record
     /// reconstructed afterwards from logs that were never kept is not a record.
-    evidence: hems_grid::evidence::EvidenceRecorder,
+    evidence: ems_grid::evidence::EvidenceRecorder,
 }
 
 impl Carried {
@@ -1333,7 +1331,7 @@ impl Carried {
         // already configured with — two spellings of "which holidays count
         // here" would be two things that can disagree about Fronleichnam.
         let land = learned.lock().await.load.land;
-        let mut profile = hems_grid::stress::StressProfile::new(land);
+        let mut profile = ems_grid::stress::StressProfile::new(land);
         let seen: Vec<_> = events.into_iter().map(|e| e.event).collect();
         // The window is the **denominator** and only this layer knows it: every
         // quarter hour of it that no event covers is one the household was not
@@ -1371,7 +1369,7 @@ fn record_series(
     // roof has not measured a dark one (D124). The roof is an asset like any
     // other and needs no point of its own; the two that are not assets are the
     // connection point and the figure a § 14a ceiling is measured against.
-    let assets: Vec<(hems_core::prelude::AssetId, Power)> = observed
+    let assets: Vec<(ems_core::prelude::AssetId, Power)> = observed
         .state
         .assets
         .iter()
@@ -1404,7 +1402,7 @@ fn watch_feed_in(managed: &Managed, carried: &mut Carried, observed: &Observed) 
     };
     carried.feed_in.tick(
         grid.outflow(),
-        hems_grid::para9::site_feed_in_ceiling(
+        ems_grid::para9::site_feed_in_ceiling(
             &managed.site,
             observed.limits.mgcp_factor,
             observed.limits.feed_in_ceiling,
@@ -1423,11 +1421,11 @@ async fn tick(
     managed: &Managed,
     registry: &Shared,
     overrides: &BTreeMap<AssetId, UserOverride>,
-    cem: &BTreeMap<AssetId, hems_realtime::CemRequest>,
+    cem: &BTreeMap<AssetId, ems_realtime::CemRequest>,
     cem_status: crate::runtime::s2::CemStatus,
-    plan: Option<&hems_core::prelude::Plan>,
+    plan: Option<&ems_core::prelude::Plan>,
     learned: &Arc<Mutex<crate::runtime::planner::Learned>>,
-    prices: &Arc<tokio::sync::RwLock<Option<hems_tariff::PriceStack>>>,
+    prices: &Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     store: Option<&Arc<Mutex<crate::store::Store>>>,
     series: Option<&crate::series::Series>,
     carried: &mut Carried,
@@ -1463,7 +1461,7 @@ async fn tick(
         }
         let failsafe = guard
             .failsafe()
-            .get(&hems_drv::LimitDirection::Consumption)
+            .get(&ems_drv::LimitDirection::Consumption)
             .copied();
         // The connection point is named rather than guessed: `[A1 2.3]` is
         // measured *there*, and a registry that had to work out which of its
@@ -1597,10 +1595,10 @@ async fn tick(
             overruns: carried.overruns,
             plan_expected_eur: plan
                 .and_then(|p| p.expected_cost.as_ref())
-                .map(hems_core::prelude::CostBreakdown::total),
+                .map(ems_core::prelude::CostBreakdown::total),
             plan_baseline_eur: plan
                 .and_then(|p| p.baseline_cost.as_ref())
-                .map(hems_core::prelude::CostBreakdown::total),
+                .map(ems_core::prelude::CostBreakdown::total),
         },
         silent,
     )

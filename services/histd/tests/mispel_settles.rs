@@ -6,7 +6,7 @@
 //! registers `histd` keeps, the window the rules govern for *this* site, and
 //! `metering`'s arithmetic meet in one document that says what it rests on.
 
-use hems_grid::mispel::{Basisfall, PauschalFall, QuarterHour};
+use ems_grid::mispel::{Basisfall, PauschalFall, QuarterHour};
 use histd::Store;
 use histd::config::MispelSettings;
 use histd::export::mispel;
@@ -22,11 +22,11 @@ use time::macros::date;
 async fn month_of_registers(store: &Store, site: &str, year: i32, month: u8, quarters: usize) {
     let first = time::Date::from_calendar_date(year, time::Month::try_from(month).unwrap(), 1)
         .expect("a real month");
-    let start = hems_core::calendar::day_start_utc(first);
+    let start = ems_core::calendar::day_start_utc(first);
     let now = start;
     for i in 0..quarters {
         let slot =
-            hems_core::prelude::Slot::containing(start + time::Duration::minutes(15 * i as i64));
+            ems_core::prelude::Slot::containing(start + time::Duration::minutes(15 * i as i64));
         store
             .put_quarter_hour(
                 site,
@@ -62,10 +62,10 @@ async fn month_of_registers_with_a_metered_store(
 ) {
     let first = time::Date::from_calendar_date(year, time::Month::try_from(month).unwrap(), 1)
         .expect("a real month");
-    let start = hems_core::calendar::day_start_utc(first);
+    let start = ems_core::calendar::day_start_utc(first);
     for i in 0..quarters {
         let slot =
-            hems_core::prelude::Slot::containing(start + time::Duration::minutes(15 * i as i64));
+            ems_core::prelude::Slot::containing(start + time::Duration::minutes(15 * i as i64));
         store
             .put_quarter_hour(
                 site,
@@ -120,7 +120,7 @@ const NOVEMBER_2026: usize = 30 * 96;
 /// Evidence for SR-029.
 #[tokio::test]
 async fn a_full_month_settles_and_says_what_it_rests_on() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2027, 10, OCTOBER_2027).await;
 
@@ -171,7 +171,7 @@ async fn a_full_month_settles_and_says_what_it_rests_on() {
 async fn basisfall_a4_settles_from_the_storage_system_s_own_meter() {
     // `[MiSpeL A1 (17)A4]` charges the conversion losses to the store, which A3
     // cannot see and therefore charges to the household.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers_with_a_metered_store(&store, "haus-a4", 2027, 10, OCTOBER_2027).await;
 
@@ -200,7 +200,7 @@ async fn a_settlement_can_be_reproduced_from_the_registers_it_was_computed_from(
     // replaced by a real reading. *What did we hand over* and *what does the
     // correction change* are both answerable because the registers are
     // versioned.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 11, NOVEMBER_2026).await;
     let option = abgrenzung(Basisfall::A1);
@@ -210,13 +210,13 @@ async fn a_settlement_can_be_reproduced_from_the_registers_it_was_computed_from(
         .expect("the month settles");
     // The instant the document was produced at: the day after the period, not
     // the wall clock.
-    let settled_at = hems_core::calendar::day_start_utc(date!(2026 - 12 - 01));
+    let settled_at = ems_core::calendar::day_start_utc(date!(2026 - 12 - 01));
     let before = first["figures"]["abgrenzung"]["grid_draw"]
         .as_str()
         .unwrap()
         .to_owned();
 
-    let slot = hems_core::prelude::Slot::containing(hems_core::calendar::day_start_utc(date!(
+    let slot = ems_core::prelude::Slot::containing(ems_core::calendar::day_start_utc(date!(
         2026 - 11 - 01
     )));
     store
@@ -269,7 +269,7 @@ async fn a_settlement_can_be_reproduced_from_the_registers_it_was_computed_from(
 
 #[tokio::test]
 async fn basisfall_a4_is_refused_where_the_store_is_not_separately_metered() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 11, NOVEMBER_2026).await;
     let error = mispel(
@@ -293,7 +293,7 @@ async fn basisfall_a4_is_refused_where_the_store_is_not_separately_metered() {
 async fn a_month_with_gaps_is_settled_and_is_not_called_complete() {
     // A quarter hour the box could not price gets no register, so a month can
     // have gaps; a settlement over part of it must not look like a whole one.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 11, 2_000).await;
     let doc = mispel(
@@ -314,7 +314,7 @@ async fn a_month_with_gaps_is_settled_and_is_not_called_complete() {
 
 #[tokio::test]
 async fn the_option_decides_which_period_may_be_asked_for() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2027, 1, 96).await;
     let aid = Some(date!(2026 - 12 - 15));
@@ -354,7 +354,7 @@ async fn the_option_decides_which_period_may_be_asked_for() {
 
 #[tokio::test]
 async fn a_period_the_festlegung_never_reached_is_refused() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 3, 96).await;
     let error = mispel(
@@ -380,7 +380,7 @@ async fn an_existing_plant_settles_from_the_month_after_the_rules_and_not_octobe
     // The Festlegung took effect on 21.10.2026, but an installation already
     // assigned to a Veräußerungsform switches only on the first of a month:
     // for an existing roof the first Abgrenzung month is November.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 10, 31 * 96 + 4).await;
     let error = mispel(
@@ -400,7 +400,7 @@ async fn an_existing_plant_settles_from_the_month_after_the_rules_and_not_octobe
 /// Evidence for SR-029.
 #[tokio::test]
 async fn a_first_assignment_mid_month_settles_a_rumpfmonat() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-new", 2026, 11, NOVEMBER_2026).await;
     let new_plant = MispelSettings::Abgrenzung {
@@ -434,7 +434,7 @@ async fn a_first_assignment_mid_month_settles_a_rumpfmonat() {
 /// Evidence for SR-027.
 #[tokio::test]
 async fn without_the_operators_consent_nothing_before_october_2027_settles() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 11, NOVEMBER_2026).await;
     month_of_registers(&store, "haus-1", 2027, 10, OCTOBER_2027).await;
@@ -473,7 +473,7 @@ async fn without_the_operators_consent_nothing_before_october_2027_settles() {
 /// Evidence for SR-027 and SR-029.
 #[tokio::test]
 async fn the_pauschaloption_waits_for_state_aid_and_then_settles_a_rumpfjahr() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-p", 2027, 3, 96).await;
     let p = pauschal(date!(2026 - 11 - 01));
@@ -504,7 +504,7 @@ async fn the_pauschaloption_waits_for_state_aid_and_then_settles_a_rumpfjahr() {
 
 #[tokio::test]
 async fn a_site_that_declared_nothing_is_refused_rather_than_guessed_at() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 11, 96).await;
     let err = mispel(&store, "haus-1", None, None, 2026, Some(11), None)
@@ -526,7 +526,7 @@ async fn a_site_that_declared_nothing_is_refused_rather_than_guessed_at() {
 /// promise the one option nothing verified.
 #[tokio::test]
 async fn exclusivity_settles_nothing_and_proves_it_from_the_registers() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     // A month whose every quarter hour draws 0,580 kWh from the grid *and*
     // puts 0,200 into the store: the fixture is an ordinary household, and for
@@ -563,13 +563,13 @@ async fn exclusivity_settles_nothing_and_proves_it_from_the_registers() {
 /// …and a household that kept the promise is told so, with the figure.
 #[tokio::test]
 async fn exclusivity_held_reports_zero_rather_than_silence() {
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     let first =
         time::Date::from_calendar_date(2026, time::Month::October, 1).expect("a real month");
-    let start = hems_core::calendar::day_start_utc(first);
+    let start = ems_core::calendar::day_start_utc(first);
     for i in 0..(31 * 96 + 4) {
-        let slot = hems_core::prelude::Slot::containing(start + time::Duration::minutes(15 * i));
+        let slot = ems_core::prelude::Slot::containing(start + time::Duration::minutes(15 * i));
         store
             .put_quarter_hour(
                 "haus-2",
@@ -609,7 +609,7 @@ async fn exclusivity_held_reports_zero_rather_than_silence() {
 async fn a_settlement_covers_only_the_month_it_names() {
     // The window is half-open and comes from the Berlin calendar, so the
     // register at 00:00 on the first of the next month belongs to that month.
-    let fixture = hems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2027, 10, OCTOBER_2027).await;
     month_of_registers(&store, "haus-1", 2027, 11, 96).await;

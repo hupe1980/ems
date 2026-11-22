@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use hems_service::{Health, Server, Shutdown, shutdown};
-use hems_tariff::cache::PriceCache;
+use ems_service::{Health, Server, Shutdown, shutdown};
+use ems_tariff::cache::PriceCache;
 use tariffd::api::{Prices, router};
 use tariffd::{Http, Poller, Settings, poller};
 use tokio::sync::RwLock;
@@ -27,9 +27,8 @@ struct Cli {
 /// exactly like a source that had started rejecting us.
 fn resolved_sources(
     settings: &Settings,
-) -> anyhow::Result<
-    std::collections::BTreeMap<hems_tariff::source::Source, tariffd::config::Endpoint>,
-> {
+) -> anyhow::Result<std::collections::BTreeMap<ems_tariff::source::Source, tariffd::config::Endpoint>>
+{
     settings
         .sources
         .iter()
@@ -41,7 +40,7 @@ fn resolved_sources(
                     let resolved = value
                         .resolve_from_process()
                         .map_err(|e| anyhow::anyhow!("{source:?} header {name}: {e}"))?;
-                    Ok((name.clone(), hems_service::Secret::literal(resolved)))
+                    Ok((name.clone(), ems_service::Secret::literal(resolved)))
                 })
                 .collect::<anyhow::Result<_>>()?;
             Ok((
@@ -58,9 +57,9 @@ fn resolved_sources(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = hems_service::load(cli.config.as_deref(), "HEMS_TARIFFD")?;
-    hems_service::init_tracing(
-        hems_service::identity!(),
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_TARIFFD")?;
+    ems_service::init_tracing(
+        ems_service::identity!(),
         &settings.service.log_filter,
         settings.service.log_json,
     );
@@ -84,8 +83,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cache = Arc::new(RwLock::new(PriceCache::new()));
     // The grid's own carbon intensity, kept beside the prices. One publisher,
-    // so nothing to reconcile — see `hems_tariff::cache::CarbonCache`.
-    let carbon = Arc::new(RwLock::new(hems_tariff::cache::CarbonCache::new()));
+    // so nothing to reconcile — see `ems_tariff::cache::CarbonCache`.
+    let carbon = Arc::new(RwLock::new(ems_tariff::cache::CarbonCache::new()));
     let health = Health::new();
     health.bad("prices", "no fetch has succeeded yet");
 
@@ -127,17 +126,17 @@ async fn main() -> anyhow::Result<()> {
     let mut app = router(Prices::new(cache.clone()).with_carbon(Arc::clone(&carbon)))
         .merge(tariffd::modul3::router(catalogue));
     if settings.mcp.enabled {
-        let auth = hems_service::McpAuth::gated(&settings.mcp)?;
+        let auth = ems_service::McpAuth::gated(&settings.mcp)?;
         app = app.merge(tariffd::mcp_server::router(
             Arc::new(tariffd::mcp_server::State { cache }),
             auth,
-            hems_service::mcp::cancel_on(&signal),
+            ems_service::mcp::cancel_on(&signal),
         ));
         tracing::info!("the Model Context Protocol surface is mounted at /mcp");
     }
 
     Server::new(
-        hems_service::identity!(),
+        ems_service::identity!(),
         settings.service.clone(),
         health,
         app,
@@ -156,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
 async fn fetch_loop(
     mut poller: Poller<Http>,
     cache: Arc<RwLock<PriceCache>>,
-    carbon: Arc<RwLock<hems_tariff::cache::CarbonCache>>,
+    carbon: Arc<RwLock<ems_tariff::cache::CarbonCache>>,
     health: Health,
     ready_slots: usize,
     signal: Shutdown,

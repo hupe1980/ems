@@ -11,8 +11,8 @@ homepage.workspace     = true
 rust-version.workspace = true
 
 [dependencies]
-hems-core    = { workspace = true, features = ["serde"] }
-hems-service = { workspace = true }
+ems-core    = { workspace = true, features = ["serde"] }
+ems-service = { workspace = true }
 
 # The runtime whose journal is the plan of record. `redb` is the embedded store
 # a single instance uses; `manifest` is what makes a specialist that needs a

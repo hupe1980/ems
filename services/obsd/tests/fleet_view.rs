@@ -8,8 +8,8 @@
 //! the way a box signs one, and three of the tests are about what happens when
 //! it is not.
 
-use hems_core::prelude::CostBreakdown;
-use hems_core::report::DayKpis;
+use ems_core::prelude::CostBreakdown;
+use ems_core::report::DayKpis;
 use obsd::api::{Observed, router};
 use time::macros::date;
 
@@ -36,7 +36,7 @@ fn good_day(site: &str, days_ago: u8) -> DayKpis {
         exported_kwh: 0.3,
         produced_kwh: 8.4,
         self_sufficiency: 0.13,
-        economics: Some(hems_core::report::Economics {
+        economics: Some(ems_core::report::Economics {
             cost: CostBreakdown {
                 energy_eur: 21.08,
                 wear_eur: 0.62,
@@ -51,7 +51,7 @@ fn good_day(site: &str, days_ago: u8) -> DayKpis {
         }),
         respected_the_grid: true,
         control_events: 1,
-        forecast: Some(hems_core::report::ForecastScores {
+        forecast: Some(ems_core::report::ForecastScores {
             pv_coverage: 0.81,
 
             pv_crps: 192.0,
@@ -65,10 +65,7 @@ fn good_day(site: &str, days_ago: u8) -> DayKpis {
 }
 
 /// Start the service on an ephemeral port; returns the address and the stopper.
-async fn start() -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
+async fn start() -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     start_with_a_site_credential(None).await
 }
 
@@ -78,28 +75,25 @@ async fn start() -> (
 /// nothing here noticed what a *site* token could reach.
 async fn start_with_a_site_credential(
     site: Option<(&str, &str)>,
-) -> (
-    std::net::SocketAddr,
-    hems_service::shutdown::ShutdownTrigger,
-) {
+) -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bound = listener.local_addr().unwrap();
     drop(listener);
-    let settings = hems_service::Settings {
+    let settings = ems_service::Settings {
         listen: bound,
         shutdown_grace_s: 2,
-        ..hems_service::Settings::default()
+        ..ems_service::Settings::default()
     };
-    let fixture = hems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
     let store = obsd::store::Store::new(fixture.db.clone());
     // Leaked on purpose: the pool outlives the server task, and a test process
     // ends when the test does.
     std::mem::forget(fixture);
-    let (signal, trigger) = hems_service::Shutdown::channel();
-    let server = hems_service::Server::new(
-        hems_service::identity!(),
+    let (signal, trigger) = ems_service::Shutdown::channel();
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
         settings,
-        hems_service::Health::new(),
+        ems_service::Health::new(),
         router(Observed::new(
             store,
             60,
@@ -119,15 +113,15 @@ async fn start_with_a_site_credential(
                     SECRET_FOR_HAUS_1.to_owned(),
                 )))
                 .collect(),
-            hems_events::webhook::DEFAULT_TOLERANCE,
-            hems_service::Credentials::resolve(
+            ems_events::webhook::DEFAULT_TOLERANCE,
+            ems_service::Credentials::resolve(
                 &site
-                    .map(|(name, token)| (name.to_owned(), hems_service::Secret::literal(token)))
+                    .map(|(name, token)| (name.to_owned(), ems_service::Secret::literal(token)))
                     .into_iter()
                     .collect(),
                 &std::collections::BTreeMap::new(),
-                &[hems_service::OperatorCredential {
-                    token: hems_service::Secret::literal(OPERATOR),
+                &[ems_service::OperatorCredential {
+                    token: ems_service::Secret::literal(OPERATOR),
                     tenant: "*".into(),
                 }],
             )
@@ -188,16 +182,16 @@ fn signed_report(
     secret: &str,
     at: time::OffsetDateTime,
 ) -> (String, Vec<(&'static str, String)>) {
-    let event = hems_events::Event::new(
-        hems_events::SITE_DAY_REPORTED,
-        format!("hems://sites/{}", day.site),
+    let event = ems_events::Event::new(
+        ems_events::SITE_DAY_REPORTED,
+        format!("ems://sites/{}", day.site),
         format!("{}:{}", day.site, day.date),
         at,
         day.clone(),
     )
     .about(day.date.to_string());
     let body = String::from_utf8(event.to_bytes().unwrap()).unwrap();
-    let signature = hems_events::webhook::sign(secret.as_bytes(), &event.id, at, body.as_bytes());
+    let signature = ems_events::webhook::sign(secret.as_bytes(), &event.id, at, body.as_bytes());
     (body, signature.headers().to_vec())
 }
 
@@ -301,7 +295,7 @@ async fn a_report_with_a_field_this_build_does_not_know_is_refused() {
     let at = time::OffsetDateTime::now_utc();
     let id = headers[0].1.clone();
     let key = format!("{SECRET}-site-1");
-    let signature = hems_events::webhook::sign(key.as_bytes(), &id, at, tampered.as_bytes());
+    let signature = ems_events::webhook::sign(key.as_bytes(), &id, at, tampered.as_bytes());
     let (status, _) = request(
         address,
         "POST",
@@ -371,16 +365,16 @@ async fn an_event_of_another_type_does_not_become_a_day() {
     // independent and both have to hold.
     let (address, trigger) = start().await;
     let at = time::OffsetDateTime::now_utc();
-    let event = hems_events::Event::new(
-        hems_events::SITE_PLAN_PUBLISHED,
-        "hems://sites/site-1",
+    let event = ems_events::Event::new(
+        ems_events::SITE_PLAN_PUBLISHED,
+        "ems://sites/site-1",
         "site-1:plan",
         at,
         good_day("site-1", 15),
     );
     let body = String::from_utf8(event.to_bytes().unwrap()).unwrap();
     let key = format!("{SECRET}-site-1");
-    let signature = hems_events::webhook::sign(key.as_bytes(), &event.id, at, body.as_bytes());
+    let signature = ems_events::webhook::sign(key.as_bytes(), &event.id, at, body.as_bytes());
     let (status, _) = request(
         address,
         "POST",
@@ -501,21 +495,21 @@ async fn a_box_cannot_report_a_day_as_another_household() {
 /// record survives the process that wrote it (D157).
 #[tokio::test]
 async fn the_window_is_bounded_and_the_oldest_days_go_first() {
-    let fixture = hems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
     let store = obsd::store::Store::new(fixture.db.clone());
     let at = time::OffsetDateTime::now_utc();
     for d in 0..6_i64 {
-        let day = hems_core::report::DayKpis {
+        let day = ems_core::report::DayKpis {
             site: "a".to_owned(),
             date: date!(2026 - 02 - 20) + time::Duration::days(d),
-            ..hems_core::report::DayKpis::default()
+            ..ems_core::report::DayKpis::default()
         };
         store.record(&day, at).await.expect("a day");
     }
 
     assert_eq!(store.prune(date!(2026 - 02 - 23)).await.unwrap(), 3);
     let left = store
-        .history(date!(2026 - 01 - 01), &hems_service::SiteScope::Every)
+        .history(date!(2026 - 01 - 01), &ems_service::SiteScope::Every)
         .await
         .unwrap();
     let days = &left["a"].days;
@@ -525,14 +519,14 @@ async fn the_window_is_bounded_and_the_oldest_days_go_first() {
     // …and a re-report of a day already on record is a correction, not a second
     // day. The primary key is the rule, so a fleet cannot double one
     // household's saving inside an average.
-    let again = hems_core::report::DayKpis {
+    let again = ems_core::report::DayKpis {
         site: "a".to_owned(),
         date: date!(2026 - 02 - 25),
-        ..hems_core::report::DayKpis::default()
+        ..ems_core::report::DayKpis::default()
     };
     store.record(&again, at).await.expect("a correction");
     let left = store
-        .history(date!(2026 - 01 - 01), &hems_service::SiteScope::Every)
+        .history(date!(2026 - 01 - 01), &ems_service::SiteScope::Every)
         .await
         .unwrap();
     assert_eq!(left["a"].days.len(), 3, "still three");
@@ -547,16 +541,16 @@ async fn the_window_is_bounded_and_the_oldest_days_go_first() {
 /// what was lost was lost.
 #[tokio::test]
 async fn the_fleets_record_outlives_the_process_that_collected_it() {
-    let fixture = hems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
     let at = time::OffsetDateTime::now_utc();
     {
         let store = obsd::store::Store::new(fixture.db.clone());
-        let day = hems_core::report::DayKpis {
+        let day = ems_core::report::DayKpis {
             site: "haus-1".to_owned(),
             date: date!(2026 - 02 - 25),
             respected_the_grid: false,
             worst_overshoot_w: 1_200.0,
-            ..hems_core::report::DayKpis::default()
+            ..ems_core::report::DayKpis::default()
         };
         store.record(&day, at).await.expect("a breach");
     }
@@ -564,7 +558,7 @@ async fn the_fleets_record_outlives_the_process_that_collected_it() {
     // A different collector, over the same database.
     let store = obsd::store::Store::new(fixture.db.clone());
     let read = store
-        .history(date!(2026 - 01 - 01), &hems_service::SiteScope::Every)
+        .history(date!(2026 - 01 - 01), &ems_service::SiteScope::Every)
         .await
         .unwrap();
     let fleet = obsd::fleet::Fleet::of(
@@ -595,19 +589,19 @@ async fn one_tenants_read_does_not_pull_anothers_rows() {
     use std::collections::BTreeSet;
     use time::macros::date;
 
-    let fixture = hems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
     let store = obsd::store::Store::new(fixture.db.clone());
     let at = time::OffsetDateTime::now_utc();
     for site in ["nord-1", "sued-1"] {
-        let day = hems_core::report::DayKpis {
+        let day = ems_core::report::DayKpis {
             site: site.to_owned(),
             date: date!(2026 - 02 - 25),
-            ..hems_core::report::DayKpis::default()
+            ..ems_core::report::DayKpis::default()
         };
         store.record(&day, at).await.expect("a day");
     }
 
-    let nord = hems_service::SiteScope::Tenant {
+    let nord = ems_service::SiteScope::Tenant {
         name: "nord".into(),
         sites: BTreeSet::from(["nord-1".to_owned()]),
     };
@@ -622,7 +616,7 @@ async fn one_tenants_read_does_not_pull_anothers_rows() {
     );
 
     // …and one household reads exactly one household.
-    let one = hems_service::SiteScope::One("sued-1".to_owned());
+    let one = ems_service::SiteScope::One("sued-1".to_owned());
     let read = store.history(date!(2026 - 01 - 01), &one).await.unwrap();
     assert_eq!(read.len(), 1);
     assert!(read.contains_key("sued-1"));
@@ -630,7 +624,7 @@ async fn one_tenants_read_does_not_pull_anothers_rows() {
     // `Every` is the only scope that reads everything, and it is a variant
     // somebody had to configure.
     let all = store
-        .history(date!(2026 - 01 - 01), &hems_service::SiteScope::Every)
+        .history(date!(2026 - 01 - 01), &ems_service::SiteScope::Every)
         .await
         .unwrap();
     assert_eq!(all.len(), 2);
@@ -645,7 +639,7 @@ async fn one_tenants_read_does_not_pull_anothers_rows() {
 /// one tenant's request touching every other tenant's pages.
 #[tokio::test]
 async fn a_scoped_read_is_an_index_scan() {
-    let fixture = hems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
     let client = fixture.db.get().await.expect("a connection");
     // Enough rows that a sequential scan is not the cheapest plan by accident.
     client
@@ -693,7 +687,7 @@ async fn a_scoped_read_is_an_index_scan() {
 /// more expensively.
 #[tokio::test]
 async fn the_retention_sweep_is_an_index_scan() {
-    let fixture = hems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
+    let fixture = ems_service::testdb::Postgres::start(obsd::store::MIGRATIONS).await;
     let client = fixture.db.get().await.expect("a connection");
     client
         .batch_execute(

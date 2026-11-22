@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use agentplane::core::{RunId, SourceId};
 use agentplane::prelude::{Runtime, Tainted};
-use hems_service::{Health, Shutdown};
+use ems_service::{Health, Shutdown};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
@@ -160,8 +160,8 @@ pub const UPSTREAM: &str = "obsd";
 /// orchestrator can see (`Health::new`'s own note says this is the caller's
 /// decision, made by registering a probe before serving).
 #[must_use]
-pub fn not_reviewed_yet() -> hems_service::Probe {
-    hems_service::Probe::bad("no review has completed yet")
+pub fn not_reviewed_yet() -> ems_service::Probe {
+    ems_service::Probe::bad("no review has completed yet")
 }
 
 /// Run every specialist once over one window.
@@ -309,7 +309,7 @@ pub async fn review_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn window(fleet: hems_core::report::Summary) -> Window {
+    fn window(fleet: ems_core::report::Summary) -> Window {
         Window {
             source: "https://obsd.example/v1/fleet".into(),
             fetched_at: time::macros::datetime!(2026-01-15 06:00 UTC),
@@ -346,17 +346,17 @@ mod tests {
             Arc::new(agentplane::prelude::RedbStore::open_in_memory().expect("a journal"));
         let runtime = crate::runtime(store);
 
-        let finding = |site: String| hems_core::report::Finding {
+        let finding = |site: String| ems_core::report::Finding {
             site,
             date: time::macros::date!(2026 - 01 - 15),
             detail: "as obsd described it".into(),
         };
-        let fleet = hems_core::report::Summary {
+        let fleet = ems_core::report::Summary {
             days: 56,
             sites: 4,
             breached: (0..4).map(|i| finding(format!("haus-{i}"))).collect(),
             without_a_plan: (0..4).map(|i| finding(format!("haus-{i}"))).collect(),
-            ..hems_core::report::Summary::default()
+            ..ems_core::report::Summary::default()
         };
 
         let now = time::macros::datetime!(2026-01-15 06:00 UTC);

@@ -9,10 +9,10 @@ pub struct SiteEntry {
     /// The single-use secret an installer put on the box.
     ///
     /// Not in the code and never logged: it is a credential, and it stops being
-    /// one the moment the box has enrolled. A [`hems_service::Secret`], so a
+    /// one the moment the box has enrolled. A [`ems_service::Secret`], so a
     /// fleet can write `"env:SITE_HAUS1_SECRET"` or
     /// `"file:/run/secrets/haus-1"` and keep it out of the file entirely.
-    pub enrolment_secret: hems_service::Secret,
+    pub enrolment_secret: ems_service::Secret,
     /// The configuration document this site should be running, as TOML.
     ///
     /// Opaque here on purpose. `fleetd` distributes configuration and does not
@@ -51,21 +51,21 @@ pub struct Settings {
     /// them. The environment override is unaffected either way — it goes through
     /// `AsMut<Settings>` rather than through the file's shape.
     #[serde(default)]
-    pub service: hems_service::Settings,
+    pub service: ems_service::Settings,
     /// The sites, by identifier.
     pub sites: BTreeMap<String, SiteEntry>,
     /// The releases on offer, by component.
     ///
     /// Signed elsewhere. `fleetd` holds signatures and never a signing key —
     /// see the crate note.
-    pub releases: BTreeMap<String, hems_service::Release>,
+    pub releases: BTreeMap<String, ems_service::Release>,
     /// The Model Context Protocol surface, off by default.
     ///
     /// It holds a household's data, so a token is **required** when it is
     /// switched on and the surface answers as whatever authority that token
     /// already carries here — an operator, or one site.
     #[serde(default)]
-    pub mcp: hems_service::McpSettings,
+    pub mcp: ems_service::McpSettings,
     /// Who may read the fleet roster.
     ///
     /// `/v1/fleet` lists every enrolled household, the version each is on and
@@ -88,7 +88,7 @@ pub struct Settings {
     pub tenants: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// The operator credentials, each scoped to a tenant.
     #[serde(default)]
-    pub operators: Vec<hems_service::OperatorCredential>,
+    pub operators: Vec<ems_service::OperatorCredential>,
     /// Where the enrolments and the running reports are kept.
     ///
     /// Not optional. The credential a box was issued exists in exactly two
@@ -103,7 +103,7 @@ pub struct Settings {
     /// It is also what makes the single-use enrolment single-use across the
     /// whole service rather than per replica.
     #[serde(default)]
-    pub database: hems_service::DbSettings,
+    pub database: ems_service::DbSettings,
     /// How long a box may be quiet before the roster calls it silent, seconds.
     ///
     /// A silent box may be perfectly compliant and unreachable — a household
@@ -112,8 +112,8 @@ pub struct Settings {
     pub silent_after_s: u64,
 }
 
-impl AsMut<hems_service::Settings> for Settings {
-    fn as_mut(&mut self) -> &mut hems_service::Settings {
+impl AsMut<ems_service::Settings> for Settings {
+    fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
     }
 }
@@ -121,16 +121,16 @@ impl AsMut<hems_service::Settings> for Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            service: hems_service::Settings::default(),
+            service: ems_service::Settings::default(),
             sites: BTreeMap::new(),
             releases: BTreeMap::new(),
             tenants: std::collections::BTreeMap::new(),
             operators: Vec::new(),
-            database: hems_service::DbSettings::default(),
+            database: ems_service::DbSettings::default(),
             // Two days. A household that has not reported for two days is worth
             // looking at; one that missed an hour is a router rebooting.
             silent_after_s: 2 * 24 * 3600,
-            mcp: hems_service::McpSettings::default(),
+            mcp: ems_service::McpSettings::default(),
         }
     }
 }

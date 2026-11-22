@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use hems_core::report::DayKpis;
+use ems_core::report::DayKpis;
 use time::{Date, OffsetDateTime};
 
 /// One site's recent days, newest last.
@@ -89,7 +89,7 @@ impl Fleet {
     /// The whole fleet, summarised.
     #[must_use]
     pub fn summarise(&self, now: OffsetDateTime, silent_after: time::Duration) -> Summary {
-        self.summarise_within(&hems_service::SiteScope::Every, now, silent_after)
+        self.summarise_within(&ems_service::SiteScope::Every, now, silent_after)
     }
 
     /// The same, over the households one caller may see.
@@ -106,7 +106,7 @@ impl Fleet {
     #[must_use]
     pub fn summarise_within(
         &self,
-        scope: &hems_service::SiteScope,
+        scope: &ems_service::SiteScope,
         now: OffsetDateTime,
         silent_after: time::Duration,
     ) -> Summary {
@@ -115,8 +115,8 @@ impl Fleet {
             sites: visible().count(),
             ..Summary::default()
         };
-        let mut pv = hems_forecast::Calibration::default();
-        let mut load = hems_forecast::Calibration::default();
+        let mut pv = ems_forecast::Calibration::default();
+        let mut load = ems_forecast::Calibration::default();
 
         for (name, history) in visible() {
             if history
@@ -240,13 +240,13 @@ impl Fleet {
 /// `Calibration::merge` counts **episodes** as well as samples, because one day
 /// is one draw whatever its slot count; a fleet summary that merged slot counts
 /// would call twenty days of one site the same evidence as one day of twenty.
-fn one_episode(coverage: f64, crps: f64) -> hems_forecast::Calibration {
-    hems_forecast::Calibration {
+fn one_episode(coverage: f64, crps: f64) -> ems_forecast::Calibration {
+    ems_forecast::Calibration {
         coverage,
         crps,
         samples: 1,
         episodes: 1,
-        ..hems_forecast::Calibration::default()
+        ..ems_forecast::Calibration::default()
     }
 }
 
@@ -255,15 +255,15 @@ fn one_episode(coverage: f64, crps: f64) -> hems_forecast::Calibration {
 /// They were defined here until `agentd` became a second reader of `/v1/fleet`.
 /// A summary defined inside the service that computes it and mirrored by hand at
 /// the far end is a wire contract held together by two people remembering the
-/// same field names, which is the failure `hems_core::report`'s own module note
+/// same field names, which is the failure `ems_core::report`'s own module note
 /// opens with — so they moved to the domain crate both sides already depend on,
 /// exactly as `DayKpis` did.
-pub use hems_core::report::{Finding, Summary};
+pub use ems_core::report::{Finding, Summary};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hems_core::prelude::CostBreakdown;
+    use ems_core::prelude::CostBreakdown;
     use time::macros::{date, datetime};
 
     const NOW: OffsetDateTime = datetime!(2026-03-01 06:00:00 UTC);
@@ -274,7 +274,7 @@ mod tests {
             site: site.into(),
             date: on,
             self_sufficiency: 0.5,
-            economics: Some(hems_core::report::Economics {
+            economics: Some(ems_core::report::Economics {
                 cost: CostBreakdown {
                     energy_eur: 20.0,
                     ..CostBreakdown::default()
@@ -284,7 +284,7 @@ mod tests {
                     ..CostBreakdown::default()
                 },
             }),
-            forecast: Some(hems_core::report::ForecastScores {
+            forecast: Some(ems_core::report::ForecastScores {
                 pv_coverage: 0.8,
                 pv_crps: 100.0,
                 load_coverage: 0.8,
@@ -350,7 +350,7 @@ mod tests {
         fleet.record(day("a", date!(2026 - 02 - 27)), NOW);
         let mut cheat = day("a", date!(2026 - 02 - 28));
         cheat.foresight_was_perfect = true;
-        cheat.economics = Some(hems_core::report::Economics {
+        cheat.economics = Some(ems_core::report::Economics {
             cost: CostBreakdown {
                 energy_eur: 10.0,
                 ..CostBreakdown::default()
@@ -380,7 +380,7 @@ mod tests {
         let mut fleet = Fleet::default();
         fleet.record(day("a", date!(2026 - 02 - 27)), NOW);
         let mut restated = day("a", date!(2026 - 02 - 27));
-        restated.economics = Some(hems_core::report::Economics {
+        restated.economics = Some(ems_core::report::Economics {
             cost: CostBreakdown {
                 energy_eur: 21.0,
                 ..CostBreakdown::default()
@@ -452,7 +452,7 @@ mod tests {
 #[cfg(test)]
 mod what_a_real_box_reports {
     use super::*;
-    use hems_core::report::ForecastScores;
+    use ems_core::report::ForecastScores;
 
     const NOW: OffsetDateTime = time::macros::datetime!(2026-01-16 08:00:00 UTC);
     const SILENT_AFTER: time::Duration = time::Duration::days(2);
@@ -474,12 +474,12 @@ mod what_a_real_box_reports {
     /// A day from the simulator: it modelled the money and scored its bands.
     fn from_the_simulator(site: &str, day: u8) -> DayKpis {
         DayKpis {
-            economics: Some(hems_core::report::Economics {
-                cost: hems_core::plan::CostBreakdown {
+            economics: Some(ems_core::report::Economics {
+                cost: ems_core::plan::CostBreakdown {
                     energy_eur: 21.08,
                     ..Default::default()
                 },
-                baseline: hems_core::plan::CostBreakdown {
+                baseline: ems_core::plan::CostBreakdown {
                     energy_eur: 24.12,
                     ..Default::default()
                 },
