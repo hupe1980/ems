@@ -1,29 +1,8 @@
-//! Every CloudEvents `type` the workspace emits, the envelope one travels in,
-//! and the signature that says which box sent it.
+//! Event type constants, CloudEvents envelopes and Standard Webhooks signatures.
 //!
-//! An event type is an interface. Spelling one differently in the emitter and
-//! the consumer produces a system that runs, logs nothing unusual, and quietly
-//! does not work — the failure mode that costs the most to find.
-//!
-//! So the names live here as constants, [`ALL`] lists them, and
-//! `cargo xtask check-events` fails the build if a string literal that looks
-//! like an event type appears anywhere in the workspace without being in this
-//! catalogue.
-//!
-//! # Naming
-//!
-//! `de.ems.<aggregate>.<thing>.<past-tense-verb>` — reverse-DNS as CloudEvents
-//! 1.0 recommends, and past tense because an event is something that has already
-//! happened. `de.ems.grid.lpc.limit.received`, not `de.ems.grid.set_limit`.
-//!
-//! # One of them is on a wire, and the rest are not yet
-//!
-//! [`SITE_DAY_REPORTED`] is what a box sends `obsd` at the end of a day — the
-//! only link between the edge and the fleet that exists — and it travels as a
-//! CloudEvent in [`envelope`], signed with [`webhook`]. The rest of the
-//! catalogue is the agreed vocabulary, written down before its first emitter
-//! rather than reverse-engineered from six of them; it arrives with the driver
-//! loop and the local bus `hemsd` still has to grow.
+//! Use [`ALL`] for the catalogue. [`SITE_DAY_REPORTED`] carries household
+//! KPIs to the fleet. [`SITE_DAY_CLOSED`] delivers a receipt to household
+//! subscribers. [`webhook`] authenticates the original event bytes.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -75,10 +54,7 @@ pub const SITE_SETPOINT_ISSUED: &str = "de.ems.site.setpoint.issued";
 pub const SITE_BALANCE_DIVERGED: &str = "de.ems.site.balance.diverged";
 /// A box reported what one local day came to, `ems_core::report::DayKpis`.
 ///
-/// The one event on a wire today: `hemsd --report-to` sends it to `obsd`. It is
-/// keyed on the **local day** rather than on the moment it was sent, so a box
-/// that comes back after an outage and re-sends yesterday is correcting itself
-/// rather than adding a day.
+/// Keyed by site and local day so a retransmission can update the original day.
 pub const SITE_DAY_REPORTED: &str = "de.ems.site.day.reported";
 /// A local day closed, as the household's receipt: whole cents, Wh and the
 /// § 14a lines. Sent to the systems a household subscribed, not to the fleet —

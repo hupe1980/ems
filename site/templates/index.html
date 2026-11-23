@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
 {#- The FAQ lives in content/_index.md and is rendered twice: as <details> for
-    a reader and as FAQPage JSON-LD for a search engine, so the two agree. -#}
+    visible answers and FAQPage JSON-LD. -#}
 {% block schema %}
 {%- set_global extra %},
     {
       "@type": "SoftwareApplication",
       "@id": "{{ config.base_url }}/#app",
-      "name": "hemsd",
+      "name": "ems",
       "description": {{ config.description | json_encode | safe }},
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Linux",
@@ -30,442 +30,60 @@
 {% endblock %}
 
 {% block content %}
-
 <section class="hero">
-  <div class="hero-inner hero-split">
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <h1>Energy management for the <em>German grid.</em></h1>
+      <p>Run a home gateway, trace a building’s charging limit or reconcile an industrial demand peak. Each system runs locally.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="{{ get_url(path='@/peak-challenge.md') }}">Try the peak challenge</a>
+        <a class="btn btn-secondary" href="{{ get_url(path='@/docs/getting-started.md') }}">Run a local demo</a>
+      </div>
+    </div>
+    <figure class="gateway-preview">
+      <a href="{{ get_url(path='@/docs/household.md') }}" aria-label="Explore the household gateway display">
+        <img src="{{ get_url(path='screens/glance-reduced.png') }}" width="2560" height="1600" fetchpriority="high" alt="At 17:30 the battery supplies the home during a grid reduction. Import reads 0.0 kW.">
+      </a>
+      <figcaption>Household wall display during a simulated grid reduction</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="systems">
+  <div class="band-inner">
+    <h2 id="systems">Choose your edge system</h2>
+    <div class="systems-grid">
+      <section>
+        <h3>Home <small>HEMS</small></h3>
+        <p>Schedule EV charging, hot water and battery use around household goals, prices and grid limits. Connect supported equipment or use the simulator.</p>
+        <a href="{{ get_url(path='@/docs/household.md') }}">Read the household guide</a>
+        <a href="{{ get_url(path='@/solar-charging.md') }}">Try solar EV charging</a>
+      </section>
+      <section>
+        <h3>Building <small>BEMS</small></h3>
+        <p>Ask two simulated OCPP stations to share a charging limit and check what each drew. Explore how the building shares solar energy with its occupants.</p>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#replay-a-building-handover">Replay a building handover</a>
+      </section>
+      <section>
+        <h3>Industrial <small>CEMS</small></h3>
+        <p>Choose when the battery starts, then reveal how the original quarter hour closed. Compare the measured mean with the modelled alternative.</p>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#replay-an-industrial-shift">Replay a peak decision</a>
+      </section>
+    </div>
+  </div>
+</section>
+
+<section class="band faq-band" id="faq">
+  <div class="band-inner faq-layout">
     <div>
-      <p class="eyebrow">
-        Open source <span class="dot">·</span> Rust <span class="dot">·</span> § 14a EnWG
-        <span class="dot">·</span> EEBUS <span class="dot">·</span> S2
-      </p>
-      <h1>Home energy management that obeys the German grid — <em>and proves it.</em></h1>
-      <p class="hero-sub">
-        hems, the household product of ems, plans a household's battery, car,
-        heat pump and hot water against
-        tomorrow's prices and weather. The network operator's limit sits in a
-        guard nothing can override, every rule cites its source, and the saving
-        is measured against the same house with the same hardware.
-      </p>
-      <div class="hero-cta">
-        <a class="btn btn-primary" href="{{ get_url(path='@/docs/getting-started.md') | safe }}">Get started</a>
-        <a class="btn btn-ghost" href="{{ get_url(path='@/docs/background.md') | safe }}">New to § 14a?</a>
-        <a class="btn btn-quiet" href="{{ config.extra.repository }}" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="terminal hero-terminal" aria-label="Quickstart">
-      <div class="terminal-bar">
-        <span class="lamp"></span><span class="lamp"></span><span class="lamp"></span>
-        <span class="name">quickstart</span>
-      </div>
-<pre><code>$ git clone https://github.com/hupe1980/ems
-$ cd ems
-$ cargo run -p hemsd -- simulate --day winter
-
-  2026-01-15 — with a § 14a reduction
-  …
-  electricity bill            20.50 €
-  without optimisation        22.70 €
-  saved                        1.10 €
-  § 14a limit in force         90 min
-  …against a minimum of       10.5 kW
-  § 14a limit respected           yes
-  § 9 EEG ceiling respected       yes</code></pre>
-    </div>
-  </div>
-</section>
-
-<section class="stats" aria-label="In numbers">
-  <div class="stats-inner">
-    <div><strong>{{ config.extra.stat_rules }}</strong><span>regulatory citations resolved by the build</span></div>
-    <div><strong>{{ config.extra.stat_tests }}</strong><span>tests, from a unit to a whole simulated day</span></div>
-    <div><strong>{{ config.extra.stat_crates }}</strong><span>domain crates with no clock and no socket</span></div>
-    <div><strong>{{ config.extra.stat_days }}</strong><span>reference days run end to end in CI</span></div>
-    <div><strong>{{ config.extra.stat_horizon }}</strong><span>quarter hours — two days — planned ahead</span></div>
-  </div>
-</section>
-
-<!-- ── The page a household sees ────────────────────────────────────────── -->
-
-<section class="band band-soft" id="household">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>One number, one sentence, and why</h2>
-      <p>The box serves its own page on the household's network: what the house
-      draws, the reason for every device, the cheap hours ahead, and a receipt
-      for the day against the same house without hems. It prices a goal before
-      you set it, notifies a phone when a reduction begins, tells Home Assistant
-      the same, stays awake on a wall, and prints the installer's handover
-      sheet. Every image here is the real page rendering a simulated day.</p>
-    </div>
-    <figure class="screens">
-      <img src="{{ get_url(path='screens/now-reduced.png') | safe }}" width="240" alt="Now: the network operator is reducing the connection and the battery carries the house" loading="lazy">
-      <img src="{{ get_url(path='screens/plan.png') | safe }}" width="240" alt="Plan: the next two days, cheap windows in green" loading="lazy">
-      <img src="{{ get_url(path='screens/day.png') | safe }}" width="240" alt="Day: a receipt for the day" loading="lazy">
-    </figure>
-    <p style="text-align:center"><a href="{{ get_url(path='@/docs/household.md') | safe }}">The household page</a> · <a href="{{ get_url(path='media/walkthrough.mp4') | safe }}">▶ Walkthrough</a> · <code>cargo run -p hemsd -- demo</code></p>
-  </div>
-</section>
-
-<!-- ── Why ──────────────────────────────────────────────────────────────── -->
-
-<section class="band">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>Six things you can check, not just believe</h2>
-      <p>Each claim names the mechanism that makes it true and the page that
-      shows the test.</p>
-    </div>
-    <ul class="cards cards-3">
-      <li class="card">
-        <span class="icon" aria-hidden="true">🛡️</span>
-        <h3><a href="{{ get_url(path='@/docs/architecture.md') | safe }}">A grid limit nothing can widen</a></h3>
-        <p>The § 14a limit lives in a guard plane that runs last and only
-        intersects. A property test over a thousand random households, plans
-        and user overrides holds it.</p>
-      </li>
-      <li class="card">
-        <span class="icon" aria-hidden="true">💬</span>
-        <h3><a href="{{ get_url(path='@/docs/domain-model.md') | safe }}">Every setpoint says why</a></h3>
-        <p>A setpoint cannot be constructed without a reason — the grid, a
-        price, a forecast or the household's own override — so every action on
-        a device can be explained after the fact.</p>
-      </li>
-      <li class="card">
-        <span class="icon" aria-hidden="true">⚖️</span>
-        <h3><a href="{{ get_url(path='@/docs/optimizer.md') | safe }}">Savings against the same house</a></h3>
-        <p>The baseline owns the same battery, run the way it ships, under the
-        same weather and grid rules. Battery wear, comfort and undelivered
-        charge are costs, not footnotes.</p>
-      </li>
-      <li class="card">
-        <span class="icon" aria-hidden="true">📜</span>
-        <h3><a href="{{ get_url(path='@/docs/grid-rules.md') | safe }}">Rules with citations</a></h3>
-        <p>§ 14a, § 9 EEG, Modul 3, MiSpeL and § 42c as code, each number
-        tagged with its clause — <code>[BK6-22-300 A1 4.5.2]</code> — and the
-        build fails on a citation it cannot resolve.</p>
-      </li>
-      <li class="card">
-        <span class="icon" aria-hidden="true">🏠</span>
-        <h3><a href="{{ get_url(path='@/docs/simulation.md') | safe }}">Runs the house without the cloud</a></h3>
-        <p>Guard, arbiter and planner run on the box and take time as an input,
-        so a whole winter day with a reduction is a test that runs in
-        milliseconds.</p>
-      </li>
-      <li class="card">
-        <span class="icon" aria-hidden="true">🔐</span>
-        <h3><a href="{{ get_url(path='@/docs/security.md') | safe }}">The household's data stays the household's</a></h3>
-        <p>A local API for the box's own history, a Data Act export on request,
-        and an aggregator credential that can drive devices but cannot read
-        when somebody was home.</p>
-      </li>
-    </ul>
-  </div>
-</section>
-
-<!-- ── Primer ───────────────────────────────────────────────────────────── -->
-
-<section class="band band-soft">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>Since 2024 a German house is a small power station</h2>
-      <p>Six rules now act on one connection point. hems implements each of them;
-      <a href="{{ get_url(path='@/docs/background.md') | safe }}">the background page</a>
-      explains them in ten minutes.</p>
-    </div>
-    <ul class="primer">
-      <li><a href="{{ get_url(path='@/docs/background.md') | safe }}#ss-14a-enwg-the-network-operator-may-turn-devices-down"><strong>§ 14a EnWG</strong><span>The network operator may turn controllable devices down — never below a minimum.</span></a></li>
-      <li><a href="{{ get_url(path='@/docs/background.md') | safe }}#ss-9-and-ss-51-eeg-the-solar-peak-rules"><strong>§ 9 EEG</strong><span>New roofs feed in 60 % until a smart meter arrives.</span></a></li>
-      <li><a href="{{ get_url(path='@/docs/background.md') | safe }}#ss-41a-enwg-prices-that-change-every-quarter-hour"><strong>§ 41a EnWG</strong><span>Every supplier offers a price that moves every quarter hour.</span></a></li>
-      <li><a href="{{ get_url(path='@/docs/background.md') | safe }}#modul-1-2-and-3-what-the-household-gets-in-return"><strong>Modul 1–3</strong><span>What the household gets back for being controllable.</span></a></li>
-      <li><a href="{{ get_url(path='@/docs/background.md') | safe }}#mispel-which-kilowatt-hour-in-the-battery-was-green"><strong>MiSpeL</strong><span>A battery may mix roof and grid energy, if it can tell them apart.</span></a></li>
-      <li><a href="{{ get_url(path='@/docs/background.md') | safe }}#ss-42c-enwg-sharing-with-the-neighbours"><strong>§ 42c EnWG</strong><span>Neighbours may share a roof's electricity over the grid.</span></a></li>
-    </ul>
-  </div>
-</section>
-
-<!-- ── Architecture ─────────────────────────────────────────────────────── -->
-
-<section class="band">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>Three planes, one order of authority</h2>
-      <p>A house is decided at three speeds. Each layer may only
-      <em>narrow</em> what the layer above allowed, so “the grid limit was
-      respected” is a property of the structure, not a code path somebody
-      remembered to write.</p>
-    </div>
-
-    <figure class="mermaid-figure">
-<pre class="mermaid">
-flowchart TB
-  subgraph edge["hemsd — one process on the box"]
-    direction TB
-    P["<b>Planner</b><br/>two days in quarter hours · advisory"]
-    A["<b>Arbiter</b><br/>every second · inside the guard"]
-    G["<b>Guard</b><br/>every tick · absolute"]
-    D["<b>Drivers</b><br/>bytes in, events out"]
-    P -- "targets + envelopes + a price per asset" --> A
-    A -- "a point inside the interval" --> G
-    G -- "setpoints that name their reason" --> D
-  end
-  SB["Steuerbox<br/>§ 14a limit over EEBUS"] --> D
-  D --> HW["Inverter · battery · wallbox<br/>heat pump · hot-water tank"]
-  CLOUD["tariffd · forecastd<br/>prices and weather"] -. "only ever improves a plan" .-> P
-  D -- "measurements" --> G
-</pre>
-      <figcaption>The guard runs last and only intersects intervals, so nothing
-      below it can widen what it decided.</figcaption>
-    </figure>
-
-    <ul class="cards cards-3">
-      <li class="card">
-        <h3>Measured where the rule measures</h3>
-        <p>§ 14a limits what the controllable devices draw <em>from the grid</em>,
-        so a discharging battery lends them headroom. Applying it per device is
-        the obvious implementation, and it costs money.</p>
-      </li>
-      <li class="card">
-        <h3>Silence is not zero</h3>
-        <p>A controllable device the box cannot hear is assumed to draw its
-        nameplate; a silent inverter, to produce nothing. The verdict names every
-        asset it had to assume for.</p>
-      </li>
-      <li class="card">
-        <h3>Shared limits are shared</h3>
-        <p>The main fuse, sub-boards and the 4,6 kVA single-phase limit go through
-        one weighted max-min allocator, so no device is bounded by a limit it
-        shares as if it had it alone.</p>
-      </li>
-    </ul>
-  </div>
-</section>
-
-<!-- ── One day ──────────────────────────────────────────────────────────── -->
-
-<section class="band band-soft">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>One day, end to end</h2>
-      <p>A January household — a roof, a 10 kWh battery, a car that must be full
-      by seven, a heat pump, a hot-water tank, a dishwasher — and a network
-      operator's reduction from 17:00 to 18:30. Every line is printed by
-      <code>hemsd simulate --day winter</code>, which CI runs.</p>
-    </div>
-
-    <div class="split">
-      <div class="terminal">
-        <div class="terminal-bar">
-          <span class="lamp"></span><span class="lamp"></span><span class="lamp"></span>
-          <span class="name">hemsd simulate --day winter</span>
-        </div>
-<pre><code>  electricity bill                     20.50 €
-  battery life spent                    0.58 €
-  comfort given up                      0.13 €
-  borrowed from the stores              0.39 €
-  cost of the day                      21.61 €
-  without optimisation                 22.70 €
-  saved                                 1.10 €
-  …of it on the bill                    0.83 €
-
-  § 14a limit in force                  90 min
-  …against a minimum of                10.5 kW
-  …covered by the store                1.4 kWh
-  slowest reaction              0 s, commanded
-  § 14a limit respected                    yes
-  § 9 EEG ceiling respected                yes
-
-  production forecast, CRPS  173 W (83 % of 30 lit)
-  load forecast, CRPS      18 W (84 % covered)</code></pre>
-      </div>
-
-      <ul class="feature-list">
-        <li>
-          <h3>saved, and …of it on the bill</h3>
-          <p>The saving charges battery wear, comfort and undelivered service.
-          The bill difference is the flattering number — and here it is the
-          smaller one, because the factory controller cycles the pack harder.</p>
-        </li>
-        <li>
-          <h3>without optimisation</h3>
-          <p>The same service with the same equipment: the same battery on the
-          self-consumption rule hybrid inverters ship with, a wallbox that starts
-          on plug-in, ordinary thermostats, the same weather and grid rules.</p>
-        </li>
-        <li>
-          <h3>…covered by the store</h3>
-          <p>Energy the battery lent the controllable devices during the
-          reduction, which never crossed the connection point and so never
-          counted against the limit.</p>
-        </li>
-        <li>
-          <h3>The forecast lines</h3>
-          <p>The planner only knows what six weeks of the box's own metering
-          could have taught it, and the day is played against weather it never
-          saw. Each day scores its own forecasts beside the money.</p>
-        </li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<!-- ── Compare ──────────────────────────────────────────────────────────── -->
-
-<section class="band">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>Questions to ask any energy manager</h2>
-      <p>The ones that decide whether a household can trust it. Here are hems's
-      answers, each one something you can verify in the source.</p>
-    </div>
-    <div class="table-wrap">
-      <table class="compare">
-        <thead><tr><th scope="col">Ask</th><th scope="col">hems answers</th></tr></thead>
-        <tbody>
-          <tr><th scope="row">Can a plan, an app or an aggregator push a device past the § 14a limit?</th><td>No. The guard clamps every instruction and tells an external manager when it did.</td></tr>
-          <tr><th scope="row">What is the saving measured against?</th><td>The same house, hardware, weather and rules, with wear and comfort charged as costs.</td></tr>
-          <tr><th scope="row">Which clause does this number come from?</th><td>Every regulatory number carries its citation; the build resolves all {{ config.extra.stat_rules }}.</td></tr>
-          <tr><th scope="row">What happens when the internet is down?</th><td>The box keeps planning on cached prices and weather and enforces the limit locally.</td></tr>
-          <tr><th scope="row">Why did my battery just discharge?</th><td>Every setpoint carries its reason, and the box reports it on its local API.</td></tr>
-          <tr><th scope="row">Who can read my consumption history?</th><td>The household. An aggregator's credential can drive devices, not read the history.</td></tr>
-          <tr><th scope="row">Can I use another energy manager?</th><td>Yes, over S2 (EN 50491-12-2), with a credential you can withdraw.</td></tr>
-          <tr><th scope="row">Can I read the code that decides?</th><td>Yes. MIT OR Apache-2.0, and the domain crates are usable on their own.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</section>
-
-<!-- ── The fleet ────────────────────────────────────────────────────────── -->
-
-<section class="band band-soft">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>One box, then ten thousand</h2>
-      <p>Six services stand around the box, and none of them can make the house
-      unsafe or unlawful: the § 14a limit arrives on a wire from the Steuerbox,
-      and prices and weather only ever make a plan better.</p>
-    </div>
-
-    <figure class="mermaid-figure">
-<pre class="mermaid">
-flowchart LR
-  subgraph house["the household"]
-    H["<b>hemsd</b><br/>guard · arbiter · planner<br/>two years of § 14a evidence"]
-  end
-  subgraph fleet["the fleet"]
-    direction TB
-    T["<b>tariffd</b><br/>day-ahead prices"]
-    F["<b>forecastd</b><br/>irradiance"]
-    HI["<b>histd</b><br/>evidence · Nachweis · Data Act export"]
-    O["<b>obsd</b><br/>breaches counted, never averaged"]
-    FL["<b>fleetd</b><br/>enrolment · signed config · releases"]
-    AG["<b>agentd</b><br/>proposes · cannot act"]
-  end
-  T -- "prices" --> H
-  F -- "irradiance" --> H
-  H -- "evidence" --> HI
-  H -- "a signed day" --> O
-  O -. "a population" .-> AG
-  NB(["network operator"]) -. "Nachweis" .-> HI
-</pre>
-      <figcaption>Every arrow into the box carries something that can only
-      improve a plan. Each fleet service can also answer read-only over the Model
-      Context Protocol, authorising every call as its own caller.</figcaption>
-    </figure>
-  </div>
-</section>
-
-<!-- ── Use a crate ──────────────────────────────────────────────────────── -->
-
-<section class="band">
-  <div class="band-inner">
-    <div class="split">
-      <div>
-        <h2 class="plain">Or use one crate on its own</h2>
-        <p class="muted">The domain crates do no I/O and take time as a
-        parameter. <code>ems-grid</code> is the German grid rules,
-        <code>ems-tariff</code> what a kilowatt-hour costs,
-        <code>ems-flex</code> a household's flexibility in S2.</p>
-        <ul class="pill-row">
-          <li class="pill">ems-core</li>
-          <li class="pill">ems-grid</li>
-          <li class="pill">ems-tariff</li>
-          <li class="pill">ems-forecast</li>
-          <li class="pill">ems-optimizer</li>
-          <li class="pill">ems-realtime</li>
-          <li class="pill">ems-device</li>
-          <li class="pill">ems-drv</li>
-          <li class="pill">ems-flex</li>
-          <li class="pill">ems-events</li>
-        </ul>
-      </div>
-      <div>
-<pre><code>use ems_grid::para14a::{ControlMode, SteuVe, minimum_power};
-use ems_core::prelude::{AssetId, Fallgruppe, Power};
-
-let devices = [
-    SteuVe {
-        assets: vec![AssetId::new("wallbox")?],
-        fallgruppe: Fallgruppe::Ladepunkt,
-        power: Power::from_kw(11.0),
-    },
-    SteuVe {
-        assets: vec![AssetId::new("battery")?],
-        fallgruppe: Fallgruppe::Stromspeicher,
-        power: Power::from_kw(5.0),
-    },
-];
-
-// 4,2 kW + (2 − 1) × 0,8 × 4,2 kW = 7,56 kW — the floor the
-// network operator may not go below, [BK6-22-300 A1 4.5.2].
-let floor = minimum_power(&amp;devices, ControlMode::Ems);
-assert!((floor.kw() - 7.56).abs() &lt; 1e-9);</code></pre>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── FAQ ──────────────────────────────────────────────────────────────── -->
-
-<section class="band band-soft" id="faq">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>Questions</h2>
+      <h2>How the gateway works</h2>
+      <a href="{{ get_url(path='@/docs/background.md') }}">German grid rules explained</a>
     </div>
     <div class="faq">
       {% for f in section.extra.faq %}
-      <details>
-        <summary>{{ f.q }}</summary>
-        <p>{{ f.a }}</p>
-      </details>
+      <details><summary>{{ f.q }}</summary><p>{{ f.a }}</p></details>
       {% endfor %}
     </div>
   </div>
 </section>
-
-<!-- ── Where to start ───────────────────────────────────────────────────── -->
-
-<section class="band">
-  <div class="band-inner">
-    <div class="section-head">
-      <h2>Where to start</h2>
-      <p>Run a simulated day first, then read how the box is arranged.</p>
-    </div>
-    <ol class="cards cards-3">
-      {% set docs = get_section(path="docs/_index.md") %}
-      {% for p in docs.pages %}{% if loop.index <= 6 %}
-      <li class="card">
-        <span class="num">{{ loop.index }}</span>
-        <h3><a href="{{ p.permalink }}">{{ p.title }}</a></h3>
-        <p>{{ p.description | default(value="") }}</p>
-      </li>
-      {% endif %}{% endfor %}
-    </ol>
-    <div class="hero-cta">
-      <a class="btn btn-primary" href="{{ get_url(path='@/docs/getting-started.md') | safe }}">Run a day</a>
-      <a class="btn btn-ghost" href="{{ get_url(path='@/docs/_index.md') | safe }}">All documentation</a>
-    </div>
-  </div>
-</section>
-
 {% endblock %}

@@ -8,11 +8,26 @@ use rust_decimal::prelude::ToPrimitive;
 use crate::tariff::{Remuneration, Tariff};
 
 /// Everything a kilowatt-hour costs, or earns, in one quarter hour.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SlotPrice {
     /// The quarter hour.
     pub slot: Slot,
+    /// Published day-ahead market price for this quarter, before supplier terms.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, with = "rust_decimal::serde::str_option")
+    )]
+    pub market_ct: Option<Decimal>,
+    /// Seller reference where the household activated a signed sheet.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub contract: Option<String>,
+    /// Fixed yearly charges including the network adjustment, euros.
+    #[cfg_attr(feature = "serde", serde(default, with = "rust_decimal::serde::str"))]
+    pub annual_fixed_eur: Decimal,
     /// The energy component, net, ct/kWh.
     #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
     pub energy_ct: Decimal,
@@ -39,6 +54,16 @@ pub struct SlotPrice {
     /// Grams of CO₂ per kilowatt-hour drawn, where a source provides it.
     #[cfg_attr(feature = "serde", serde(default))]
     pub co2_g_per_kwh: Option<f64>,
+    /// Applicable EEG support value, where known, in ct/kWh.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, with = "rust_decimal::serde::str_option")
+    )]
+    pub support_ct: Option<Decimal>,
+    /// Whether export remuneration is determined for this slot. A site whose
+    /// export depends on the wholesale price needs an actual observation.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub export_known: bool,
     /// What a kilowatt-hour **allocated by a § 42c community** costs here,
     /// gross, ct/kWh — `None` where the household is not in one.
     ///
@@ -125,6 +150,13 @@ impl PriceStack {
         self.slots.iter().find(|p| p.slot == slot)
     }
 
+    /// Whether this slot has a known gross import price at or below the household cap.
+    #[must_use]
+    pub fn within_cap(&self, slot: Slot, cap_ct: i32) -> bool {
+        self.at(slot)
+            .is_some_and(|price| price.price_known && price.import_ct <= Decimal::from(cap_ct))
+    }
+
     /// The cheapest slots to draw in, cheapest first.
     ///
     /// The one query a household actually asks — "when should the car charge?" —
@@ -172,6 +204,13 @@ impl PriceStack {
 /// Resolve one slot of a tariff.
 #[must_use]
 pub fn price_at(tariff: &Tariff, slot: Slot) -> SlotPrice {
+    price_at_market(tariff, slot, tariff.energy.spot_at(slot))
+}
+
+/// Resolve import and export with the separately observed raw market price.
+/// A fixed retail contract can still have market-dependent export earnings.
+#[must_use]
+pub fn price_at_market(tariff: &Tariff, slot: Slot, market_price: Option<Decimal>) -> SlotPrice {
     let (energy_ct, price_known) = tariff.energy.at(slot);
     let (network_ct, stufe) = tariff.network.at(slot);
     // The levies of the slot's own year: a plan that crosses 1 January is
@@ -180,7 +219,6 @@ pub fn price_at(tariff: &Tariff, slot: Slot) -> SlotPrice {
     let levies_ct = levies.sum_net();
     let import_ct = levies.gross(energy_ct + network_ct + levies_ct);
 
-    let market_price = tariff.energy.spot_at(slot);
     let negative = market_price.is_some_and(|p| p < Decimal::ZERO);
     // § 51 Abs. 1 EEG reduces the **anzulegender Wert** to zero in a negative
     // quarter hour, and the anzulegender Wert is what both remuneration schemes
@@ -218,8 +256,32 @@ pub fn price_at(tariff: &Tariff, slot: Slot) -> SlotPrice {
         }
     };
 
+    let nominal_support = match tariff.feed_in.scheme {
+        Remuneration::None => Decimal::ZERO,
+        Remuneration::Eeg { ct_per_kwh } => ct_per_kwh,
+        Remuneration::Direktvermarktung {
+            marktwert_ct_per_kwh,
+            praemie_ct_per_kwh,
+        } => marktwert_ct_per_kwh + praemie_ct_per_kwh,
+    };
+    let support_ct =
+        if nominal_support.is_zero() || !tariff.feed_in.para51_applies_on(slot.local_date()) {
+            Some(nominal_support)
+        } else {
+            market_price.map(|spot| {
+                if spot < Decimal::ZERO {
+                    Decimal::ZERO
+                } else {
+                    nominal_support
+                }
+            })
+        };
     SlotPrice {
         slot,
+        support_ct,
+        market_ct: market_price,
+        contract: None,
+        annual_fixed_eur: tariff.standing_charge_eur_per_year + tariff.network.annual_fixed_eur(),
         energy_ct,
         network_ct,
         levies_ct,
@@ -228,6 +290,14 @@ pub fn price_at(tariff: &Tariff, slot: Slot) -> SlotPrice {
         stufe,
         negative_price_hour: negative,
         price_known,
+        export_known: market_price.is_some()
+            || match tariff.feed_in.scheme {
+                Remuneration::None => true,
+                Remuneration::Eeg { ct_per_kwh } => {
+                    ct_per_kwh.is_zero() || !tariff.feed_in.para51_applies_on(slot.local_date())
+                }
+                Remuneration::Direktvermarktung { .. } => false,
+            },
         // The grid's own intensity where the tariff carries one. Where it does
         // not, the planner falls back to a flat annual figure — see
         // `Tariff::carbon_g_per_kwh` for why a *constant* makes a carbon price

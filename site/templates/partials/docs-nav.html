@@ -1,21 +1,14 @@
-{#- The documentation sidebar, grouped by `extra.group` in each page's front
-    matter, in the order `config.extra.doc_groups` lists them. -#}
 {% set docs = get_section(path="docs/_index.md") %}
 <nav class="docs-nav" aria-label="Documentation">
-  <div class="search" hidden id="search">
-    <label class="skip" for="search-input">Search the documentation</label>
-    <input id="search-input" type="search" placeholder="Search the docs…  /" autocomplete="off" spellcheck="false">
-    <ul class="search-results" id="search-results"></ul>
-  </div>
+  {% include "partials/search.html" %}
   <p class="group-title"><a href="{{ docs.permalink }}"{% if here == docs.path %} aria-current="page"{% endif %}>Documentation</a></p>
-  {% set_global n = 0 %}
   {% for g in config.extra.doc_groups %}
   <p class="nav-group">{{ g }}</p>
   <ol>
-    {% for p in docs.pages %}{% if p.extra.group == g %}{% set_global n = n + 1 %}
+    {% for p in docs.pages %}{% if p.extra.group == g %}
     <li>
       <a href="{{ p.permalink }}"{% if here == p.path %} aria-current="page"{% endif %}>
-        <span class="num">{{ n }}</span><span>{{ p.title }}</span>
+        {{ p.title }}
       </a>
     </li>
     {% endif %}{% endfor %}

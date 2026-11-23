@@ -29,10 +29,16 @@ impl tokio_modbus::server::Service for Units {
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if matches!(
+            request.request,
+            Request::WriteMultipleRegisters(..) | Request::WriteSingleRegister(..)
+        ) {
+            physics.write_requests += 1;
+        }
         let unit = match request.slave {
             UNIT_INVERTER => &mut physics.inverter,
             UNIT_METER => &mut physics.meter,
-            UNIT_BATTERY => &mut physics.battery,
+            UNIT_BATTERY if physics.pack.is_some() => &mut physics.battery,
             // What a gateway answers for a unit it does not front: 0x0B.
             _ => return ready(Err(ExceptionCode::GatewayTargetDevice)),
         };

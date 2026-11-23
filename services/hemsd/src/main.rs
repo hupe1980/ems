@@ -13,73 +13,69 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run one day under several weathers, under each risk policy, and report
-    /// what hedging costs and what it buys.
-    ///
-    /// The only evaluation that can judge a hedge: a single realisation pays the
-    /// premium and never makes the claim, so it reports insurance as a pure
-    /// loss. See `hemsd::backtest`.
+    /// Compare risk policies across weather realizations for one reference day.
     Risk {
         /// Which day to run.
         #[arg(long, value_enum, default_value_t = Day::Winter)]
         day: Day,
-        /// How many weathers to run it under.
-        ///
-        /// Small on purpose: three futures cost five to seven times the solve, so this
-        /// is minutes rather than seconds. Enough to see a sign, not enough to
-        /// quote a figure.
+        /// Number of weather realizations.
         #[arg(long, default_value_t = 4)]
         days: usize,
         /// Report as JSON rather than a table.
         #[arg(long)]
         json: bool,
     },
-    /// Run one day under many weathers and score the **forecast band** over
-    /// them.
-    ///
-    /// The question `simulate` cannot answer. Forecast error is correlated
-    /// across a day, so ninety-six quarter hours of one Tuesday are close to
-    /// one draw: a day's coverage figure is a coin toss reported to three
-    /// significant figures, and `Calibration::is_well_calibrated` refuses to
-    /// answer on fewer than twenty independent days. This produces them.
-    ///
-    /// One policy — the ordinary median plan — because the box learns the same
-    /// roof whatever it then does with the band, and running four policies to
-    /// answer a question about the forecast costs four times as long for the
-    /// same answer.
+    /// Score the forecast band across independent weather realizations.
     Backtest {
         /// Which day to run.
         #[arg(long, value_enum, default_value_t = Day::Summer)]
         day: Day,
-        /// How many weathers to run it under.
+        /// Number of weather realizations.
         #[arg(long, default_value_t = 20)]
         days: usize,
         /// Report as JSON rather than a table.
         #[arg(long)]
         json: bool,
     },
-    /// Manage a real household: open the drivers' sockets and run the guard and
-    /// the arbiter against them until the process is asked to stop.
-    ///
-    /// The other subcommands run a *simulated* day and finish in seconds. This
-    /// one is the box on the wall.
+    /// Calculate a local seller sheet's gross import price for one quarter hour.
+    PriceSheet {
+        /// Price sheet to inspect offline.
+        file: PathBuf,
+        /// Verify a compact Ed25519 JWS and print its public-key fingerprint.
+        #[arg(long)]
+        signed: bool,
+        /// Start of the quarter hour as an RFC 3339 timestamp with offset.
+        #[arg(long)]
+        at: String,
+        /// Published net index for this slot (ct/kWh), required for a dynamic contract.
+        #[arg(long, allow_hyphen_values = true)]
+        index_ct: Option<String>,
+    },
+    /// Check the configuration, device responses, pairing and gateway clock.
+    Doctor {
+        /// Configuration of the running household gateway.
+        #[arg(long, env = "EMS_HEMSD_CONFIG")]
+        config: PathBuf,
+        /// PEM certificate for a gateway using a private trust root.
+        #[arg(long)]
+        ca_cert: Option<PathBuf>,
+    },
+    /// Run the household gateway with its configured devices.
     Run {
-        /// The configuration file. Absent, or absent from disk, means the
-        /// defaults — the reference household and no drivers at all, which is a
-        /// box that keeps the house safe by assuming the worst about every
-        /// device and says so at start-up.
-        #[arg(long, env = "HEMS_HEMSD_CONFIG")]
+        /// Household TOML file containing the site and driver list.
+        #[arg(long, env = "EMS_HEMSD_CONFIG")]
         config: Option<PathBuf>,
         /// Check the configuration, build the site and the drivers, and exit
         /// without opening a socket.
-        ///
-        /// What an installer runs before leaving: every mismatch this daemon can
-        /// refuse — a driver for an asset that does not exist, two drivers for
-        /// one asset, a controllable device whose driver cannot command it, a
-        /// § 14a household with nothing that could hear a reduction — is
-        /// refused here rather than by a limit that never arrives.
         #[arg(long)]
         check: bool,
+    },
+    /// Read the configured Matter appliance once and print its power observation as JSON.
+    #[cfg(feature = "matter")]
+    MatterRead {
+        /// Household configuration containing the commissioned point.
+        #[arg(long, env = "EMS_HEMSD_CONFIG")]
+        config: PathBuf,
     },
     /// Replay a reference day through the household page, on this machine.
     ///
@@ -215,7 +211,7 @@ enum Command {
         /// rather than the whole report — and this is the producer of it. Without
         /// one, `obsd` is a service with no caller, which is the failure mode
         /// this workspace keeps finding in itself.
-        #[arg(long, env = "HEMS_OBSD_URL")]
+        #[arg(long, env = "EMS_OBSD_URL")]
         report_to: Option<String>,
         /// The secret the box and the fleet share, for the Standard Webhooks
         /// signature over the report.
@@ -224,7 +220,7 @@ enum Command {
         /// unsigned day is a fleet view anybody who can reach it may write to —
         /// and what they would be writing is the list of households that did not
         /// respect a network operator's reduction.
-        #[arg(long, env = "HEMS_OBSD_SECRET")]
+        #[arg(long, env = "EMS_OBSD_SECRET")]
         report_secret: Option<String>,
         /// Keep the day's § 14a evidence and quarter-hour registers in a local
         /// store at this path, `[A1 7.2]` and `[A1 7.3]`.
@@ -332,14 +328,31 @@ fn clock(minutes: u16) -> String {
 /// leaving the cellar. The alternative is a box that comes up, looks healthy and
 /// is never told about a reduction, which is the failure this daemon exists to
 /// make impossible.
-async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result<()> {
-    let settings: hemsd::Settings = ems_service::load(config, "HEMS_HEMSD")?;
+type Installer = std::sync::Arc<hemsd::runtime::installation::Installer>;
+
+async fn manage(
+    config: Option<&std::path::Path>,
+    check: bool,
+    installer: Option<Installer>,
+) -> anyhow::Result<()> {
+    let settings: hemsd::Settings = ems_service::load(config, "EMS_HEMSD")?;
+    if let (Some(path), Some(installer)) = (config, &installer)
+        && installer.empty_site()?
+    {
+        return hemsd::runtime::first_run::run(path, &settings, installer.clone()).await;
+    }
     ems_service::init_tracing(
         ems_service::identity!(),
         &settings.service.log_filter,
         settings.service.log_json,
     );
 
+    #[cfg(feature = "matter")]
+    let meter = settings
+        .matter
+        .as_ref()
+        .map(hemsd::runtime::matter::Meter::new)
+        .transpose()?;
     if check {
         let now = time::OffsetDateTime::now_utc();
         // No store: `run --check` validates the *configuration*, and reaching
@@ -421,7 +434,7 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
     }
 
     let (signal, trigger) = ems_service::Shutdown::channel();
-    tokio::spawn(ems_service::shutdown::on_signal(trigger));
+    tokio::spawn(ems_service::shutdown::on_signal(trigger.clone()));
 
     let health = ems_service::Health::new();
     // Not ready until a driver has actually been heard from. A box that reported
@@ -464,10 +477,12 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
     )
     .with_days(running.store.clone())
     .with_home(hemsd::runtime::api::HomeSources {
+        health: health.clone(),
         site: Some(std::sync::Arc::new(running.household.site.clone())),
         plan: running.plan.clone(),
         prices: running.prices.clone(),
         goal: running.goal.clone(),
+        tariff_changed: running.tariff_changed.clone(),
         car: running.car.clone(),
         tank: running.tank.clone(),
         last: running.last.clone(),
@@ -475,7 +490,21 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
         https_fingerprint: https.as_ref().map(|(_, f)| f.clone()),
     })
     .with_commissioning(hemsd::runtime::handover::Commissioning::of(&settings))
+    .with_settings(settings.clone())
+    .with_registry(std::sync::Arc::clone(&running.registry))
     .with_push(push.clone());
+    let _control_box_gauge = local.publish_control_box_health()?;
+    #[cfg(feature = "matter")]
+    let local = if let Some(meter) = meter {
+        let reader = meter.clone();
+        let stop = signal.clone();
+        health.vital("matter", signal.clone(), async move {
+            ems_service::shutdown::until(stop, reader.poll()).await;
+        });
+        local.with_matter(meter)
+    } else {
+        local
+    };
     // Events out: kept in the store where there is one, and in memory where
     // there is not — a box without a store can still tell Home Assistant.
     let hooks = hemsd::runtime::webhooks::Webhooks::new(
@@ -507,6 +536,18 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
             ),
         );
     }
+    let local = if let Some(installer) = &installer {
+        // A stored or configured credential survives the handover to the candidate.
+        if settings.store_path.is_some()
+            || (settings.api.token.is_some() && settings.ship.listen.is_none())
+        {
+            local.with_installer(installer.clone(), trigger.clone())
+        } else {
+            local
+        }
+    } else {
+        local
+    };
     let router = hemsd::runtime::surfaces_over(
         local,
         settings.s2.enabled.then(|| {
@@ -531,16 +572,133 @@ async fn manage(config: Option<&std::path::Path>, check: bool) -> anyhow::Result
         Some((config, _)) => server.with_tls(config),
         None => server,
     };
-    server.run_until(signal).await?;
+    let listener = tokio::net::TcpListener::bind(settings.service.listen).await?;
+    let served = server.serve_on(listener, signal);
+    tokio::pin!(served);
+    if let Some(installer) = installer
+        && let Some(assets) = installer.trial_assets()?
+    {
+        tokio::select! {
+            result = &mut served => return Ok(result?),
+            () = confirm_device(assets, installer, running.registry, trigger, settings.control.tick_period_s) => {}
+        }
+    }
+    served.await?;
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn confirm_device(
+    roles: Vec<hemsd::runtime::installation::DeviceRole>,
+    installer: Installer,
+    registry: hemsd::runtime::Shared,
+    stop: ems_service::shutdown::ShutdownTrigger,
+    tick_seconds: u64,
+) {
+    let wait = async {
+        loop {
+            {
+                let state = registry
+                    .lock()
+                    .await
+                    .state(None, time::OffsetDateTime::now_utc());
+                if roles.iter().all(|role| {
+                    state.assets.iter().any(|(id, measurement)| {
+                        id.as_str() == role.asset() && role.measured(measurement)
+                    })
+                }) {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    };
+    let limit = std::time::Duration::from_secs(tick_seconds.saturating_mul(3).clamp(30, 180));
+    if tokio::time::timeout(limit, wait).await.is_ok() && installer.confirm().is_ok() {
+        return;
+    }
+    if let Err(error) = installer.rollback() {
+        tracing::error!(%error, "could not restore the previous configuration");
+    } else {
+        installer.request_restart();
+    }
+    stop.trigger();
+}
+
+fn main() -> anyhow::Result<()> {
     let command = Cli::parse().command;
-    // `run` configures its own logging from the file it is about to read, which
-    // is the only subcommand with a file to read it from. The rest are
-    // command-line tools and log for a person watching them.
+    if let Command::Run {
+        config,
+        check: false,
+    } = &command
+    {
+        use std::io::ErrorKind;
+        let path = config
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new("hemsd.toml"));
+        if !path.exists() {
+            let mut open = std::fs::OpenOptions::new();
+            open.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                open.mode(0o600);
+            }
+            match open.open(path) {
+                Ok(file) => file.sync_all()?,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let installer = match hemsd::runtime::installation::Installer::open(path) {
+            Ok(installer) => Some(std::sync::Arc::new(installer)),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
+                ) && !path.with_added_extension("apply.json").exists() =>
+            {
+                None
+            }
+            Err(error) => return Err(error.into()),
+        };
+        loop {
+            let result = {
+                let runtime = tokio::runtime::Runtime::new()?;
+                if let Some(installer) = &installer {
+                    if !runtime.block_on(installer.candidate_ready())? {
+                        tracing::warn!(
+                            "reviewed inverter is unavailable or changed; restoring the previous configuration"
+                        );
+                        installer.rollback()?;
+                    }
+                    installer.begin()?;
+                }
+                runtime.block_on(manage(Some(path), false, installer.clone()))
+            };
+            let Some(installer) = &installer else {
+                return result;
+            };
+            if result.is_err()
+                && installer
+                    .receipt()?
+                    .is_some_and(|r| r.outcome == hemsd::runtime::installation::Outcome::Restarting)
+            {
+                if let Err(error) = &result {
+                    tracing::warn!(%error, "candidate gateway failed to start; restoring previous configuration");
+                }
+                installer.rollback()?;
+                continue;
+            }
+            if !installer.take_restart() {
+                return result;
+            }
+        }
+    }
+    tokio::runtime::Runtime::new()?.block_on(execute(command))
+}
+
+async fn execute(command: Command) -> anyhow::Result<()> {
+    // The long-running gateway takes its tracing settings from the household configuration.
     if !matches!(command, Command::Run { .. }) {
         tracing_subscriber::fmt()
             .with_env_filter(
@@ -551,7 +709,65 @@ async fn main() -> anyhow::Result<()> {
     }
 
     match command {
-        Command::Run { config, check } => return manage(config.as_deref(), check).await,
+        Command::PriceSheet {
+            file,
+            signed,
+            at,
+            index_ct,
+        } => {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::fs::File::open(file)?
+                .take(if signed {
+                    hemsd::price_sheet::MAX_ENVELOPE as u64 + 1
+                } else {
+                    65_537
+                })
+                .read_to_end(&mut bytes)?;
+            let (sheet, signer) = if signed {
+                let verified = hemsd::price_sheet::verify(&bytes)?;
+                (
+                    verified.sheet,
+                    Some(
+                        serde_json::json!({"kid":verified.key_id,"fingerprint":verified.fingerprint}),
+                    ),
+                )
+            } else {
+                (ems_tariff::sheet::PriceSheet::parse(&bytes)?, None)
+            };
+            let instant =
+                time::OffsetDateTime::parse(&at, &time::format_description::well_known::Rfc3339)?;
+            let slot = ems_core::prelude::Slot::starting_at(instant)
+                .ok_or_else(|| anyhow::anyhow!("--at must start on a quarter-hour boundary"))?;
+            let index = index_ct
+                .as_deref()
+                .map(rust_decimal::Decimal::from_str_exact)
+                .transpose()?;
+            let price = sheet.quote(slot, index)?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "contract": sheet.contract, "signer":signer, "at": at, "index":sheet.index,
+                    "published_components":sheet.published_components,
+                    "gross_import_ct_per_kwh":price.import_ct.normalize().to_string(),
+                })
+            );
+        }
+        Command::Doctor { config, ca_cert } => {
+            return hemsd::doctor::run(&config, ca_cert.as_deref()).await;
+        }
+        Command::Run { config, check } => return manage(config.as_deref(), check, None).await,
+        #[cfg(feature = "matter")]
+        Command::MatterRead { config } => {
+            anyhow::ensure!(config.is_file(), "household configuration file is missing");
+            let settings: hemsd::Settings = ems_service::load(Some(&config), "EMS_HEMSD")?;
+            let point = settings.matter.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("add a [matter] point to the household configuration")
+            })?;
+            let meter = hemsd::runtime::matter::Meter::new(point)?;
+            meter.refresh().await?;
+            println!("{}", serde_json::to_string(&meter.view())?);
+        }
         Command::Openapi { markdown } => {
             print!(
                 "{}",
@@ -692,7 +908,7 @@ async fn main() -> anyhow::Result<()> {
             if let Some(url) = report_to {
                 let secret = report_secret.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "--report-to needs --report-secret (or HEMS_OBSD_SECRET): \
+                        "--report-to needs --report-secret (or EMS_OBSD_SECRET): \
                          the fleet will not take an unsigned day"
                     )
                 })?;
@@ -810,6 +1026,10 @@ fn record_day(
         .map(|q| hemsd::store::Recorded {
             registers: *q,
             production: result.production_kwh_by_slot.get(&q.slot).copied(),
+            watched: false,
+            replay: None,
+            storage: None,
+            terms: None,
         })
         .collect();
     store.put_quarter_hours(&recorded, now)?;
@@ -1033,7 +1253,7 @@ async fn house(args: HouseArgs) -> anyhow::Result<()> {
     let config = out.to_path_buf();
     let managed = async {
         if run {
-            manage(Some(&config), false).await
+            manage(Some(&config), false, None).await
         } else {
             std::future::pending().await
         }

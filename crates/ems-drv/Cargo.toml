@@ -1,6 +1,6 @@
 [package]
 name        = "ems-drv"
-description = "Drivers for a home energy system — the sans-I/O contract, plus EEBUS (§ 14a) and SunSpec over Modbus behind features"
+description = "Protocol adapters for energy devices and grid controls"
 keywords    = ["energy", "hems", "eebus", "sunspec", "modbus"]
 categories  = ["science", "hardware-support"]
 readme      = "README.md"
@@ -13,6 +13,8 @@ homepage.workspace     = true
 rust-version.workspace = true
 
 [dependencies]
+matter-kit = { workspace = true, optional = true }
+ocpp-kit = { workspace = true, optional = true }
 ems-core = { workspace = true }
 serde     = { workspace = true, optional = true }
 thiserror = { workspace = true }
@@ -28,6 +30,10 @@ sunspec   = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [features]
+## Matter Electrical Power Measurement attributes.
+matter = ["dep:matter-kit"]
+## Read-only OCPP 1.6J metering and profile acknowledgements.
+ocpp = ["dep:ocpp-kit"]
 default = ["serde"]
 ## Serialize/deserialize every public type.
 serde = ["dep:serde", "ems-core/serde"]

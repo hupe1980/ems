@@ -146,9 +146,9 @@ pub fn roof_health(_: &mut SchemaGenerator) -> Schema {
 pub fn sunspec_identity(_: &mut SchemaGenerator) -> Schema {
     json_schema!({
         "type": ["object", "null"],
-        "required": ["base", "manufacturer", "model", "version", "serial"],
+        "required": ["base", "inverter_model", "has_immediate_controls", "connection_meter", "storage_meter", "manufacturer", "model", "version", "serial"],
         "properties": {
-            "base": { "type": "integer" }, "manufacturer": { "type": "string" }, "model": { "type": "string" },
+            "base": { "type": "integer" }, "inverter_model": { "type": ["integer", "null"] }, "has_immediate_controls": { "type": "boolean" }, "connection_meter": { "type": "boolean" }, "storage_meter": { "type": "boolean" }, "manufacturer": { "type": "string" }, "model": { "type": "string" },
             "version": { "type": "string" }, "serial": { "type": "string" }
         }
     })
@@ -179,6 +179,57 @@ pub fn routes() -> Vec<Route> {
         answers,
     };
     vec![
+        r(
+            "GET",
+            "/v1/tariff",
+            "Current and next signed supply contract",
+            Household,
+            &[],
+            None,
+            &[
+                (
+                    200,
+                    "Supply schedule",
+                    Json(of::<crate::price_sheet::Status>),
+                ),
+                (503, "Stored schedule unreadable", Text),
+            ],
+        ),
+        r(
+            "POST",
+            "/v1/tariff/preview",
+            "Verify the seller file and review its signer, period and price",
+            Household,
+            &[],
+            Some(of::<crate::price_sheet::Import>),
+            &[
+                (
+                    200,
+                    "Verified terms",
+                    Json(of::<crate::price_sheet::Review>),
+                ),
+                (400, "Invalid file or period", Text),
+                (503, "Storage unavailable", Text),
+            ],
+        ),
+        r(
+            "PUT",
+            "/v1/tariff",
+            "Accept the exact reviewed seller terms",
+            Household,
+            &[],
+            Some(of::<crate::price_sheet::Import>),
+            &[
+                (
+                    200,
+                    "Accepted terms",
+                    Json(of::<crate::price_sheet::Review>),
+                ),
+                (400, "Invalid file or period", Text),
+                (409, "Review changed or missing", Text),
+                (503, "Storage unavailable", Text),
+            ],
+        ),
         r(
             "GET",
             "/livez",
@@ -285,9 +336,12 @@ pub fn routes() -> Vec<Route> {
         r(
             "POST",
             "/v1/goals/{asset}/quote",
-            "What a goal would cost, before it is set: the same plan solved with it",
+            "Price a goal or preview charging now against the saved departure",
             Household,
-            &[],
+            &[(
+                "charge_now",
+                "true compares the saved goal with immediate charging",
+            )],
             Some(goal_body),
             &[
                 (
@@ -344,6 +398,33 @@ pub fn routes() -> Vec<Route> {
             ],
         ),
         r(
+            "PUT",
+            "/v1/goals/{asset}/boost",
+            "Confirm immediate charging to the saved car goal",
+            Household,
+            &[],
+            Some(of::<api::BoostConfirmation>),
+            &[
+                (204, "Requested", Empty),
+                (409, "Goal or price changed", Text),
+                (429, "Quote busy", Text),
+                (503, "Price or vehicle facts unavailable", Text),
+            ],
+        ),
+        r(
+            "DELETE",
+            "/v1/goals/{asset}/boost",
+            "Return the car to its plan",
+            Household,
+            &[],
+            None,
+            &[
+                (204, "Cancelled", Empty),
+                (404, "Unknown asset", Text),
+                (422, "Requires a car", Text),
+            ],
+        ),
+        r(
             "GET",
             "/v1/overrides",
             "The overrides in force",
@@ -374,6 +455,11 @@ pub fn routes() -> Vec<Route> {
             &[
                 (200, "The override as held", Json(of::<api::OverrideView>)),
                 (400, "Not a device name", Empty),
+                (
+                    409,
+                    "Use the household’s priced boost for this charge point",
+                    Empty,
+                ),
             ],
         ),
         r(
@@ -396,14 +482,26 @@ pub fn routes() -> Vec<Route> {
             Household,
             &[
                 ("from", "start, RFC 3339; an hour before `to` by default"),
-                ("to", "end, RFC 3339; now by default"),
+                (
+                    "to",
+                    "exclusive end, RFC 3339; defaults to now or the most recent quarter boundary for explicit summaries",
+                ),
+                (
+                    "resolution",
+                    "quarter_hours for aligned 15-minute buckets; omit for automatic resolution",
+                ),
             ],
             None,
             &[
                 (200, "The readings", Json(of::<crate::series::Window>)),
-                (400, "The window ends before it starts", Empty),
+                (
+                    400,
+                    "Invalid window, resolution or quarter boundary (maximum 1096 days)",
+                    Empty,
+                ),
                 (404, "This box keeps no series", Empty),
                 (500, "It could not be read", Empty),
+                (503, "Another history read is running; retry shortly", Empty),
             ],
         ),
         r(
@@ -498,11 +596,11 @@ pub fn routes() -> Vec<Route> {
         r(
             "GET",
             "/v1/trust",
-            "Whether the box kept its identity, and whether its control box is heard",
+            "Installer diagnostics for identity, devices and quarter-hour history",
             Household,
             &[],
             None,
-            &[(200, "The check", Json(of::<handover::TrustCheck>))],
+            &[(200, "The check", Json(of::<crate::doctor::Diagnostics>))],
         ),
         r(
             "GET",
@@ -560,6 +658,89 @@ pub fn routes() -> Vec<Route> {
                     Text,
                 ),
                 (500, "It could not be drawn", Empty),
+            ],
+        ),
+        r(
+            "POST",
+            "/v1/commissioning/first-meter",
+            "Preview a connection meter and optional observed assets on an empty site",
+            Household,
+            &[],
+            Some(of::<crate::runtime::first_run::FirstMeter>),
+            &[
+                (
+                    200,
+                    "Verified devices and validated initial configuration",
+                    Json(of::<crate::runtime::first_run::MeterReview>),
+                ),
+                (400, "Invalid site inputs", Text),
+                (422, "Unsupported or silent device", Text),
+                (404, "Site is already commissioned", Text),
+            ],
+        ),
+        r(
+            "GET",
+            "/v1/commissioning/transfer",
+            "Read the controller handover review",
+            Household,
+            &[],
+            None,
+            &[
+                (
+                    200,
+                    "Current review",
+                    Json(of::<crate::runtime::authority::Review>),
+                ),
+                (404, "No handover pending", Text),
+            ],
+        ),
+        r(
+            "PUT",
+            "/v1/commissioning/transfer",
+            "Authorize or revoke an installer handover",
+            Household,
+            &[],
+            Some(of::<crate::runtime::authority::Approval>),
+            &[
+                (
+                    200,
+                    "Updated review",
+                    Json(of::<crate::runtime::authority::Review>),
+                ),
+                (409, "Review expired or superseded", Text),
+            ],
+        ),
+        r(
+            "GET",
+            "/v1/commissioning/change",
+            "Read the latest installation outcome",
+            Household,
+            &[],
+            None,
+            &[
+                (
+                    200,
+                    "Latest installation or null",
+                    Json(of::<Option<crate::runtime::installation::Receipt>>),
+                ),
+                (404, "Configuration writes unavailable", Text),
+            ],
+        ),
+        r(
+            "POST",
+            "/v1/commissioning/change",
+            "Activate the reviewed driver addition",
+            Household,
+            &[],
+            Some(of::<api::ApplyInstallation>),
+            &[
+                (
+                    200,
+                    "Installation outcome",
+                    Json(of::<crate::runtime::installation::Receipt>),
+                ),
+                (409, "Stale or unknown proposal", Text),
+                (404, "Configuration writes unavailable", Text),
             ],
         ),
         r(
@@ -789,7 +970,22 @@ fn content(body: Body, generator: &mut SchemaGenerator) -> Option<Value> {
 /// CloudEvent whose `data` has the schema below, signed per Standard Webhooks.
 fn webhooks(generator: &mut SchemaGenerator) -> Value {
     use crate::runtime::webhooks as w;
-    let data: [(&str, &str, Schema); 7] = [
+    let data = [
+        (
+            ems_events::GRID_LPC_FAILSAFE_LEFT,
+            "Control-box contact restored or failsafe expired",
+            generator.subschema_for::<w::FailsafeLeft>(),
+        ),
+        (
+            ems_events::GRID_LPP_LIMIT_RECEIVED,
+            "Operator feed-in ceiling received",
+            generator.subschema_for::<w::FeedInLimit>(),
+        ),
+        (
+            ems_events::DEVICE_LOST,
+            "A configured asset stopped reporting",
+            generator.subschema_for::<w::DeviceLost>(),
+        ),
         (
             ems_events::GRID_LPC_LIMIT_RECEIVED,
             "The network operator reduced the connection (§ 14a)",
@@ -996,6 +1192,21 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    #[test]
+    fn the_published_webhooks_cover_every_emitted_type() {
+        let contract = document();
+        let actual: BTreeSet<_> = contract["webhooks"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            actual,
+            crate::runtime::webhooks::EMITTED.into_iter().collect()
+        );
+    }
+
     /// Every `(METHOD, path)` a `.route(…)` call in `source` mounts.
     fn mounted(source: &str) -> BTreeSet<(String, String)> {
         let production = source.split("#[cfg(test)]").next().unwrap_or(source);
@@ -1041,6 +1252,12 @@ mod tests {
         ] {
             served.extend(mounted(source));
         }
+        let onboarding = include_str!("runtime/first_run.rs");
+        served.extend(
+            mounted(onboarding)
+                .into_iter()
+                .filter(|(_, path)| path.starts_with("/v1/")),
+        );
         // Only the routers `surfaces_over` and the shell merge, not test fixtures.
         let access = include_str!("runtime/access.rs");
         let session = &access[access
@@ -1092,15 +1309,20 @@ mod tests {
         let schema = &doc["components"]["schemas"]["Home"]["properties"];
         // Written out, so a new field does not compile until it is here too.
         let sample = serde_json::to_value(Home {
+            shadow: false,
+            feed_in_limit_w: None,
+            matter: None,
             site: String::new(),
             at: None,
             demo: false,
+            charging_now: false,
             at_minute: Some(0),
             grid_kw: None,
             price_ct: None,
             reduction: None,
             devices: Vec::new(),
             plan: Vec::new(),
+            previous_plan_at: Some(String::new()),
             ahead: Some(crate::home::Ahead {
                 from: String::new(),
                 until: String::new(),

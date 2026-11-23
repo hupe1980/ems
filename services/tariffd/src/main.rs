@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 #[command(name = "tariffd", version, about = "The hems price service")]
 struct Cli {
     /// The configuration file. Absent, or absent from disk, means the defaults.
-    #[arg(long, env = "HEMS_TARIFFD_CONFIG")]
+    #[arg(long, env = "EMS_TARIFFD_CONFIG")]
     config: Option<PathBuf>,
 }
 
@@ -57,7 +57,7 @@ fn resolved_sources(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_TARIFFD")?;
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "EMS_TARIFFD")?;
     ems_service::init_tracing(
         ems_service::identity!(),
         &settings.service.log_filter,

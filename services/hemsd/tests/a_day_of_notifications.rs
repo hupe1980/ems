@@ -1,16 +1,9 @@
-//! At most six notifications on a whole reference day.
-//!
-//! A box that interrupts too often is muted within a week, and then it cannot
-//! say the one thing that matters. The detector is held to that over every
-//! minute of each reference day, replayed through the real guard, arbiter and
-//! planner, and read the way the box reads it: from the household page's own
-//! document. A day the virtual house would take a day to run takes seconds.
+//! Replay each minute of a reference day through the household notification detector.
 
 use hemsd::home::{CarGoal, GoalSet};
 use hemsd::runtime::push::{Detector, Signals};
 use hemsd::{HouseholdConfig, Scenario};
 
-/// The bound the spec gives (spec 012, SC-002).
 const AT_MOST: usize = 6;
 
 fn notifications(scenario: &Scenario, goals: GoalSet) -> Vec<(usize, String)> {
@@ -33,6 +26,7 @@ fn notifications(scenario: &Scenario, goals: GoalSet) -> Vec<(usize, String)> {
 fn a_reference_day_interrupts_the_household_at_most_six_times() {
     let car = GoalSet {
         car: Some(CarGoal {
+            price_cap_ct: None,
             target_soc: 0.8,
             by_minute: 7 * 60,
         }),

@@ -1,31 +1,7 @@
-//! What the box tells the fleet about a day that has finished.
-//!
-//! # A box meters; it does not model
-//!
-//! `hemsd simulate` can answer "what would this day have cost with no energy
-//! manager" because it re-runs the day as an unmanaged house. A box on a wall
-//! cannot: it has what happened, and a counterfactual is not a measurement. Five
-//! of `CostBreakdown`'s six terms are modelled too — battery wear, curtailment,
-//! discomfort, energy borrowed from the stores, charge past what was asked for.
-//!
-//! So this builds the half a box actually knows, and leaves
-//! [`DayKpis::economics`] and [`DayKpis::forecast`] absent rather than filling
-//! them with zeroes that would read as measurements (D116). What is left is not
-//! small — it is every energy the connection point saw and the whole § 14a
-//! compliance record, which is what `obsd` **counts** rather than averages and
-//! is the reason the fleet view exists.
-//!
-//! # Built from the store, not from a counter in memory
-//!
-//! Every figure here is read back out of the rows the control loop already
-//! wrote: the quarter-hour registers and the `[A1 7.2]` control events. A day
-//! accumulated in memory would be lost to a restart at 23:50 — and a box that
-//! silently reported four hours as a day would be worse than one that reported
-//! nothing.
-//!
-//! The one exception is [`Unplanned`], which counts minutes the arbiter spent
-//! with no plan. Nothing writes that to a row, because a row per minute of
-//! ordinary operation is a lot of rows for a number that matters once a day.
+//! Daily meter, tariff, forecast and grid-control reports from retained quarter hours.
+
+pub mod replay;
+pub mod storage;
 
 use std::collections::BTreeMap;
 
@@ -87,6 +63,9 @@ impl Scored {
         }
         let pv = ems_forecast::Calibration::score(self.pv.iter().copied());
         let load = ems_forecast::Calibration::score(self.load.iter().copied());
+        if pv.samples == 0 || load.samples == 0 {
+            return None;
+        }
         Some(ForecastScores {
             pv_coverage: pv.coverage,
             pv_crps: pv.crps,
@@ -269,6 +248,28 @@ pub fn kpis(
     feed_in: FeedIn,
     scored: &Scored,
 ) -> Result<Option<DayKpis>, StoreError> {
+    Ok(
+        report_and_bill(store, site, date, unplanned, clipping, feed_in, scored)?
+            .map(|report| report.day),
+    )
+}
+
+pub(crate) struct ClosedReport {
+    pub day: DayKpis,
+    pub bill: crate::month::MeteredBill,
+    pub comparison: Option<replay::Comparison>,
+    pub arbitrage: Option<storage::Arbitrage>,
+}
+
+pub(crate) fn report_and_bill(
+    store: &Store,
+    site: &str,
+    date: Date,
+    unplanned: Unplanned,
+    clipping: Clipping,
+    feed_in: FeedIn,
+    scored: &Scored,
+) -> Result<Option<ClosedReport>, StoreError> {
     let from = ems_core::calendar::day_start_utc(date);
     let to = ems_core::calendar::day_end_utc(date);
 
@@ -305,38 +306,45 @@ pub fn kpis(
         .map(ems_core::units::Power::get)
         .fold(0.0_f64, f64::max);
 
-    Ok(Some(DayKpis {
-        site: site.to_owned(),
-        date,
-        imported_kwh,
-        exported_kwh,
-        produced_kwh,
-        self_sufficiency,
-        // § 42c allocation is the community's arithmetic and not this box's.
-        shared_kwh: 0.0,
-        // Modelled, so absent. See the module note.
-        economics: None,
-        // Scored, though: the box makes the forecast and later meters the
-        // truth, so this half needs no model it does not have.
-        forecast: scored.scores(),
-        // A day is compliant unless an event on it says otherwise. `[A1 7.2]`
-        // events are the record, so the absence of one is the absence of a
-        // reduction rather than the absence of evidence.
-        respected_the_grid: worst_overshoot_w <= 0.0,
-        worst_overshoot_w,
-        // …and the other statute on the same connection point. There is no
-        // companion boolean: `DayKpis::respected_the_feed_in_ceiling` derives
-        // from this number, so the two cannot come apart.
-        worst_feed_in_overshoot_w: feed_in.worst_overshoot_w,
-        // Zero where the box was not watching for the whole day. A restart is
-        // not a day without a plan, and a fleet that added them would count a
-        // reboot as a fault.
-        minutes_without_a_plan: unplanned.minutes().unwrap_or(0),
-        control_events: events.len(),
-        below_minimum_commanded: events.iter().any(|s| s.event.below_minimum()),
-        clipped_ticks: clipping.ticks,
-        clipped_kwh: clipping.kwh,
-        foresight_was_perfect: false,
+    let bill = crate::month::MeteredBill::from_registers(date, &registers);
+    let comparison = replay::Comparison::close(&registers, &bill);
+    Ok(Some(ClosedReport {
+        day: DayKpis {
+            site: site.to_owned(),
+            date,
+            imported_kwh,
+            exported_kwh,
+            produced_kwh,
+            self_sufficiency,
+            // § 42c allocation is the community's arithmetic and not this box's.
+            shared_kwh: 0.0,
+            // Modelled, so absent. See the module note.
+            economics: None,
+            // Scored, though: the box makes the forecast and later meters the
+            // truth, so this half needs no model it does not have.
+            forecast: scored.scores(),
+            // A day is compliant unless an event on it says otherwise. `[A1 7.2]`
+            // events are the record, so the absence of one is the absence of a
+            // reduction rather than the absence of evidence.
+            respected_the_grid: worst_overshoot_w <= 0.0,
+            worst_overshoot_w,
+            // …and the other statute on the same connection point. There is no
+            // companion boolean: `DayKpis::respected_the_feed_in_ceiling` derives
+            // from this number, so the two cannot come apart.
+            worst_feed_in_overshoot_w: feed_in.worst_overshoot_w,
+            // Zero where the box was not watching for the whole day. A restart is
+            // not a day without a plan, and a fleet that added them would count a
+            // reboot as a fault.
+            minutes_without_a_plan: unplanned.minutes().unwrap_or(0),
+            control_events: events.len(),
+            below_minimum_commanded: events.iter().any(|s| s.event.below_minimum()),
+            clipped_ticks: clipping.ticks,
+            clipped_kwh: clipping.kwh,
+            foresight_was_perfect: false,
+        },
+        bill,
+        comparison,
+        arbitrage: storage::Arbitrage::closed(&registers),
     }))
 }
 
@@ -369,10 +377,14 @@ mod tests {
                 device_generation: Decimal::new(900, 2),
                 storage_consumption: None,
                 storage_generation: None,
-                anzulegender_wert: Decimal::new(786, 2),
-                spot_price: Decimal::new(1250, 2),
+                anzulegender_wert: Some(Decimal::new(786, 2)),
+                spot_price: Some(Decimal::new(1250, 2)),
             },
             production: Some(Decimal::new(produced, 2)),
+            watched: false,
+            replay: None,
+            storage: None,
+            terms: None,
         }
     }
 

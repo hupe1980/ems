@@ -1,18 +1,16 @@
 +++
-title = "The box's API"
-description = "Every HTTP route hemsd serves, who may call it, and the OpenAPI 3.1 document generated from the handlers' own types."
+title = "Edge API reference"
+description = "Household HTTP routes, credentials and OpenAPI, plus the read-only building and industrial demo endpoints."
 weight = 16
 
 [extra]
-group = "Running it"
+group = "Integration and operations"
 +++
 
-`hemsd` serves one local API, on the address in `[api] listen`. The household
-page is its first client and uses nothing an integrator cannot. The contract is
-an OpenAPI 3.1 document generated from the types the handlers return:
+The household page and third-party integrations use the same local HTTP API. Inspect the gateway’s OpenAPI 3.1 document to see its routes and response types. For HTTPS, compare the certificate’s SHA-256 fingerprint with the one printed at startup before using it as `hems.pem`.
 
 ```console
-$ curl -k https://box.local:8080/openapi.json     # from the box it describes
+$ curl --cacert hems.pem https://hems.local:8080/openapi.json     # running gateway
 $ hemsd openapi > openapi.json                     # or from the binary
 ```
 
@@ -28,22 +26,21 @@ and the build fails if a response type changes and the document does not.
 | **household token** | the same token, but only as a bearer: the cookie is refused | replacing the token, and the sign-in QR code |
 | **manager** | a token issued by `PUT /v1/managers/{name}` | status, overrides and S2 — never the household's data |
 
-With the token:
+Send the household token as a bearer credential.
 
 ```console
-$ curl -k -H "Authorization: Bearer $HEMS_TOKEN" https://box.local:8080/v1/status
+$ curl --cacert hems.pem -H "Authorization: Bearer $HEMS_TOKEN" https://hems.local:8080/v1/status
 ```
 
-With the cookie, as a browser does it:
+A browser client can exchange the token for a session cookie.
 
 ```console
-$ curl -k -c jar -H 'Content-Type: application/json' \
-    -d "{\"token\":\"$HEMS_TOKEN\"}" https://box.local:8080/v1/session
-$ curl -k -b jar https://box.local:8080/v1/home
+$ curl --cacert hems.pem -c jar -H 'Content-Type: application/json' \
+    -d "{\"token\":\"$HEMS_TOKEN\"}" https://hems.local:8080/v1/session
+$ curl --cacert hems.pem -b jar https://hems.local:8080/v1/home
 ```
 
-`-k` because the box's certificate is its own; pin its fingerprint from the
-Setup view instead where the client allows it. A request on the cookie that
+A request on the cookie that
 changes anything must carry `Content-Type: application/json`.
 
 ## Refusals
@@ -85,6 +82,9 @@ nothing to remove.
 <!-- api:begin -->
 | Method | Path | Credential | What it does |
 |---|---|---|---|
+| `GET` | `/v1/tariff` | household | Current and next signed supply contract |
+| `POST` | `/v1/tariff/preview` | household | Verify the seller file and review its signer, period and price |
+| `PUT` | `/v1/tariff` | household | Accept the exact reviewed seller terms |
 | `GET` | `/livez` | none | Whether the process is alive |
 | `GET` | `/readyz` | none | Whether the box is ready to control |
 | `GET` | `/version` | none | The daemon's name and version |
@@ -95,9 +95,11 @@ nothing to remove.
 | `POST` | `/v1/token` | household token | Replace the household's token; the old one and every sign-in stop working |
 | `GET` | `/v1/home` | household | The household page's document: now, the plan, goals, the last receipt |
 | `GET` | `/v1/status` | household or manager | What the box is doing and what it cannot see |
-| `POST` | `/v1/goals/{asset}/quote` | household | What a goal would cost, before it is set: the same plan solved with it |
+| `POST` | `/v1/goals/{asset}/quote` | household | Price a goal or preview charging now against the saved departure |
 | `PUT` | `/v1/goals/{asset}` | household | Ask for a charge or a temperature by a time; answered with a verdict |
 | `DELETE` | `/v1/goals/{asset}` | household | Withdraw a goal |
+| `PUT` | `/v1/goals/{asset}/boost` | household | Confirm immediate charging to the saved car goal |
+| `DELETE` | `/v1/goals/{asset}/boost` | household | Return the car to its plan |
 | `GET` | `/v1/overrides` | household or manager | The overrides in force |
 | `DELETE` | `/v1/overrides` | household or manager | Withdraw every override |
 | `PUT` | `/v1/overrides/{asset}` | household or manager | Boost, pause or mark away; the guard still narrows it |
@@ -109,10 +111,15 @@ nothing to remove.
 | `POST` | `/v1/pairing` | household | Trust a control box by its SKI |
 | `DELETE` | `/v1/pairing/{ski}` | household | Stop trusting a control box |
 | `POST` | `/v1/pairing/{ski}/refuse` | household | Refuse a control box that is asking |
-| `GET` | `/v1/trust` | household | Whether the box kept its identity, and whether its control box is heard |
+| `GET` | `/v1/trust` | household | Installer diagnostics for identity, devices and quarter-hour history |
 | `GET` | `/v1/handover` | household | What the handover sheet prints: identities and the § 14a devices |
 | `GET` | `/v1/commissioning` | household | The commissioning record, signed by the box: its identity, its control box, its § 14a devices |
 | `GET` | `/v1/qr/{what}` | household | A QR code: `ski`, `fingerprint`, `commissioning`, or `signin` (token only, never the cookie) |
+| `POST` | `/v1/commissioning/first-meter` | household | Preview a connection meter and optional observed assets on an empty site |
+| `GET` | `/v1/commissioning/transfer` | household | Read the controller handover review |
+| `PUT` | `/v1/commissioning/transfer` | household | Authorize or revoke an installer handover |
+| `GET` | `/v1/commissioning/change` | household | Read the latest installation outcome |
+| `POST` | `/v1/commissioning/change` | household | Activate the reviewed driver addition |
 | `POST` | `/v1/discover` | household | Look for SHIP nodes, and for SunSpec devices at named private addresses |
 | `GET` | `/v1/managers` | household | The energy managers connected to this box |
 | `PUT` | `/v1/managers/{name}` | household | Connect a manager; answers its token once |
@@ -133,6 +140,44 @@ An error is a status and, where there is something to say, one sentence of
 plain text. `401` means no credential or an unknown one; `403` means a
 manager's credential on a route that is the household's.
 
+## Household readings
+
+For `GET /v1/home`, a saved car or tank goal is returned with its feasibility
+assessment. The second tuple element is null while the necessary device
+telemetry is missing. The first element still contains the saved settings.
+
+On an empty gateway, `POST /v1/commissioning/first-meter` validates the
+three-phase meter, fixed tariff and support contact. Optional `roof` and
+`storage` entries require separate verified units and an
+`external_limit_controller` for shadow mode. The response contains the exact
+initial TOML and a confirmation id for the installation endpoint.
+
+For `POST /v1/discover`, supply `hosts`, optional `unit` (default 1) and
+`port` (502 or 1502). A newly found SunSpec inverter with one of models 101–103
+and 123 can include `review`. It contains the proposed driver TOML, address,
+unit and a nullable configuration refusal. Where Apply is available, send only
+the issued `proposal` as `{"id":"…"}` to `POST /v1/commissioning/change`.
+A changed file or unknown id returns 409. Read the latest receipt with
+`GET /v1/commissioning/change` after reconnection. Retrying the same id
+returns its recorded outcome.
+
+When the household Matter pilot is configured, `GET /v1/home` includes `matter` with its node, endpoint, signed watts, receipt time and status. The Setup card labels a failed read as stale when an earlier observation exists.
+
+The home receipt and closed-day history use whole Wh and cents. `metered_bill`
+reports priced, expected and observed-mode intervals. Its `energy_ct` and
+`fixed_ct` fields are null when a bill cannot be computed. `money` contains
+simulation economics. On measured days, nullable `comparison` contains
+`with_plan_ct`, `without_plan_ct` and the summed absolute interval error
+`error_ct`. Month totals exclude differences at or below that error. Nullable
+`arbitrage` records grid charging and household discharge for closed cycles. `forecast` reports
+the measured percentage of production and load readings inside their forecast
+ranges. `shadow: true` on the home document identifies an observing gateway.
+
+Households can read `GET /v1/commissioning/transfer` while observing and
+submit its current `id` and boolean `approve` to `PUT` on the same route.
+Authorization lasts one hour and can be revoked until the installer switches
+the configured controller and restarts.
+
 ## Events out
 
 The box tells the systems a household names what it tells the household —
@@ -146,9 +191,9 @@ event's `id`, the same on every retry), `webhook-timestamp` and
 the subscription is made. Every webhook library verifies it as it is.
 
 ```console
-$ curl -k -H "Authorization: Bearer $HEMS_TOKEN" -H 'Content-Type: application/json' \
-    -d '{"name":"Home Assistant","url":"http://homeassistant.local:8123/api/webhook/hems-7f3a9c","types":["de.ems.grid.*"]}' \
-    https://box.local:8080/v1/subscriptions
+$ curl --cacert hems.pem -H "Authorization: Bearer $HEMS_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"name":"Home Assistant","url":"http://homeassistant.local:8123/api/webhook/replace-with-your-random-webhook-id","types":["de.ems.grid.*"]}' \
+    https://hems.local:8080/v1/subscriptions
 ```
 
 | Type | When | `data` |
@@ -156,13 +201,18 @@ $ curl -k -H "Authorization: Bearer $HEMS_TOKEN" -H 'Content-Type: application/j
 | `de.ems.grid.lpc.limit.received` | the network operator reduces the connection | `limit_w`, `minimum_w` |
 | `de.ems.grid.lpc.limit.released` | the reduction ends | `lasted_s` |
 | `de.ems.grid.lpc.failsafe.entered` | the control box falls silent | `failsafe_w` |
-| `de.ems.site.goal.at-risk` | a goal turns *tight* or *impossible* | `verdict`, `assets` |
-| `de.ems.device.deviation.detected` | a device ignores the box for ten minutes | `assets` |
+| `de.ems.grid.lpc.failsafe.left` | the failsafe ends | `reduced` |
+| `de.ems.grid.lpp.limit.received` | the export ceiling changes | `limit_w` |
+| `de.ems.device.lost` | a device stops reporting | `last_seen` |
+| `de.ems.site.goal.at-risk` | a goal turns *tight* or *impossible* | `verdict`, `goal`, `reachable` |
+| `de.ems.device.deviation.detected` | a device ignores the box for ten minutes | `commanded_w`, `measured_w` |
 | `de.ems.site.day.closed` | a day closes | the receipt: whole cents, Wh, the § 14a lines |
 | `de.ems.test.ping` | `POST /v1/subscriptions/{id}/test` | `test` |
 
 `types` takes a trailing `*` (`de.ems.grid.*`); `subjects` narrows to asset
 ids. The schema of every `data` is in `openapi.json`'s `webhooks` section.
+
+For an episode that also triggers a browser notification, `notification.data.event_id` matches the CloudEvent `id`, including after quiet hours.
 
 A receiver answers `2xx`. Anything else is tried again — after 30 s, 2 min,
 10 min, 30 min, 1 h and then every 3 h — for 24 hours, then dropped;
@@ -174,9 +224,7 @@ systems.
 
 ### Home Assistant
 
-A webhook trigger needs no integration. Home Assistant cannot check the
-signature without a template, so the webhook id is the secret: make it long
-and random, and keep `local_only`.
+Use the same random webhook ID in the subscription URL and the automation. Keep `local_only` enabled. [Home Assistant webhook triggers](https://www.home-assistant.io/docs/automation/trigger/#webhook-trigger).
 
 {% raw %}
 ```yaml
@@ -184,7 +232,7 @@ automation:
   - alias: "hems: the network operator reduces the connection"
     triggers:
       - trigger: webhook
-        webhook_id: hems-7f3a9c        # long and random: it is the secret here
+        webhook_id: replace-with-your-random-webhook-id        # long and random: it is the secret here
         allowed_methods: [POST]
         local_only: true
     conditions:
@@ -195,8 +243,10 @@ automation:
         data:
           title: "§ 14a"
           message: >-
-            Reduced to {{ (trigger.json.data.limit_w / 1000) | round(1) }} kW;
+            Reduced to {{ (trigger.json.data.limit_w / 1000) | round(1) }} kW.
+            {% if trigger.json.data.minimum_w is number %}
             {{ (trigger.json.data.minimum_w / 1000) | round(1) }} kW stay guaranteed.
+            {% endif %}
 ```
 {% endraw %}
 
@@ -208,8 +258,8 @@ in one signed statement, which an installer's phone scans from the handover
 view or a tool fetches:
 
 ```console
-$ curl -sk -H "Authorization: Bearer $TOKEN" \
-    "https://box.local/v1/commissioning?reference=WO-2026-000417"
+$ curl -sS --cacert hems.pem -H "Authorization: Bearer $TOKEN" \
+    "https://hems.local:8080/v1/commissioning?reference=WO-2026-000417"
 eyJhbGciOiJFUzI1NiIsInR5cCI6ImhlbXMtY29tbWlzc2lvbmluZytqd3MiLC…
 ```
 
@@ -260,3 +310,47 @@ To verify one:
    one: the box is genuine and the record has to be issued again.
 5. Read it for what it is: the signature proves this box said so at that
    time. It does not prove the work was done well.
+
+## Building demo
+
+`bemsd demo` serves `GET /v1/demo/building?case=unconfirmed` and the
+corresponding page at `/?case=unconfirmed`. Supported cases are
+`confirmed` (default), `delayed-arrival`, `above-request`, `unconfirmed`, `stale-charger`, `stale`, `over-limit`, `unknown-pv` and `no-solar`.
+Choose `moment=requested`, `observed`, `deadline` or `handover` on either route. The default is `handover`. The connection snapshot first appears at handover. Until the station acknowledges, `profile_accepted` is null. Each station’s `final_received_at` distinguishes receipt from observation. In `case=delayed-arrival` a late sample confirms the deadline reading at handover.
+
+For the charging incident, `charging_source` is `ocpp-1.6j-station-telemetry`. Each member of `stations` gives the station ID, profile acknowledgement, initial kW and final kW. A null contribution makes the corresponding bank reading null. Station totals exclude individual connectors.
+
+The `delivery` field compares `final_sample_kw` to `requested_kw`. Its values are `pending` before the deadline, `within-limit`, `above-limit` and `unconfirmed`.
+For a missing final reading, `final_sample_at` and `final_sample_kw` are null. `final_sample_due_at` preserves the expected time.
+A missing current measurement or an unconfirmed final sample is JSON null.
+The live gateway does not mount either route.
+
+## Community allocation demo
+
+`bemsd community` serves `GET /v1/demo/community` on loopback port 8083. Use the temporary Basic login printed at startup. Select `case=static` or `case=cascading` to compare keys. Select `interval=1` or `2` for the earlier or later occurrence of 02:00. Members receive only their own rows. The coordinator also receives coverage and residual energy in kWh.
+
+## Industrial demo
+
+`cemsd demo` serves `GET /v1/demo/industrial?moment=early`. Use
+`early`, `delayed` or `closed` for the same shift. At close, projection
+and intervention fields are null and `closed_mean_kw` contains the simulated
+meter outcome. Add `reveal=true` to an early or delayed decision to compare its projection with the original synthetic close. The HTML view takes the same query at `/`.
+
+Use `moment=unavoidable` to inspect an interval whose minimum already exceeds
+the prior peak. Optional `evidence` values are `complete`, `stale-meter`,
+`battery-unknown`, `tariff-review`, `limited-battery`, and `missing-close`. Each suppresses
+only the estimates that depend on the missing input or applies the fixture's
+60 kW limit. Reloading the same URL reproduces the same evidence.
+
+
+## Local power history
+
+With a household credential, request one complete quarter at the grid connection:
+
+```http
+GET /v1/series/grid?from=2026-11-23T10:00:00Z&to=2026-11-23T10:15:00Z&resolution=quarter_hours
+```
+
+`at` identifies the quarter start. `watts` is the arithmetic mean of the observations. `min_watts`, `max_watts` and `samples` describe their range and count. Positive watts indicate import at the grid connection. A quarter with no observations has no row. A measured zero has a row.
+
+For explicit summaries, supplied boundaries must fall on a quarter hour. With just `?resolution=quarter_hours`, the response covers the four most recently closed quarters. Omit `resolution` to select the available tier automatically. Windows include their start, exclude their end and may span up to 1,096 days. A box with local history disabled returns 404. During another history read it returns 503. Retry after the first request finishes.

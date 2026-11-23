@@ -29,6 +29,12 @@ pub struct Quote {
     /// force now, € — energy, battery wear and what is borrowed from the
     /// stores. Negative where it is cheaper. `None` where no plan could be made.
     pub extra_eur: Option<f64>,
+    /// Confirmed quarter hours within a proposed car price cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eligible_quarters: Option<usize>,
+    /// Absolute expiry of a priced immediate-charge request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boost_until: Option<i64>,
 }
 
 /// At most one quote in flight, and one a second.
@@ -84,13 +90,104 @@ pub async fn car(
     let inputs = last.lock().await.clone()?;
     let full = (*facts.lock().await)?;
     let proposed = crate::home::session_for(&full, goal, now);
-    let answer = crate::home::judge_goal(&proposed, ems_core::prelude::Slot::containing(now));
-    let extra_eur = difference(inputs.clone(), inputs.with_car(Some(proposed))).await;
+    let answer = crate::home::judge_car_price(
+        &proposed,
+        ems_core::prelude::Slot::containing(now),
+        goal.price_cap_ct,
+        Some(inputs.prices()),
+    );
+    let extra_eur = difference(
+        inputs.clone(),
+        inputs
+            .with_car(Some(proposed))
+            .with_price_cap(goal.price_cap_ct),
+    )
+    .await;
     Some(Quote {
         verdict: answer.verdict,
         reachable: answer.reachable_soc,
+        eligible_quarters: answer.eligible_quarters,
+        boost_until: None,
         extra_eur,
     })
+}
+
+/// Compare the saved departure with the earliest attainable departure. Price
+/// only alternatives that deliver the full target and start in this quarter.
+pub async fn charge_now(
+    last: &LastInputs,
+    full: ems_optimizer::model::EvSession,
+    goal: CarGoal,
+    now: OffsetDateTime,
+) -> Option<Quote> {
+    use ems_core::prelude::Slot;
+    let inputs = last.lock().await.clone()?;
+    let first = Slot::containing(now);
+    if Slot::containing(inputs.at()) != first {
+        return None;
+    }
+    let session = crate::home::session_for(&full, goal, now);
+    let needed = (session.energy_target - session.energy_now).kwh();
+    if needed <= 0.0 {
+        return None;
+    }
+    let mut remaining = needed;
+    let mut draw = Vec::new();
+    let mut slot = first;
+    while slot < session.departure {
+        let price = inputs.prices().at(slot);
+        if price.is_some_and(|p| p.price_known)
+            && goal
+                .price_cap_ct
+                .is_none_or(|c| inputs.prices().within_cap(slot, c))
+        {
+            let duration = (slot.next().start() - slot.start().max(now)).as_seconds_f64() / 3600.0;
+            let stored = remaining.min(session.max_charge.kw() * session.efficiency * duration);
+            draw.push(ems_core::prelude::Power::from_kw(
+                stored / (0.25 * session.efficiency),
+            ));
+            remaining -= stored;
+        } else {
+            return None;
+        }
+        slot = slot.next();
+        if remaining <= 0.0 {
+            break;
+        }
+    }
+    if remaining > 0.0 {
+        return None;
+    }
+    let early = ems_optimizer::model::EvSession {
+        // Fixed averages include the partial first and final charging quarters.
+        min_charge: ems_core::prelude::Power::ZERO,
+        departure: slot,
+        ..session
+    };
+    let base = inputs
+        .with_car(Some(session))
+        .with_price_cap(goal.price_cap_ct);
+    let proposed = base.with_car(Some(early));
+    tokio::task::spawn_blocking(move || {
+        let later = base.solve().ok()?;
+        let sooner = proposed.solve_with_ev_draw(&draw).ok()?;
+        if later.unmet_charge.kwh() > 0.001
+            || sooner.unmet_charge.kwh() > 0.001
+            || sooner.flows.first()?.ev_charge.kw() <= 0.0
+        {
+            return None;
+        }
+        Some(Quote {
+            verdict: Verdict::Feasible,
+            reachable: None,
+            eligible_quarters: None,
+            boost_until: None,
+            extra_eur: Some(((spend(&sooner)? - spend(&later)?) * 100.0).round() / 100.0),
+        })
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Price a tank goal. `None` where the planner has not planned yet or has no
@@ -110,6 +207,8 @@ pub async fn tank(
     Some(Quote {
         verdict: answer.verdict,
         reachable: answer.reachable_c,
+        eligible_quarters: None,
+        boost_until: None,
         extra_eur,
     })
 }

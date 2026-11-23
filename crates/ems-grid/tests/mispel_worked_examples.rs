@@ -48,7 +48,7 @@ fn anlage_1_beispielrechnung_1_the_store_is_charged_from_the_grid_first() {
     let q = QuarterHour {
         grid_draw: kwh(130),
         device_consumption: kwh(100),
-        anzulegender_wert: kwh(8),
+        anzulegender_wert: Some(kwh(8)),
         ..quarter(0)
     };
     assert_eq!(q.simultaneous_grid_charging(), kwh(100), "(1)¼");
@@ -64,7 +64,7 @@ fn anlage_1_beispielrechnung_2_the_feed_in_comes_out_of_the_store_first() {
     let q = QuarterHour {
         grid_feed_in: kwh(80),
         device_generation: kwh(100),
-        anzulegender_wert: kwh(8),
+        anzulegender_wert: Some(kwh(8)),
         ..quarter(0)
     };
     assert_eq!(q.simultaneous_device_feed_in(), kwh(80), "(2)¼");
@@ -80,8 +80,8 @@ fn year(fed_in: i64, drawn: i64) -> Vec<QuarterHour> {
         .map(|i| QuarterHour {
             grid_feed_in: kwh((fed_in - i * 10).clamp(0, 10)),
             grid_draw: kwh((drawn - i * 10).clamp(0, 10)),
-            anzulegender_wert: kwh(8),
-            spot_price: kwh(5),
+            anzulegender_wert: Some(kwh(8)),
+            spot_price: Some(kwh(5)),
             ..quarter(i)
         })
         .collect()
@@ -185,7 +185,7 @@ fn anlage_2_section_9_3_the_two_rumpfjahre_of_a_year() {
             RULES,
             PauschalPeriod::Rumpfjahr { first, last },
             &[QuarterHour {
-                anzulegender_wert: kwh(8),
+                anzulegender_wert: Some(kwh(8)),
                 ..QuarterHour::empty(Slot::containing(at))
             }],
         )

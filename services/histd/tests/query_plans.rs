@@ -1,36 +1,6 @@
-//! The hot queries use their indexes, and keep using them.
-//!
-//! A query that stops using an index does not fail, log, or look different from
-//! one that does. It returns the right answer and reads a thousand times more
-//! rows to get it, and the first symptom is a settlement export timing out on
-//! the one household with two years of history.
-//!
-//! The trap is specific and cheap to fall into. `tokio-postgres` prepares and
-//! caches statements, and PostgreSQL switches a cached statement to a **generic**
-//! plan after five executions — one with no parameter values, so an optional
-//! bound written `$2 IS NULL OR ts >= $2` collapses from an `Index Cond` into a
-//! `Filter` and a one-day window reads a household's whole record.
-//!
-//! # The SQL and the session setting are a pair, and both are tested
-//!
-//! `quarter_hour` carries two overlapping indexes: the key
-//! `(site_id, slot_start, recorded_at DESC)` for a household's window, and
-//! `(slot_start)` for the retention sweep across every household. With no
-//! parameter values a generic plan cannot tell which is more selective, and it
-//! picks the wrong one — so there is no SQL that is right under every plan mode.
-//! The answer is `plan_cache_mode = force_custom_plan` on every pooled
-//! connection (`ems_service::db::prepare_session`), and the last test here
-//! asserts that setting is present so removing it breaks the pair visibly.
-//!
-//! # The query under test is the daemon's own, columns and all
-//!
-//! The table is versioned — a restated register is a new row — so every read is
-//! `DISTINCT ON (slot_start) … ORDER BY slot_start, recorded_at DESC` over the
-//! eight payload columns a settlement needs. Asking `EXPLAIN` about a tidier
-//! query than that produces a tidier plan than production gets: with only
-//! `slot_start` selected this planner returns an index-only scan and no sort,
-//! which is a plan the daemon never runs. So the statement below carries the
-//! whole column list.
+//! Check production window, evidence and retention query plans against indexed
+//! PostgreSQL data. Each receipt selects the latest source revision visible at
+//! its historian cutoff. Custom plans retain the site's actual time bounds.
 
 use ems_service::testdb::Postgres;
 
@@ -48,7 +18,9 @@ async fn loaded() -> Postgres {
             "INSERT INTO quarter_hour
              SELECT 'site-' || (g % {SITES}),
                     '2025-01-01Z'::timestamptz + ((g / {SITES}) || ' minutes')::interval,
-                    1, 1, 1, 1, NULL, NULL, 1, 1, now()
+                    1, 1, 1, 1, NULL, NULL, 1, 1,
+                    '2025-01-01Z'::timestamptz + (g || ' seconds')::interval,
+                    '2025-01-02Z'::timestamptz + (g || ' seconds')::interval
              FROM generate_series(1, {ROWS}) g
              ON CONFLICT DO NOTHING;
              INSERT INTO control_event
@@ -89,30 +61,13 @@ async fn plan_of(fixture: &Postgres, name: &str, types: &str, sql: &str, args: &
 
 #[tokio::test]
 async fn one_sites_window_keeps_every_bound_in_its_index_condition() {
-    // The query behind `/v1/sites/{site}/quarter-hours` and behind every
-    // settlement. The assertion is on the **`Index Cond`**, not merely on the
-    // index being named: the failure mode this exists for is precisely an index
-    // scan whose range moved into a `Filter`.
-    //
-    // The statement is the daemon's own, `DISTINCT ON` and all: the table is
-    // versioned, so the query that actually runs picks one `recorded_at` per
-    // slot, and a plan test for a simpler query than the one in production
-    // proves nothing about production.
     let fixture = loaded().await;
     let plan = plan_of(
         &fixture,
         "window_q",
         "text, timestamptz, timestamptz, timestamptz",
-        "SELECT DISTINCT ON (slot_start)
-                slot_start, grid_draw_kwh, grid_feed_in_kwh,
-                device_consumption_kwh, device_generation_kwh,
-                storage_consumption_kwh, storage_generation_kwh,
-                anzulegender_wert_ct, spot_price_ct
-         FROM quarter_hour
-         WHERE site_id = $1 AND slot_start >= $2 AND slot_start < $3
-           AND recorded_at <= $4
-         ORDER BY slot_start, recorded_at DESC",
-        "'site-3', '2025-01-01Z', '2025-01-02Z', 'infinity'",
+        histd::store::REGISTER_WINDOW,
+        "'site-3', '2025-01-01T00:05Z', '2025-01-01T00:20Z', '2025-01-02T00:10Z'",
     )
     .await;
 
@@ -120,28 +75,21 @@ async fn one_sites_window_keeps_every_bound_in_its_index_condition() {
         plan.contains("quarter_hour_version"),
         "the window query left its key index:\n{plan}"
     );
-    assert!(
-        plan.contains("Index Cond: ((site_id = ") && plan.contains("slot_start <"),
-        "all three columns have to be in the index condition — a range that has \
-         become a Filter reads the household's whole record for one day of it:\n{plan}"
-    );
-    assert!(
-        !plan.contains("Seq Scan"),
-        "a settlement window must never be a sequential scan:\n{plan}"
-    );
-    // The `as_of` bound is asserted separately, because it is the one that was
-    // added last and is the one an `IS NULL OR` rewrite would quietly demote to
-    // a `Filter` — which on a household with two years of history means reading
-    // every version of every quarter hour to answer a question about one day.
-    assert!(
-        plan.contains("recorded_at <="),
-        "the version bound has to be in the index condition too:\n{plan}"
-    );
-    // What is deliberately *not* asserted: that there is no `Sort`. The
-    // settlement read wants eight payload columns, so it cannot be index-only,
-    // so PostgreSQL takes a bitmap scan and sorts the window to pick versions.
-    // Measured, that is 4 ms for 800 rows and an in-memory sort for a two-year
-    // export — against a response the caller materialises in full anyway.
+    let range = plan
+        .lines()
+        .find(|line| line.contains("Index Cond:"))
+        .expect("range scan");
+    for bound in [
+        "site_id =",
+        "slot_start >=",
+        "slot_start <",
+        "recorded_at <=",
+    ] {
+        assert!(
+            range.contains(bound),
+            "{bound} moved outside the index condition:\n{plan}"
+        );
+    }
 }
 
 #[tokio::test]

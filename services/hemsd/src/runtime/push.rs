@@ -131,6 +131,24 @@ pub enum Event {
     Test,
 }
 
+/// An episode keeps its identity across delivery channels and quiet hours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Occurrence {
+    /// What changed.
+    pub event: Event,
+    /// The CloudEvent ID, also carried in the encrypted notification.
+    pub id: uuid::Uuid,
+}
+
+impl From<Event> for Occurrence {
+    fn from(event: Event) -> Self {
+        Self {
+            event,
+            id: uuid::Uuid::new_v4(),
+        }
+    }
+}
+
 impl Event {
     /// Every event, for the tests that hold a table to it.
     pub const ALL: [Self; 7] = [
@@ -299,7 +317,8 @@ impl Lang {
 /// lands — the view the event is about. Others hand the same document to the
 /// page's service worker.
 #[must_use]
-pub fn message(event: Event, lang: Lang, origin: &str) -> serde_json::Value {
+pub fn message(occurrence: Occurrence, lang: Lang, origin: &str) -> serde_json::Value {
+    let event = occurrence.event;
     let (title, body) = event.sentence(lang);
     serde_json::json!({
         "web_push": 8030,
@@ -309,6 +328,7 @@ pub fn message(event: Event, lang: Lang, origin: &str) -> serde_json::Value {
             "lang": lang.tag(),
             "dir": "ltr",
             "tag": event.topic(),
+            "data": { "event_id": occurrence.id },
             "navigate": format!("{origin}/#{}", event.view()),
         }
     })
@@ -494,8 +514,8 @@ fn goal_of(value: &serde_json::Value) -> Goal {
 pub struct Detector {
     grid: Option<Grid>,
     goals: BTreeMap<String, GoalEpisode>,
-    failing_since: BTreeMap<String, OffsetDateTime>,
-    device_told: bool,
+    failing_since: BTreeMap<String, (OffsetDateTime, bool)>,
+    device_notification_sent: bool,
 }
 
 #[derive(Debug)]
@@ -513,12 +533,48 @@ impl Detector {
     /// The first observation changes nothing: a box that restarts in the middle
     /// of a reduction has nothing new to say about it.
     pub fn observe(&mut self, signals: &Signals, now: OffsetDateTime) -> Vec<Event> {
+        let changes = self.changes(signals, now);
+        self.notifications(&changes)
+            .into_iter()
+            .map(|o| o.event)
+            .collect()
+    }
+
+    fn notifications(&mut self, changes: &[(Occurrence, Option<String>)]) -> Vec<Occurrence> {
+        if self.failing_since.is_empty() {
+            self.device_notification_sent = false;
+        }
+        let mut events = Vec::new();
+        for (occurrence, _) in changes {
+            if occurrence.event == Event::DeviceNotFollowing
+                && std::mem::replace(&mut self.device_notification_sent, true)
+            {
+                continue;
+            }
+            if !events
+                .iter()
+                .any(|o: &Occurrence| o.event == occurrence.event)
+            {
+                events.push(*occurrence);
+            }
+        }
+        events
+    }
+
+    /// Changes with the goal key or device ID that triggered the report.
+    pub fn changes(
+        &mut self,
+        signals: &Signals,
+        now: OffsetDateTime,
+    ) -> Vec<(Occurrence, Option<String>)> {
         let mut events = Vec::new();
 
         match (self.grid.replace(signals.grid), signals.grid) {
-            (Some(Grid::Free), Grid::Reduced) => events.push(Event::ReductionBegan),
-            (Some(Grid::Free | Grid::Reduced), Grid::Failsafe) => events.push(Event::Failsafe),
-            (Some(Grid::Reduced), Grid::Free) => events.push(Event::ReductionEnded),
+            (Some(Grid::Free), Grid::Reduced) => events.push((Event::ReductionBegan, None)),
+            (Some(Grid::Free | Grid::Reduced), Grid::Failsafe) => {
+                events.push((Event::Failsafe, None));
+            }
+            (Some(Grid::Reduced), Grid::Free) => events.push((Event::ReductionEnded, None)),
             // Out of failsafe is the control box coming back — into whatever it
             // then asks for, which the page shows. Not a fifth kind of event.
             _ => {}
@@ -554,10 +610,13 @@ impl Detector {
                     episode.clear_since = None;
                     if episode.told < Some(risk) {
                         episode.told = Some(risk);
-                        events.push(match risk {
-                            Risk::Tight => Event::GoalTight,
-                            Risk::Impossible => Event::GoalImpossible,
-                        });
+                        events.push((
+                            match risk {
+                                Risk::Tight => Event::GoalTight,
+                                Risk::Impossible => Event::GoalImpossible,
+                            },
+                            Some(id.clone()),
+                        ));
                     }
                 }
             }
@@ -566,20 +625,16 @@ impl Detector {
         self.failing_since
             .retain(|id, _| signals.not_following.contains(id));
         for id in &signals.not_following {
-            self.failing_since.entry(id.clone()).or_insert(now);
-        }
-        if self.failing_since.is_empty() {
-            self.device_told = false;
-        } else if !self.device_told
-            && self
-                .failing_since
-                .values()
-                .any(|since| now - *since >= NOT_FOLLOWING_AFTER)
-        {
-            self.device_told = true;
-            events.push(Event::DeviceNotFollowing);
+            let (since, told) = self.failing_since.entry(id.clone()).or_insert((now, false));
+            if !*told && now - *since >= NOT_FOLLOWING_AFTER {
+                *told = true;
+                events.push((Event::DeviceNotFollowing, Some(id.clone())));
+            }
         }
         events
+            .into_iter()
+            .map(|(event, subject)| (Occurrence::from(event), subject))
+            .collect()
     }
 }
 
@@ -918,7 +973,7 @@ impl Push {
         let Some(subscription) = all.iter().find(|s| s.endpoint == endpoint) else {
             return Ok(None);
         };
-        Ok(Some(self.send(subscription, Event::Test, now).await))
+        Ok(Some(self.send(subscription, Event::Test.into(), now).await))
     }
 
     /// Send one event to one browser.
@@ -929,9 +984,10 @@ impl Push {
     pub async fn send(
         &self,
         subscription: &Subscription,
-        event: Event,
+        occurrence: Occurrence,
         now: OffsetDateTime,
     ) -> Outcome {
+        let event = occurrence.event;
         let host = reqwest::Url::parse(&subscription.endpoint)
             .ok()
             .and_then(|u| u.host_str().map(str::to_owned))
@@ -940,7 +996,7 @@ impl Push {
             .allow
             .audience(&subscription.endpoint)
             .and_then(|audience| {
-                let body = message(event, subscription.lang, &subscription.origin).to_string();
+                let body = message(occurrence, subscription.lang, &subscription.origin).to_string();
                 let sealed = webpush::encrypt(
                     body.as_bytes(),
                     &webpush::unb64(&subscription.p256dh).unwrap_or_default(),
@@ -1008,7 +1064,7 @@ impl Push {
 /// What quiet hours are holding back, per browser.
 #[derive(Debug, Default)]
 pub struct Deferred {
-    owed: BTreeMap<String, BTreeSet<Event>>,
+    owed: BTreeMap<String, BTreeMap<Event, Occurrence>>,
 }
 
 impl Deferred {
@@ -1020,24 +1076,28 @@ impl Deferred {
     pub fn due<'a>(
         &mut self,
         subscriptions: &'a [Subscription],
-        events: &[Event],
+        events: &[Occurrence],
         signals: &Signals,
         local_minute: u16,
-    ) -> Vec<(&'a Subscription, Event)> {
+    ) -> Vec<(&'a Subscription, Occurrence)> {
         self.owed
             .retain(|endpoint, _| subscriptions.iter().any(|s| s.endpoint == *endpoint));
         let mut out = Vec::new();
         for subscription in subscriptions {
-            let wanted = |e: &Event| e.kind().is_some_and(|k| subscription.events.contains(&k));
+            let wanted = |e: &Occurrence| {
+                e.event
+                    .kind()
+                    .is_some_and(|k| subscription.events.contains(&k))
+            };
             if subscription.quiet.is_some_and(|q| q.contains(local_minute)) {
                 let owed = self.owed.entry(subscription.endpoint.clone()).or_default();
                 for event in events.iter().copied().filter(wanted) {
-                    match event {
+                    match event.event {
                         Event::ReductionEnded => {
                             owed.remove(&Event::ReductionBegan);
                         }
                         other => {
-                            owed.insert(other);
+                            owed.insert(other, event);
                         }
                     }
                 }
@@ -1045,9 +1105,12 @@ impl Deferred {
             }
             if let Some(owed) = self.owed.remove(&subscription.endpoint) {
                 out.extend(
-                    owed.into_iter()
+                    owed.into_values()
                         // The worse verdict speaks for both.
-                        .filter(|e| e.still_true(signals) && !events.contains(e))
+                        .filter(|e| {
+                            e.event.still_true(signals)
+                                && !events.iter().any(|o| o.event == e.event)
+                        })
                         .map(|e| (subscription, e)),
                 );
             }
@@ -1104,15 +1167,14 @@ pub async fn run<F, Fut>(
         };
         let now = OffsetDateTime::now_utc();
         let signals = Signals::of(&home);
-        let events = detector.observe(&signals, now);
-        if let Some(hooks) = &hooks
-            && !events.is_empty()
-        {
-            hooks.emit(&events, &home, now).await;
+        let changes = detector.changes(&signals, now);
+        if let Some(hooks) = &hooks {
+            hooks.emit(&changes, &home, now).await;
         }
         let Some(push) = &push else {
             continue;
         };
+        let events = detector.notifications(&changes);
         let subscriptions = match push.subscriptions().await {
             Ok(subscriptions) => subscriptions,
             Err(error) => {
@@ -1180,11 +1242,18 @@ mod tests {
 
     #[test]
     fn the_message_is_the_declarative_document_and_nothing_more() {
-        let m = message(Event::ReductionBegan, Lang::En, "https://hems.local:8443");
+        let m = message(
+            Event::ReductionBegan.into(),
+            Lang::En,
+            "https://hems.local:8443",
+        );
         assert_eq!(m["web_push"], 8030);
         let n = m["notification"].as_object().unwrap();
         let keys: Vec<&str> = n.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["body", "dir", "lang", "navigate", "tag", "title"]);
+        assert_eq!(
+            keys,
+            ["body", "data", "dir", "lang", "navigate", "tag", "title"]
+        );
         assert_eq!(n["navigate"], "https://hems.local:8443/#now");
         assert_eq!(n["lang"], "en");
         assert_eq!(m.as_object().unwrap().len(), 2, "no measurement beside it");
@@ -1194,7 +1263,8 @@ mod tests {
     /// page has.
     #[test]
     fn a_notification_opens_what_it_is_about() {
-        let opens = |e| message(e, Lang::En, "https://b")["notification"]["navigate"].clone();
+        let opens =
+            |e: Event| message(e.into(), Lang::En, "https://b")["notification"]["navigate"].clone();
         assert_eq!(opens(Event::GoalImpossible), "https://b/#plan");
         assert_eq!(opens(Event::GoalTight), "https://b/#plan");
         assert_eq!(opens(Event::Failsafe), "https://b/#setup");
@@ -1437,11 +1507,14 @@ mod tests {
         let mut deferred = Deferred::default();
         let due = deferred.due(
             &subs,
-            &[Event::ReductionBegan, Event::GoalTight],
+            &[Event::ReductionBegan.into(), Event::GoalTight.into()],
             &Signals::default(),
             600,
         );
-        let got: Vec<(&str, Event)> = due.iter().map(|(s, e)| (s.endpoint.as_str(), *e)).collect();
+        let got: Vec<(&str, Event)> = due
+            .iter()
+            .map(|(s, e)| (s.endpoint.as_str(), e.event))
+            .collect();
         assert_eq!(
             got,
             [
@@ -1469,19 +1542,15 @@ mod tests {
         let subs = [subscription("a", &Kind::ALL, Some(NIGHT))];
         let reduced = home(Some(false), None, &[]);
         let free = home(None, None, &[]);
+        let began = Occurrence::from(Event::ReductionBegan);
 
         // 23:00 it begins; still in force at 07:00.
         let mut deferred = Deferred::default();
-        assert_eq!(
-            deferred
-                .due(&subs, &[Event::ReductionBegan], &reduced, 23 * 60)
-                .len(),
-            0
-        );
+        assert_eq!(deferred.due(&subs, &[began], &reduced, 23 * 60).len(), 0);
         assert_eq!(deferred.due(&subs, &[], &reduced, 3 * 60).len(), 0);
         let morning = deferred.due(&subs, &[], &reduced, 7 * 60);
         assert_eq!(morning.len(), 1);
-        assert_eq!(morning[0].1, Event::ReductionBegan);
+        assert_eq!(morning[0].1, began);
         assert_eq!(
             deferred.due(&subs, &[], &reduced, 7 * 60 + 1).len(),
             0,
@@ -1490,18 +1559,23 @@ mod tests {
 
         // 23:00 it begins, 02:00 it ends: nothing in the morning.
         let mut deferred = Deferred::default();
-        deferred.due(&subs, &[Event::ReductionBegan], &reduced, 23 * 60);
-        deferred.due(&subs, &[Event::ReductionEnded], &free, 2 * 60);
+        deferred.due(&subs, &[began], &reduced, 23 * 60);
+        deferred.due(&subs, &[Event::ReductionEnded.into()], &free, 2 * 60);
         assert_eq!(deferred.due(&subs, &[], &free, 7 * 60).len(), 0);
 
         // Held, and no longer true by morning without an end being seen.
         let mut deferred = Deferred::default();
-        deferred.due(&subs, &[Event::Failsafe], &home(Some(true), None, &[]), 0);
+        deferred.due(
+            &subs,
+            &[Event::Failsafe.into()],
+            &home(Some(true), None, &[]),
+            0,
+        );
         assert_eq!(deferred.due(&subs, &[], &free, 7 * 60).len(), 0);
 
         // A browser that unsubscribed is owed nothing.
         let mut deferred = Deferred::default();
-        deferred.due(&subs, &[Event::ReductionBegan], &reduced, 23 * 60);
+        deferred.due(&subs, &[began], &reduced, 23 * 60);
         deferred.due(&[], &[], &reduced, 23 * 60 + 1);
         assert_eq!(deferred.due(&subs, &[], &reduced, 7 * 60).len(), 0);
     }
@@ -1619,12 +1693,15 @@ mod tests {
         let mut detector = Detector::default();
         let mut deferred = Deferred::default();
         let mut outcomes = Vec::new();
+        let mut expected_ids = Vec::new();
         for minute in 0..=160 {
             let signals = home((60..150).contains(&minute).then_some(false), None, &[]);
             let now = at(minute);
-            let events = detector.observe(&signals, now);
+            let changes = detector.changes(&signals, now);
+            let events = detector.notifications(&changes);
             let subscriptions = push.subscriptions().await.unwrap();
             for (s, e) in deferred.due(&subscriptions, &events, &signals, local_minute(now)) {
+                expected_ids.push(e.id.to_string());
                 outcomes.push(push.send(s, e, now).await);
             }
         }
@@ -1634,7 +1711,7 @@ mod tests {
         assert_eq!(received.len(), 2, "exactly two");
         let stranger = Receiver::fresh();
         let mut titles = Vec::new();
-        for (headers, body) in received.iter() {
+        for ((headers, body), id) in received.iter().zip(expected_ids) {
             assert_eq!(headers["content-encoding"], "aes128gcm");
             assert_eq!(headers["ttl"], "1800");
             assert_eq!(headers["topic"], "ems-grid");
@@ -1646,6 +1723,7 @@ mod tests {
             let plain = browser.open(body).expect("the browser reads it");
             let document: serde_json::Value = serde_json::from_slice(&plain).unwrap();
             assert_eq!(document["web_push"], 8030);
+            assert_eq!(document["notification"]["data"]["event_id"], id);
             assert_eq!(
                 document["notification"]["navigate"],
                 "https://hems.local/#now"

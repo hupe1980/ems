@@ -37,11 +37,16 @@ target
 /specs/
 /.specify/
 /.claude/
+/.agents/
 
-# Feedback for sibling crates (bug reports / feature requests; always internal — sent to their teams)
-*_FEEDBACK.md
+# Local feedback for sibling projects
+FEEDBACK_*
+
+# Python acceptance harnesses
+__pycache__/
 
 # Zola build output
 /site/public
+/site/static/ems.wasm
 
 .DS_Store

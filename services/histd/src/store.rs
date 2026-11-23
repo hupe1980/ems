@@ -7,7 +7,7 @@
 
 use ems_core::prelude::{GuardRule, Power, Slot};
 use ems_grid::evidence::{ComplianceSample, ControlEvent};
-use ems_grid::mispel::QuarterHour;
+use ems_grid::mispel::{QuarterHour, RegisterAssertion};
 use ems_service::db::{Db, Migration};
 use rust_decimal::Decimal;
 use thiserror::Error;
@@ -46,6 +46,20 @@ const BEGINNING: OffsetDateTime = time::macros::datetime!(0001-01-01 00:00:00 UT
 /// The upper one. See [`BEGINNING`].
 const FOREVER: OffsetDateTime = time::macros::datetime!(9999-12-31 23:59:59 UTC);
 
+const LOCK_REGISTERS: &str = "SELECT pg_advisory_xact_lock(hashtextextended($1, 1337))";
+const READ_LOCK_REGISTERS: &str = "SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 1337))";
+
+/// The window query used by settlement, exports and the query-plan checks.
+pub const REGISTER_WINDOW: &str = "SELECT DISTINCT ON (slot_start)
+                        slot_start, grid_draw_kwh, grid_feed_in_kwh,
+                        device_consumption_kwh, device_generation_kwh,
+                        storage_consumption_kwh, storage_generation_kwh,
+                        anzulegender_wert_ct, spot_price_ct
+                 FROM quarter_hour
+                 WHERE site_id = $1 AND slot_start >= $2 AND slot_start < $3
+                   AND recorded_at <= $4
+                 ORDER BY slot_start, assertion_at DESC";
+
 /// The schema this binary carries.
 ///
 /// `include_str!` rather than a path read at run time, so the container needs no
@@ -61,9 +75,18 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
 /// Why the store could not answer.
 #[derive(Debug, Error)]
 pub enum StoreError {
+    /// MeterStore could not provision or write the register tier.
+    #[error("register storage failed: {0}")]
+    Meter(#[from] meterstore::Error),
     /// The database itself.
     #[error("the history store failed: {0}")]
     Sql(#[from] tokio_postgres::Error),
+    /// The same site, slot and producer revision asserted different values.
+    #[error("{0}; submit a correction with a new producer revision")]
+    ConflictingAssertion(String),
+    /// A wire timestamp cannot uniquely identify this slot or revision.
+    #[error("{0}")]
+    InvalidAssertion(&'static str),
     /// No connection could be taken from the pool.
     ///
     /// Separate from [`StoreError::Sql`] because it is a different fault with a
@@ -109,13 +132,100 @@ impl From<deadpool_postgres::PoolError> for StoreError {
 #[derive(Debug, Clone)]
 pub struct Store {
     db: Db,
+    registers: Option<std::sync::Arc<crate::registers::Registers>>,
 }
 
 impl Store {
     /// A store over an already-open pool.
     #[must_use]
     pub const fn new(db: Db) -> Self {
-        Self { db }
+        Self {
+            db,
+            registers: None,
+        }
+    }
+
+    /// Open MeterStore on the historian database and bind commissioned market identities.
+    ///
+    /// # Errors
+    /// Fails on database errors, a changed identity, or pre-existing SQL registers for a new binding.
+    pub async fn with_register_meters(
+        mut self,
+        settings: &ems_service::DbSettings,
+        meters: std::collections::BTreeMap<String, crate::config::RegisterMeter>,
+    ) -> Result<Self, StoreError> {
+        let mut connection = self.db.get().await?;
+        let tx = connection.transaction().await?;
+        // Serialize MeterStore provisioning across replicas before either pool runs DDL.
+        tx.query_one("SELECT pg_advisory_xact_lock(1337, 1)", &[])
+            .await?;
+        if meters.is_empty() {
+            if tx
+                .query_opt("SELECT 1 FROM register_meter LIMIT 1", &[])
+                .await?
+                .is_some()
+            {
+                return Err(StoreError::InvalidAssertion(
+                    "restore the configured MeterStore site bindings",
+                ));
+            }
+            tx.commit().await?;
+            return Ok(self);
+        }
+        let registers = crate::registers::Registers::open(settings, meters).await?;
+        for (site, meter) in &registers.meters {
+            tx.query_one(LOCK_REGISTERS, &[site]).await?;
+            let malo = meter.malo.to_string();
+            let operator = meter.operator.to_string();
+            if let Some(row) = tx
+                .query_opt(
+                    "SELECT malo, operator_id FROM register_meter WHERE site_id=$1",
+                    &[site],
+                )
+                .await?
+            {
+                if row.get::<_, String>(0) != malo || row.get::<_, String>(1) != operator {
+                    return Err(StoreError::InvalidAssertion(
+                        "configured market identity differs from the stored binding",
+                    ));
+                }
+            } else {
+                if tx
+                    .query_opt(
+                        "SELECT 1 FROM quarter_hour WHERE site_id=$1 LIMIT 1",
+                        &[site],
+                    )
+                    .await?
+                    .is_some()
+                {
+                    return Err(StoreError::InvalidAssertion(
+                        "commission MeterStore on an empty register history",
+                    ));
+                }
+                tx.execute(
+                    "INSERT INTO register_meter VALUES ($1,$2,$3)",
+                    &[site, &malo, &operator],
+                )
+                .await?;
+            }
+        }
+        let configured: Vec<_> = registers.meters.keys().cloned().collect();
+        if tx
+            .query_opt(
+                "SELECT 1 FROM register_meter WHERE NOT (site_id = ANY($1)) LIMIT 1",
+                &[&configured],
+            )
+            .await?
+            .is_some()
+        {
+            return Err(StoreError::InvalidAssertion(
+                "restore the configured MeterStore site bindings",
+            ));
+        }
+        tx.batch_execute(r#"CREATE INDEX IF NOT EXISTS histd_registers_site_window ON histd_registers (site_id, "from", version DESC, recorded_at)"#).await?;
+        tx.commit().await?;
+        self.registers = Some(std::sync::Arc::new(registers));
+        Ok(self)
     }
 
     /// The pool underneath, for a readiness probe.
@@ -124,21 +234,10 @@ impl Store {
         &self.db
     }
 
-    /// Write one quarter hour's registers, as known at `recorded_at`.
-    ///
-    /// **Append-only.** A register is restated — a substitute value replaced by
-    /// a real one, a correction from the metering point operator — and a
-    /// restatement writes a *new version* rather than replacing the one the
-    /// month was settled on. That is `metering`'s valid time and `meterstore`'s
-    /// `recorded_at`, and it is what lets a disputed Nachweis be reproduced from
-    /// the registers it was actually computed from
-    /// ([`Store::quarter_hours_as_of`]).
-    ///
-    /// Re-sending the *same* version is idempotent: a box that retries a batch
-    /// it already placed writes nothing new.
+    /// Import a quarter whose producer revision and historian knowledge time are known to coincide.
     ///
     /// # Errors
-    /// [`StoreError::Sql`] or [`StoreError::Pool`].
+    /// Returns a storage or assertion error. Conflicting revisions are immutable.
     pub async fn put_quarter_hour(
         &self,
         site: &str,
@@ -149,34 +248,88 @@ impl Store {
             .await
     }
 
-    /// Write many quarter hours in **one** statement.
-    ///
-    /// A box posts ninety-six of them at the end of a day. One statement per row
-    /// is ninety-six round trips to a database that is now across a network, so
-    /// the rows go as nine arrays through `UNNEST` — one parse, one plan, one
-    /// round trip, one transaction. The registers of one day are also one
-    /// *fact*, and a settlement that can observe half of them is a settlement
-    /// that can be run on half a day.
+    /// Import a batch at a known revision and knowledge time. Live requests
+    /// use [`Store::accept_assertions`] so only the historian sets knowledge time.
     ///
     /// # Errors
-    /// [`StoreError::Sql`] or [`StoreError::Pool`]. Nothing is written if any
-    /// row fails.
+    /// Returns a storage or assertion error. On failure the batch is rolled back.
     pub async fn put_quarter_hours(
         &self,
         site: &str,
         quarters: &[QuarterHour],
         recorded_at: OffsetDateTime,
     ) -> Result<(), StoreError> {
-        if quarters.is_empty() {
+        let assertions: Vec<_> = quarters
+            .iter()
+            .map(|&registers| RegisterAssertion {
+                registers,
+                recorded_at,
+            })
+            .collect();
+        self.write_assertions(site, &assertions, Some(recorded_at))
+            .await
+    }
+
+    /// Atomically accept all producer revisions and stamp new ones with the
+    /// historian's clock. Redelivery of an identical assertion is a no-op.
+    ///
+    /// # Errors
+    /// A reused identity with different values returns [`StoreError::ConflictingAssertion`].
+    /// An invalid timestamp returns [`StoreError::InvalidAssertion`]. Database
+    /// errors roll back the batch.
+    pub async fn accept_assertions(
+        &self,
+        site: &str,
+        assertions: &[RegisterAssertion],
+    ) -> Result<(), StoreError> {
+        self.write_assertions(site, assertions, None).await
+    }
+
+    async fn write_assertions(
+        &self,
+        site: &str,
+        assertions: &[RegisterAssertion],
+        known_at: Option<OffsetDateTime>,
+    ) -> Result<(), StoreError> {
+        if assertions.is_empty() {
             return Ok(());
         }
+        let unique = unique_assertions(assertions)?;
+        let mut client = self.db.get().await?;
+        let tx = client.transaction().await?;
+        // Stamp the batch after any earlier writer for this site has committed.
+        tx.query_one(LOCK_REGISTERS, &[&site]).await?;
+        if tx
+            .query_opt("SELECT 1 FROM register_meter WHERE site_id=$1", &[&site])
+            .await?
+            .is_some()
+        {
+            let registers = self.registers.as_ref().ok_or(StoreError::InvalidAssertion(
+                "MeterStore is required for this site",
+            ))?;
+            let meter = registers
+                .meters
+                .get(site)
+                .ok_or(StoreError::InvalidAssertion(
+                    "missing configured register meter",
+                ))?;
+            let received = match known_at {
+                Some(at) => at,
+                None => tx.query_one("SELECT clock_timestamp()", &[]).await?.get(0),
+            };
+            registers.write(site, meter, &unique, received).await?;
+            tx.commit().await?;
+            return Ok(());
+        }
+        let versions: Vec<_> = unique.keys().map(|(_, revision)| *revision).collect();
+        let quarters: Vec<_> = unique.into_values().collect();
         let slots: Vec<OffsetDateTime> = quarters.iter().map(|q| q.slot.start()).collect();
         let draw: Vec<Decimal> = quarters.iter().map(|q| q.grid_draw).collect();
         let feed_in: Vec<Decimal> = quarters.iter().map(|q| q.grid_feed_in).collect();
         let consumption: Vec<Decimal> = quarters.iter().map(|q| q.device_consumption).collect();
         let generation: Vec<Decimal> = quarters.iter().map(|q| q.device_generation).collect();
-        let aw: Vec<Decimal> = quarters.iter().map(|q| q.anzulegender_wert).collect();
-        let spot: Vec<Decimal> = quarters.iter().map(|q| q.spot_price).collect();
+        let aw: Vec<Option<Decimal>> = quarters.iter().map(|q| q.anzulegender_wert).collect();
+        let spot: Vec<Option<Decimal>> = quarters.iter().map(|q| q.spot_price).collect();
         // `Z3V¼`/`Z3E¼`, which most sites do not have. `Option<Decimal>` all the
         // way into the array, so a `NULL` stays a null: the box's "not
         // separately metered" and a store that genuinely moved nothing are
@@ -187,26 +340,20 @@ impl Store {
         let storage_feed: Vec<Option<Decimal>> =
             quarters.iter().map(|q| q.storage_generation).collect();
 
-        let client = self.db.get().await?;
-        client
+        let result = tx
             .execute(
                 "INSERT INTO quarter_hour (
                      site_id, slot_start, grid_draw_kwh, grid_feed_in_kwh,
                      device_consumption_kwh, device_generation_kwh,
                      storage_consumption_kwh, storage_generation_kwh,
-                     anzulegender_wert_ct, spot_price_ct, recorded_at
+                     anzulegender_wert_ct, spot_price_ct, assertion_at, recorded_at
                  )
-                 SELECT $1, s, d, f, c, g, sc, sg, a, p, $11
+                 SELECT $1, s, d, f, c, g, sc, sg, a, p, v, COALESCE($12, statement_timestamp())
                  FROM UNNEST($2::timestamptz[], $3::numeric[], $4::numeric[],
                              $5::numeric[], $6::numeric[], $7::numeric[],
-                             $8::numeric[], $9::numeric[], $10::numeric[])
-                      AS t(s, d, f, c, g, sc, sg, a, p)
-                 -- A *restatement* is a new row, because `recorded_at` is in the
-                 -- key. This arm is therefore only the box re-sending a batch it
-                 -- already placed — same slot, same instant — which has to be
-                 -- idempotent rather than an error, because that is exactly what
-                 -- an outbox does when an acknowledgement is lost.
-                 ON CONFLICT (site_id, slot_start, recorded_at) DO UPDATE SET
+                             $8::numeric[], $9::numeric[], $10::numeric[], $11::timestamptz[])
+                      AS t(s, d, f, c, g, sc, sg, a, p, v)
+                 ON CONFLICT (site_id, slot_start, assertion_at) DO UPDATE SET
                      grid_draw_kwh           = EXCLUDED.grid_draw_kwh,
                      grid_feed_in_kwh        = EXCLUDED.grid_feed_in_kwh,
                      device_consumption_kwh  = EXCLUDED.device_consumption_kwh,
@@ -226,11 +373,42 @@ impl Store {
                     &storage_feed,
                     &aw,
                     &spot,
-                    &recorded_at,
+                    &versions,
+                    &known_at,
                 ],
             )
-            .await?;
+            .await;
+        if let Err(error) = result {
+            if let Some(db_error) = error.as_db_error()
+                && db_error.code().code() == "HS001"
+            {
+                return Err(StoreError::ConflictingAssertion(
+                    db_error.message().to_owned(),
+                ));
+            }
+            return Err(error.into());
+        }
+        tx.commit().await?;
         Ok(())
+    }
+
+    /// Resolve the inclusive cutoff returned by a live settlement receipt.
+    /// A missing or future cutoff selects the database's current instant.
+    ///
+    /// # Errors
+    /// [`StoreError::Sql`] or [`StoreError::Pool`].
+    pub async fn settlement_cutoff(
+        &self,
+        requested: Option<OffsetDateTime>,
+    ) -> Result<OffsetDateTime, StoreError> {
+        let now: OffsetDateTime = self
+            .db
+            .get()
+            .await?
+            .query_one("SELECT clock_timestamp()", &[])
+            .await?
+            .get(0);
+        Ok(requested.map_or(now, |cutoff| cutoff.min(now)))
     }
 
     /// Every quarter hour of `site` in `[from, to)`, as it stands **now**.
@@ -251,18 +429,8 @@ impl Store {
         self.quarter_hours_as_of(site, from, to, None).await
     }
 
-    /// The same, as the registers stood at `as_of`.
-    ///
-    /// The read half of the bitemporality the table is keyed for. A register is
-    /// restated after a month has already been settled — a substitute value
-    /// replaced by a real one, a correction from the metering point operator —
-    /// and the two questions that then get asked are *what did we hand over*
-    /// and *what does the correction change*. Neither is answerable from a
-    /// record that overwrites.
-    ///
-    /// `as_of: None` is the current value, which is what every ordinary read
-    /// wants; a settlement being reproduced passes the instant its Nachweis was
-    /// produced at.
+    /// Read the latest producer revision known to the historian by the inclusive
+    /// cutoff, or the current revision when `as_of` is absent.
     ///
     /// # Errors
     /// [`StoreError::Sql`] or [`StoreError::Pool`].
@@ -273,35 +441,24 @@ impl Store {
         to: Option<OffsetDateTime>,
         as_of: Option<OffsetDateTime>,
     ) -> Result<Vec<QuarterHour>, StoreError> {
-        let client = self.db.get().await?;
-        // Plain comparisons against sentinels rather than `$2 IS NULL OR …` —
-        // see [`BEGINNING`]. This is an index scan on the primary key for both a
-        // one-day window and a two-year export.
-        //
-        // `DISTINCT ON (slot_start)` with `recorded_at DESC` is the newest
-        // version at or before `as_of`: the primary key already orders by
-        // `(site_id, slot_start, recorded_at)`, so PostgreSQL takes the groups
-        // from the index and only has to reverse within each — one row deep on
-        // every household that has never been corrected.
-        let rows = client
-            .query(
-                "SELECT DISTINCT ON (slot_start)
-                        slot_start, grid_draw_kwh, grid_feed_in_kwh,
-                        device_consumption_kwh, device_generation_kwh,
-                        storage_consumption_kwh, storage_generation_kwh,
-                        anzulegender_wert_ct, spot_price_ct
-                 FROM quarter_hour
-                 WHERE site_id = $1 AND slot_start >= $2 AND slot_start < $3
-                   AND recorded_at <= $4
-                 ORDER BY slot_start, recorded_at DESC",
-                &[
-                    &site,
-                    &from.unwrap_or(BEGINNING),
-                    &to.unwrap_or(FOREVER),
-                    &as_of.unwrap_or(FOREVER),
-                ],
-            )
-            .await?;
+        let mut client = self.db.get().await?;
+        let from = from.unwrap_or(BEGINNING);
+        let to = to.unwrap_or(FOREVER);
+        let cutoff = as_of.unwrap_or(FOREVER);
+        let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[&site, &from, &to, &cutoff];
+        let tx = client.transaction().await?;
+        tx.query_one(READ_LOCK_REGISTERS, &[&site]).await?;
+        let bound = tx
+            .query_opt("SELECT 1 FROM register_meter WHERE site_id=$1", &[&site])
+            .await?
+            .is_some();
+        let query = if bound {
+            crate::registers::WINDOW
+        } else {
+            REGISTER_WINDOW
+        };
+        let rows = tx.query(query, params).await?;
+        tx.commit().await?;
 
         Ok(rows
             .iter()
@@ -540,8 +697,46 @@ impl Store {
                 &[&(now - EVIDENCE_RETENTION)],
             )
             .await?;
+        if self.registers.is_some() {
+            client
+                .execute(
+                    "DELETE FROM histd_registers WHERE \"from\" <= $1",
+                    &[&(now - EVIDENCE_RETENTION)],
+                )
+                .await?;
+        }
         Ok(usize::try_from(events).unwrap_or(0))
     }
+}
+
+/// Validate the wire identity before either storage engine receives a batch.
+fn unique_assertions(
+    assertions: &[RegisterAssertion],
+) -> Result<std::collections::BTreeMap<(Slot, OffsetDateTime), &QuarterHour>, StoreError> {
+    let mut unique = std::collections::BTreeMap::new();
+    for assertion in assertions {
+        let slot = assertion.registers.slot;
+        if Slot::starting_at(slot.start()).is_none() {
+            return Err(StoreError::InvalidAssertion(
+                "slot must start on a quarter-hour boundary",
+            ));
+        }
+        if assertion.recorded_at.nanosecond() % 1_000 != 0 {
+            return Err(StoreError::InvalidAssertion(
+                "producer revision requires microsecond precision or coarser",
+            ));
+        }
+        if let Some(previous) = unique.insert((slot, assertion.recorded_at), &assertion.registers)
+            && previous != &assertion.registers
+        {
+            return Err(StoreError::ConflictingAssertion(format!(
+                "slot {} has different registers at producer revision {}",
+                slot.start(),
+                assertion.recorded_at
+            )));
+        }
+    }
+    Ok(unique)
 }
 
 /// The trace, as the three aggregates above return it.
@@ -818,6 +1013,132 @@ mod tests {
             .expect("a count")
             .get(0);
         assert_eq!(versions, 1, "a retry is not a restatement");
+    }
+
+    fn assertion(registers: QuarterHour, recorded_at: OffsetDateTime) -> RegisterAssertion {
+        RegisterAssertion {
+            registers,
+            recorded_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn assertion_identity_includes_the_site_and_preserves_null_and_exact_decimal() {
+        let (_fixture, store) = store().await;
+        let mut value = assertion(quarter(NOW, 1_000), NOW);
+        value.registers.spot_price = Some(Decimal::new(-123_456_789, 8));
+        store.accept_assertions("a", &[value, value]).await.unwrap();
+        let mut equivalent = value;
+        equivalent.registers.grid_draw = Decimal::ONE;
+        store.accept_assertions("a", &[equivalent]).await.unwrap();
+
+        let preceding_slot = assertion(quarter(NOW - time::Duration::minutes(15), 1), NOW);
+        let mut different_price = value;
+        different_price.registers.spot_price = Some(Decimal::new(-123_456_788, 8));
+        let mut measured_zero = value;
+        measured_zero.registers.storage_consumption = Some(Decimal::ZERO);
+        for conflict in [different_price, measured_zero] {
+            let err = store
+                .accept_assertions("a", &[preceding_slot, conflict])
+                .await
+                .unwrap_err();
+            assert!(matches!(err, StoreError::ConflictingAssertion(_)));
+        }
+        assert_eq!(
+            store.quarter_hours("a", None, None).await.unwrap(),
+            [value.registers]
+        );
+        store
+            .accept_assertions("b", &[measured_zero])
+            .await
+            .unwrap();
+        assert_eq!(
+            store.quarter_hours("b", None, None).await.unwrap(),
+            [measured_zero.registers]
+        );
+    }
+
+    #[tokio::test]
+    async fn racing_writers_cannot_replace_an_assertion() {
+        let (_fixture, store) = store().await;
+        let a = [assertion(quarter(NOW, 111), NOW)];
+        let b = [assertion(quarter(NOW, 222), NOW)];
+        let (first, second) = tokio::join!(
+            store.accept_assertions("s", &a),
+            store.accept_assertions("s", &b),
+        );
+        let winner = match (first, second) {
+            (Ok(()), Err(StoreError::ConflictingAssertion(_))) => a,
+            (Err(StoreError::ConflictingAssertion(_)), Ok(())) => b,
+            results => panic!("expected one winner and one conflict, got {results:?}"),
+        };
+        let (one, two) = tokio::join!(
+            store.accept_assertions("s", &winner),
+            store.accept_assertions("s", &winner)
+        );
+        one.unwrap();
+        two.unwrap();
+        assert_eq!(
+            store.quarter_hours("s", None, None).await.unwrap(),
+            [winner[0].registers]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_late_revision_cannot_change_an_earlier_settlement_cutoff() {
+        let (fixture, store) = store().await;
+        let original = assertion(quarter(NOW, 100), NOW);
+        let corrected = assertion(quarter(NOW, 300), NOW + MOMENT * 2);
+        let late = assertion(quarter(NOW, 200), NOW + MOMENT);
+        store.accept_assertions("s", &[original]).await.unwrap();
+
+        let mut client = fixture.db.get().await.unwrap();
+        let tx = client.transaction().await.unwrap();
+        tx.query_one(LOCK_REGISTERS, &[&"s"]).await.unwrap();
+        let writer = {
+            let store = store.clone();
+            tokio::spawn(async move { store.accept_assertions("s", &[corrected]).await })
+        };
+        // Wait until the writer is actually blocked before taking this cutoff.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let blocked: bool = tx
+                    .query_one(
+                        "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE database =
+                     (SELECT oid FROM pg_database WHERE datname = current_database())
+                     AND locktype = 'advisory' AND NOT granted)",
+                        &[],
+                    )
+                    .await
+                    .unwrap()
+                    .get(0);
+                if blocked {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("writer should wait behind the site lock");
+        let cutoff = tx
+            .query_one("SELECT clock_timestamp()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        tx.commit().await.unwrap();
+        writer.await.unwrap().unwrap();
+        store.accept_assertions("s", &[late]).await.unwrap();
+        assert_eq!(
+            store
+                .quarter_hours_as_of("s", None, None, Some(cutoff))
+                .await
+                .unwrap(),
+            [original.registers]
+        );
+        assert_eq!(
+            store.quarter_hours("s", None, None).await.unwrap(),
+            [corrected.registers]
+        );
     }
 
     #[tokio::test]

@@ -16,7 +16,7 @@
 //!   What is owed is kept in the subscription's own row, so a restart owes it
 //!   still.
 //! - **Nothing blocks the control loop.** Deliveries run on their own task,
-//!   each bounded in time, and read at most [`MOST_BODY`] of an answer.
+//!   each bounded in time. Only the HTTP status is used.
 //! - **Only where the household pointed it.** A private address over `http` or
 //!   `https`; a public one over `https` only and only when the household said
 //!   so in words; never loopback, link-local, unspecified or multicast — checked
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 use tokio::sync::Mutex;
 
-use crate::runtime::push::{Event as Detected, Signals};
+use crate::runtime::push::{Event as Detected, Grid, Occurrence, Signals};
 use crate::store::Store;
 
 /// The most subscriptions a box keeps.
@@ -51,9 +51,6 @@ const MOST_OWED: usize = 200;
 /// The most log entries a subscription keeps.
 const MOST_LOGGED: usize = 500;
 
-/// The most of a receiver's answer that is read.
-pub const MOST_BODY: usize = 1024;
-
 /// How long one attempt may take, connection to answer.
 const ATTEMPT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -61,7 +58,10 @@ const ATTEMPT: std::time::Duration = std::time::Duration::from_secs(10);
 const BACKOFF_S: [i64; 6] = [30, 120, 600, 1_800, 3_600, 10_800];
 
 /// Every type this box sends to a subscriber, and nothing else.
-pub const EMITTED: [&str; 7] = [
+pub const EMITTED: [&str; 10] = [
+    ems_events::GRID_LPC_FAILSAFE_LEFT,
+    ems_events::GRID_LPP_LIMIT_RECEIVED,
+    ems_events::DEVICE_LOST,
     ems_events::GRID_LPC_LIMIT_RECEIVED,
     ems_events::GRID_LPC_LIMIT_RELEASED,
     ems_events::GRID_LPC_FAILSAFE_ENTERED,
@@ -97,21 +97,54 @@ pub struct FailsafeEntered {
     pub failsafe_w: Option<f64>,
 }
 
+/// The operator's feed-in limit in watts.
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct FeedInLimit {
+    /// New export ceiling, W.
+    pub limit_w: f64,
+}
+/// The last observation made by this device. None when it never reported.
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DeviceLost {
+    /// Time of the last sample, if the device has reported.
+    pub last_seen: Option<String>,
+}
+/// Whether a reduction remains after the failsafe ended.
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct FailsafeLeft {
+    /// True when a reduction still applies.
+    pub reduced: bool,
+}
+
 /// `de.ems.site.goal.at-risk`: a goal turned tight or impossible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GoalAtRisk {
     /// `tight` or `impossible`.
     pub verdict: String,
-    /// The devices whose goal it is.
-    pub assets: Vec<String>,
+    /// Target and local deadline set by the household.
+    pub goal: HouseholdGoal,
+    /// Reachable state of charge (fraction) or water temperature (°C).
+    pub reachable: Option<f64>,
+}
+
+/// Household goal in the units of the subject device.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum HouseholdGoal {
+    /// Departure charge and time.
+    Car(crate::home::CarGoal),
+    /// Water temperature and time.
+    Tank(crate::home::TankGoal),
 }
 
 /// `de.ems.device.deviation.detected`: a device has not done what it was
 /// asked for ten minutes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeviationDetected {
-    /// The devices not following.
-    pub assets: Vec<String>,
+    /// Requested power, W, when available.
+    pub commanded_w: Option<f64>,
+    /// Observed power, W, when available.
+    pub measured_w: Option<f64>,
 }
 
 /// `de.ems.test.ping`: sent on request, to check a receiver.
@@ -323,10 +356,18 @@ fn checked(
             "{url} names no host the box can find"
         )));
     }
+    let interfaces = if_addrs::get_if_addrs()
+        .map_err(|_| Refused::Destination("the local interfaces could not be checked".into()))?;
     let mut every_private = true;
     for ip in addresses {
         if loopback && ip.is_loopback() {
             continue;
+        }
+        if interfaces.iter().any(|interface| {
+            interface.ip().to_canonical() == ip.to_canonical() ||
+            matches!(&interface.addr, if_addrs::IfAddr::V4(a) if a.broadcast.is_some_and(|b| IpAddr::V4(b) == ip.to_canonical()))
+        }) {
+            return Err(Refused::Destination("the address belongs to this box or its broadcast domain".into()));
         }
         every_private &= reachable(*ip).map_err(Refused::Destination)?;
     }
@@ -345,6 +386,18 @@ fn checked(
         }
     }
     Ok(parsed)
+}
+
+/// Validate the entire current DNS answer before pinning a single socket.
+fn delivery_target(
+    url: &str,
+    addresses: &[SocketAddr],
+    public: bool,
+    loopback: bool,
+) -> Result<SocketAddr, Refused> {
+    let ips: Vec<_> = addresses.iter().map(SocketAddr::ip).collect();
+    checked(url, &ips, public, loopback)?;
+    Ok(addresses[0]) // checked rejects an empty answer.
 }
 
 async fn resolve(url: &reqwest::Url) -> Vec<SocketAddr> {
@@ -380,7 +433,63 @@ pub struct Webhooks {
 #[derive(Default)]
 struct Watch {
     reduced_since: Option<OffsetDateTime>,
+    grid: Option<Grid>,
+    feed_in: Option<f64>,
+    silent: std::collections::BTreeSet<String>,
     last_day: Option<String>,
+}
+
+impl Watch {
+    fn observe(
+        &mut self,
+        home: &serde_json::Value,
+        grid: Grid,
+        out: &mut Vec<(uuid::Uuid, &'static str, Option<String>, serde_json::Value)>,
+    ) {
+        let previous = self.grid.replace(grid);
+        let feed_in = home["feed_in_limit_w"].as_f64();
+        if previous.is_some()
+            && feed_in != self.feed_in
+            && let Some(limit_w) = feed_in
+        {
+            out.push((
+                uuid::Uuid::new_v4(),
+                ems_events::GRID_LPP_LIMIT_RECEIVED,
+                None,
+                json(&FeedInLimit { limit_w }),
+            ));
+        }
+        self.feed_in = feed_in;
+        if previous == Some(Grid::Failsafe) && grid != Grid::Failsafe {
+            out.push((
+                uuid::Uuid::new_v4(),
+                ems_events::GRID_LPC_FAILSAFE_LEFT,
+                None,
+                json(&FailsafeLeft {
+                    reduced: grid == Grid::Reduced,
+                }),
+            ));
+        }
+        let mut silent = std::collections::BTreeSet::new();
+        for device in home["devices"].as_array().into_iter().flatten() {
+            if device["notice"] == "silent"
+                && let Some(id) = device["id"].as_str()
+            {
+                silent.insert(id.to_owned());
+                if previous.is_some() && !self.silent.contains(id) {
+                    out.push((
+                        uuid::Uuid::new_v4(),
+                        ems_events::DEVICE_LOST,
+                        Some(id.to_owned()),
+                        json(&DeviceLost {
+                            last_seen: device["last_seen"].as_str().map(str::to_owned),
+                        }),
+                    ));
+                }
+            }
+        }
+        self.silent = silent;
+    }
 }
 
 impl Webhooks {
@@ -469,7 +578,7 @@ impl Webhooks {
             base64::engine::general_purpose::STANDARD.encode(&key)
         );
         let kept = Kept {
-            id: new_id(),
+            id: uuid::Uuid::new_v4().to_string(),
             name: asked.name.chars().take(64).collect(),
             url: asked.url,
             types: asked.types,
@@ -554,7 +663,7 @@ impl Webhooks {
         let event = ems_events::envelope::Event::new(
             ems_events::TEST_PING,
             self.source.clone(),
-            new_id(),
+            uuid::Uuid::new_v4().to_string(),
             now,
             TestPing { test: true },
         );
@@ -587,17 +696,26 @@ impl Webhooks {
     ///
     /// One detector, two doors: a reduction is detected once and leaves both
     /// as a notification and as a CloudEvent.
-    pub async fn emit(&self, detected: &[Detected], home: &serde_json::Value, now: OffsetDateTime) {
+    pub async fn emit(
+        &self,
+        detected: &[(Occurrence, Option<String>)],
+        home: &serde_json::Value,
+        now: OffsetDateTime,
+    ) {
         let signals = Signals::of(home);
-        let mut out: Vec<(&'static str, Option<String>, serde_json::Value)> = Vec::new();
+        let mut out: Vec<(uuid::Uuid, &'static str, Option<String>, serde_json::Value)> =
+            Vec::new();
         {
             let mut watch = self.state.lock().await;
-            for event in detected {
+            watch.observe(home, signals.grid, &mut out);
+            for (occurrence, subject) in detected {
+                let event = occurrence.event;
                 match event {
                     Detected::ReductionBegan => {
                         watch.reduced_since = Some(now);
                         let r = &home["reduction"];
                         out.push((
+                            occurrence.id,
                             ems_events::GRID_LPC_LIMIT_RECEIVED,
                             None,
                             json(&LimitReceived {
@@ -612,12 +730,14 @@ impl Webhooks {
                             .take()
                             .map(|t| (now - t).whole_seconds());
                         out.push((
+                            occurrence.id,
                             ems_events::GRID_LPC_LIMIT_RELEASED,
                             None,
                             json(&LimitReleased { lasted_s }),
                         ));
                     }
                     Detected::Failsafe => out.push((
+                        occurrence.id,
                         ems_events::GRID_LPC_FAILSAFE_ENTERED,
                         None,
                         json(&FailsafeEntered {
@@ -627,35 +747,38 @@ impl Webhooks {
                         }),
                     )),
                     Detected::GoalTight | Detected::GoalImpossible => {
-                        let verdict = if matches!(event, Detected::GoalTight) {
-                            "tight"
-                        } else {
-                            "impossible"
-                        };
-                        let assets: Vec<String> = signals.goals.keys().cloned().collect();
-                        out.push((
-                            ems_events::SITE_GOAL_AT_RISK,
-                            assets.first().cloned(),
-                            json(&GoalAtRisk {
-                                verdict: verdict.into(),
-                                assets,
-                            }),
-                        ));
+                        if let Some((asset, data)) = goal_at_risk(home, subject.as_deref(), event) {
+                            out.push((
+                                occurrence.id,
+                                ems_events::SITE_GOAL_AT_RISK,
+                                Some(asset),
+                                data,
+                            ));
+                        }
                     }
                     Detected::DeviceNotFollowing => {
-                        let assets: Vec<String> = signals.not_following.iter().cloned().collect();
+                        let Some(id) = subject else { continue };
+                        let Some(device) = home["devices"].as_array().and_then(|devices| {
+                            devices.iter().find(|d| d["id"].as_str() == Some(id))
+                        }) else {
+                            continue;
+                        };
                         out.push((
+                            occurrence.id,
                             ems_events::DEVICE_DEVIATION_DETECTED,
-                            assets.first().cloned(),
-                            json(&DeviationDetected { assets }),
+                            Some(id.clone()),
+                            json(&DeviationDetected {
+                                commanded_w: device["commanded_w"].as_f64(),
+                                measured_w: device["measured_w"].as_f64(),
+                            }),
                         ));
                     }
                     Detected::Test => {}
                 }
             }
         }
-        for (r#type, subject, data) in out {
-            self.owe(r#type, subject, data, now).await;
+        for (id, r#type, subject, data) in out {
+            self.owe(id, r#type, subject, data, now).await;
         }
     }
 
@@ -675,6 +798,7 @@ impl Webhooks {
             }
         }
         self.owe(
+            uuid::Uuid::new_v4(),
             ems_events::SITE_DAY_CLOSED,
             Some(day.day.clone()),
             json(day),
@@ -685,6 +809,7 @@ impl Webhooks {
 
     async fn owe(
         &self,
+        id: uuid::Uuid,
         r#type: &'static str,
         subject: Option<String>,
         data: serde_json::Value,
@@ -694,8 +819,13 @@ impl Webhooks {
         let Ok(all) = self.all().await else {
             return;
         };
-        let mut event =
-            ems_events::envelope::Event::new(r#type, self.source.clone(), new_id(), now, data);
+        let mut event = ems_events::envelope::Event::new(
+            r#type,
+            self.source.clone(),
+            id.to_string(),
+            now,
+            data,
+        );
         if let Some(subject) = &subject {
             event = event.about(subject.clone());
         }
@@ -742,10 +872,14 @@ impl Webhooks {
             for owed in due {
                 // The attempt runs with no lock held: a receiver that takes ten
                 // seconds must not hold up a household revoking it.
-                let (status, error) =
-                    attempt(&kept, &owed.id, owed.body.as_bytes(), now, self.loopback).await;
-                let delivered = status.is_some_and(|s| (200..300).contains(&s));
                 let first = OffsetDateTime::from_unix_timestamp(owed.first).unwrap_or(now);
+                let expired = now - first >= GIVE_UP_AFTER;
+                let (status, error) = if expired {
+                    (None, Some("delivery expired".into()))
+                } else {
+                    attempt(&kept, &owed.id, owed.body.as_bytes(), now, self.loopback).await
+                };
+                let delivered = status.is_some_and(|s| (200..300).contains(&s));
                 let gap = BACKOFF_S[usize::try_from(owed.attempts)
                     .unwrap_or(usize::MAX)
                     .min(BACKOFF_S.len() - 1)];
@@ -763,7 +897,7 @@ impl Webhooks {
                     event: owed.id.clone(),
                     r#type: owed.r#type.clone(),
                     at: now,
-                    attempt: owed.attempts + 1,
+                    attempt: owed.attempts + u32::from(!expired),
                     status,
                     error,
                     outcome: outcome.into(),
@@ -795,21 +929,32 @@ impl Webhooks {
     }
 }
 
-/// A random UUID (version 4), from the provider the box already links.
-fn new_id() -> String {
-    let mut b = [0_u8; 16];
-    let _ = aws_lc_rs::rand::fill(&mut b);
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    let h = hex::encode(b);
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+fn goal_at_risk(
+    home: &serde_json::Value,
+    subject: Option<&str>,
+    event: Detected,
+) -> Option<(String, serde_json::Value)> {
+    let (field, kind, reach) = match subject? {
+        "goal" => ("goal", "car", "reachable_soc"),
+        "tank_goal" => ("tank_goal", "hot_water", "reachable_c"),
+        _ => return None,
+    };
+    let device = home["devices"]
+        .as_array()?
+        .iter()
+        .find(|d| d["kind"] == kind)?;
+    let goal = &home[field];
+    let data = GoalAtRisk {
+        verdict: if event == Detected::GoalTight {
+            "tight"
+        } else {
+            "impossible"
+        }
+        .into(),
+        goal: serde_json::from_value(goal[0].clone()).ok()?,
+        reachable: goal[1][reach].as_f64(),
+    };
+    Some((device["id"].as_str()?.to_owned(), json(&data)))
 }
 
 fn json<T: Serialize>(value: &T) -> serde_json::Value {
@@ -855,6 +1000,18 @@ async fn attempt(
     now: OffsetDateTime,
     loopback: bool,
 ) -> (Option<u16>, Option<String>) {
+    tokio::time::timeout(ATTEMPT, post_checked(kept, id, body, now, loopback))
+        .await
+        .unwrap_or_else(|_| (None, Some("delivery timed out".into())))
+}
+
+async fn post_checked(
+    kept: &Kept,
+    id: &str,
+    body: &[u8],
+    now: OffsetDateTime,
+    loopback: bool,
+) -> (Option<u16>, Option<String>) {
     let Ok(url) = reqwest::Url::parse(&kept.url) else {
         return (None, Some("the subscription's URL no longer parses".into()));
     };
@@ -862,17 +1019,16 @@ async fn attempt(
     // checked: a name that has since moved to this box or to link-local is
     // refused now, not merely when it was added.
     let addresses = resolve(&url).await;
-    let ips: Vec<IpAddr> = addresses.iter().map(SocketAddr::ip).collect();
-    if let Err(refused) = checked(&kept.url, &ips, kept.public, loopback) {
-        return (None, Some(refused.to_string()));
-    }
+    let target = match delivery_target(&kept.url, &addresses, kept.public, loopback) {
+        Ok(target) => target,
+        Err(refused) => return (None, Some(refused.to_string())),
+    };
     let signed = ems_events::webhook::sign(&kept.key, id, now, body);
-    let mut client = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(ATTEMPT);
-    if let (Some(host), Some(first)) = (url.host_str(), addresses.first()) {
-        client = client.resolve(host, *first);
-    }
+        .timeout(ATTEMPT)
+        .resolve(url.host_str().expect("validated host"), target);
     let Ok(client) = client.build() else {
         return (None, Some("no HTTP client".into()));
     };
@@ -886,15 +1042,6 @@ async fn attempt(
     match request.send().await {
         Ok(response) => {
             let status = response.status().as_u16();
-            // Read no more than a sentence of the answer, and discard it.
-            let mut response = response;
-            let mut read = 0;
-            while let Ok(Some(chunk)) = response.chunk().await {
-                read += chunk.len();
-                if read >= MOST_BODY {
-                    break;
-                }
-            }
             let error =
                 (!(200..300).contains(&status)).then(|| format!("the receiver answered {status}"));
             (Some(status), error)
@@ -981,6 +1128,19 @@ mod tests {
         assert!(destination("https://example.org/hook", &net, true).is_ok());
         assert!(destination("ftp://x/hook", &lan, false).is_err());
         assert!(destination("http://localhost/hook", &[ip("127.0.0.1")], true).is_err());
+    }
+
+    #[test]
+    fn delivery_validates_every_address_in_the_new_dns_answer() {
+        let url = "https://receiver.example/hook";
+        let lan: SocketAddr = "192.0.2.20:443".parse().unwrap();
+        let local: SocketAddr = "127.0.0.1:443".parse().unwrap();
+        assert_eq!(delivery_target(url, &[lan], true, false).unwrap(), lan);
+        assert!(delivery_target(url, &[lan, local], true, false).is_err());
+        assert!(delivery_target(url, &[], true, false).is_err());
+        for interface in if_addrs::get_if_addrs().unwrap() {
+            assert!(destination(url, &[interface.ip()], true).is_err());
+        }
     }
 
     /// The automation in the docs names a type the box sends, and the fields it

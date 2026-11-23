@@ -35,7 +35,7 @@ use crate::map::{control_type_for, roles_for};
 /// The namespace hems mints its S2 identifiers in.
 ///
 /// Randomly chosen once, then fixed forever — that is what a UUID namespace is.
-const HEMS_NAMESPACE: uuid::Uuid = uuid::uuid!("6f9c1f0e-4b3a-5d2e-9a71-2c8e5b4d7f10");
+const EMS_NAMESPACE: uuid::Uuid = uuid::uuid!("6f9c1f0e-4b3a-5d2e-9a71-2c8e5b4d7f10");
 
 /// A stable S2 identifier for one named part of one asset.
 ///
@@ -47,7 +47,7 @@ const HEMS_NAMESPACE: uuid::Uuid = uuid::uuid!("6f9c1f0e-4b3a-5d2e-9a71-2c8e5b4d
 /// which is the behaviour a manager is entitled to assume.
 pub(crate) fn stable_id(asset: &AssetId, part: &str) -> Id {
     Id::from_uuid(uuid::Uuid::new_v5(
-        &HEMS_NAMESPACE,
+        &EMS_NAMESPACE,
         format!("{asset}/{part}").as_bytes(),
     ))
 }
@@ -113,15 +113,13 @@ pub struct BatteryDescription {
     pub actuator: Id,
     /// Charging. Factor 0 is idle, factor 1 is full charge power.
     pub charge: Id,
-    /// Discharging. Factor 0 is idle, factor 1 is full discharge power.
+    /// Discharging. Factor 0 is full discharge power, factor 1 is idle.
     pub discharge: Id,
 }
 
 /// Describe a battery as a store with a level and two directions.
 ///
-/// Both operation modes start at idle, so an `operation_mode_factor` of zero
-/// means *stop* whichever mode is active. A manager that has to switch mode to
-/// stop a battery will overshoot every time it changes its mind.
+/// S2 interpolates from the lowest signed power to the highest in each mode.
 #[must_use]
 pub fn describe_battery(battery: &Battery, valid_from: OffsetDateTime) -> BatteryDescription {
     let capacity = battery.capacity.kwh();
@@ -150,12 +148,12 @@ pub fn describe_battery(battery: &Battery, valid_from: OffsetDateTime) -> Batter
             .elements(vec![frbc::OperationModeElement {
                 fill_level_range: usable,
                 fill_rate: NumberRange {
-                    start_of_range: 0.0,
-                    end_of_range: rate_end,
+                    start_of_range: rate_end.min(0.0),
+                    end_of_range: rate_end.max(0.0),
                 },
                 power_ranges: vec![PowerRange {
-                    start_of_range: 0.0,
-                    end_of_range: power_end,
+                    start_of_range: power_end.min(0.0),
+                    end_of_range: power_end.max(0.0),
                     commodity_quantity: q,
                 }],
                 running_costs: None,
@@ -419,6 +417,21 @@ pub struct EvDescription {
     pub discharge: Option<Id>,
 }
 
+impl EvDescription {
+    pub(crate) fn power_range(&self, mode: &Id) -> Option<&PowerRange> {
+        self.system
+            .actuators
+            .first()?
+            .operation_modes
+            .iter()
+            .find(|entry| entry.id == *mode)?
+            .elements
+            .first()?
+            .power_ranges
+            .first()
+    }
+}
+
 /// Describe a charge point with a car on it as a store.
 ///
 /// This is the whole argument for S2 in one function. The same wallbox is a
@@ -469,8 +482,8 @@ pub fn describe_ev(
             .elements(vec![frbc::OperationModeElement {
                 fill_level_range: usable,
                 fill_rate: NumberRange {
-                    start_of_range: 0.0,
-                    end_of_range: rate,
+                    start_of_range: from * rate,
+                    end_of_range: to * rate,
                 },
                 power_ranges: vec![PowerRange {
                     start_of_range: from,
@@ -485,7 +498,7 @@ pub fn describe_ev(
     let mut modes = vec![mode_of(
         &charge,
         "charge",
-        max.get() * efficiency * KWH_PER_S_PER_W,
+        efficiency * KWH_PER_S_PER_W,
         min.get(),
         max.get(),
     )];
@@ -493,7 +506,7 @@ pub fn describe_ev(
         modes.push(mode_of(
             id,
             "discharge",
-            -max.get() * KWH_PER_S_PER_W / efficiency,
+            KWH_PER_S_PER_W / efficiency,
             -max.get(),
             -min.get(),
         ));

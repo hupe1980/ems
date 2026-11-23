@@ -1,6 +1,6 @@
 [package]
 name        = "ems-forecast"
-description = "Quantile forecasts for a home energy system — a physical photovoltaic model from solar geometry and the online residual corrector that turns it into a forecast, load profiles by day type, electric-vehicle session statistics, RC identification of the building from its own record, naive fallbacks, and the calibration metrics that say whether any of it can be trusted"
+description = "Photovoltaic and demand forecasts with uncertainty estimates for household energy planning"
 keywords    = ["energy", "forecasting", "photovoltaic", "solar", "quantile"]
 categories  = ["science", "simulation"]
 readme      = "README.md"

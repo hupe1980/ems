@@ -24,6 +24,8 @@
 )]
 
 pub mod device;
+#[cfg(feature = "peak")]
+pub mod peak;
 pub mod steuerbox;
 pub mod weather;
 

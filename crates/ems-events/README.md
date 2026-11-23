@@ -1,50 +1,12 @@
 # ems-events
 
-Every CloudEvents `type` the [hems](https://github.com/hupe1980/ems) workspace
-emits, the envelope one travels in, and the signature that says which box sent
-it.
+Event types, CloudEvents envelopes and Standard Webhooks signatures used by EMS producers and consumers.
 
-An event type is an interface. Spelling one differently in the emitter and the
-consumer produces a system that runs, logs nothing unusual, and quietly does not
-work — the failure mode that costs the most to find. So the names live here as
-constants and `cargo xtask check-events` fails the build if a string that looks
-like an event type appears anywhere in the workspace without being in the
-catalogue.
+Use a catalogue constant for the CloudEvent `type`, for example `SITE_DAY_REPORTED` when a household reports its day to `obsd`. Types are past tense and use the `de.ems` namespace. `cargo xtask check-events` checks new event names against the catalogue.
 
-`de.ems.<aggregate>.<thing>.<past-tense-verb>` — reverse-DNS as CloudEvents 1.0
-recommends, and past tense because an event is something that has already
-happened: `de.ems.grid.lpc.limit.received`, not `de.ems.grid.set_limit`.
+The webhook signature covers the message ID, timestamp and exact body bytes. Verify those bytes before decoding the payload. The verifier accepts a set of secrets during key rotation and a caller-provided time for replay-window checks.
 
-## One of them is on a wire
-
-`SITE_DAY_REPORTED` is what a box sends `obsd` at the end of a day — the only
-link between the edge and the fleet that exists today. It travels as a
-CloudEvent in `envelope` and is **signed** with `webhook` (Standard Webhooks over
-the message id, the timestamp and the exact bytes), because the thing being
-written is the list of households that did not respect a network operator's
-reduction. A fleet view that accepts an unsigned day is one anybody who can reach
-it may write to, and a captured request must not be replayable, re-attributable
-or editable.
-
-The rest of the catalogue is the agreed vocabulary, written down before its first
-emitter rather than reverse-engineered from six of them. It arrives with the
-driver loop and the local bus `hemsd` still has to grow.
-
-- 🧊 **No I/O, no clock.** `sign` and `verify` are pure functions of bytes, a
-  secret and an instant, so a replayed or tampered event is a unit test.
-- 🔐 **Several secrets at once**, so a rotation is a deployment rather than an
-  outage: verification tries each configured secret.
-- ⏱️ **A tolerance on the timestamp**, because a signature that never expires is
-  a capture that never expires.
-
-## Use it
-
-```console
-$ cargo add ems-events
-```
-
-API reference on [docs.rs](https://docs.rs/ems-events); the design is explained in
-[The fleet](https://hupe1980.github.io/ems/docs/services/) on the hems site.
+[API reference](https://docs.rs/ems-events) · [Guide](https://hupe1980.github.io/ems/docs/services/)
 
 ## License
 

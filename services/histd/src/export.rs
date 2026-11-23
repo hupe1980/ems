@@ -148,8 +148,8 @@ fn quarter_hour(q: &QuarterHour) -> Value {
         // check its own Nachweis.
         "storage_consumption_kwh": q.storage_consumption.map(|v| v.to_string()),
         "storage_generation_kwh": q.storage_generation.map(|v| v.to_string()),
-        "anzulegender_wert_ct": q.anzulegender_wert.to_string(),
-        "spot_price_ct": q.spot_price.to_string(),
+        "anzulegender_wert_ct": q.anzulegender_wert.map(|value| value.to_string()),
+        "spot_price_ct": q.spot_price.map(|value| value.to_string()),
     })
 }
 
@@ -202,18 +202,9 @@ pub enum MispelExportError {
     Store(#[from] StoreError),
 }
 
-/// How much of the settled period the box actually has registers for.
-///
-/// A Nachweis is a legal document and the Festlegung sums `∑M` over a whole
-/// period, so **the denominator has to be visible**. A quarter hour the box
-/// could not price gets no register at all (that is deliberate — a register
-/// carries two prices, and a zero in either is the figure that says § 51 EEG
-/// switched support off), so a month legitimately has gaps, and a settlement
-/// summed over 2 800 of 2 976 quarter hours under-reports every quantity in it
-/// while looking complete.
-///
-/// This is the same rule the forecast scores learned the hard way: a score
-/// whose denominator is invisible cannot fail.
+/// Register coverage for the settlement period in local quarter hours.
+/// A recorded interval still counts when it lacks a price. The selected
+/// settlement option separately checks the prices required for its calculation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Completeness {
     /// How many quarter hours the period has, in the Europe/Berlin calendar —
@@ -230,6 +221,11 @@ impl Completeness {
         self.present >= self.expected
     }
 }
+
+/// Serialize a replay cutoff exactly as the HTTP query accepts it, including
+/// the fractional seconds that can separate two register corrections.
+#[derive(serde::Serialize)]
+struct SettlementCutoff(#[serde(with = "time::serde::rfc3339::option")] Option<OffsetDateTime>);
 
 /// The Ausschließlichkeitsoption's Nachweis: nothing to settle, and a figure
 /// that says so.
@@ -291,7 +287,7 @@ async fn exclusivity(
         "effective_from": rules.effective_from().to_string(),
         "year": year,
         "month": month,
-        "as_of": as_of.map(OffsetDateTime::unix_timestamp),
+        "as_of": SettlementCutoff(as_of),
         "settled": false,
         "complete": complete.is_complete(),
         "quarter_hours": { "expected": complete.expected, "present": complete.present },
@@ -336,8 +332,7 @@ async fn exclusivity(
 /// the first; the difference from `None` answers the second.
 ///
 /// `None` settles from the registers as they stand now, which is what every
-/// first settlement of a period wants. The instant is echoed onto the document
-/// either way, so a Nachweis says which version of the record it is about.
+/// first settlement of a period wants. An explicit cutoff is echoed in RFC 3339 with fractional seconds.
 ///
 /// # Errors
 /// [`MispelExportError`] where the site has declared no option, the window does
@@ -458,7 +453,7 @@ pub async fn mispel(
         // reproducible only if it says which registers it read, and a register
         // can be restated after the document has been sent. `null` is "the
         // registers as they stand", which is what a first settlement is.
-        "as_of": as_of.map(OffsetDateTime::unix_timestamp),
+        "as_of": SettlementCutoff(as_of),
         "settled": true,
         // The denominator, on the document: a settlement over part of the
         // window is not a settlement, and the reader has to see that.

@@ -1,39 +1,9 @@
-//! What a box is told about the house it manages.
+//! Household site, driver and control settings.
 //!
-//! Until this existed `hemsd` could only manage `HouseholdConfig::default()` —
-//! a reference household compiled into the binary. That is the right thing for a
-//! simulated day and useless on a wall, so this is the file an installer edits:
-//! the connection, the assets, the drivers that speak to them, and how fast the
-//! control loop runs.
-//!
-//! # Units are in the field names, and that is deliberate
-//!
-//! The domain types are `Power`, `Energy`, `Current`, `Soc`. None of them
-//! appears here. A configuration file is read by a person with a clipboard
-//! standing in a cellar, and `battery_kwh = 10.0` is a sentence they can check
-//! against a label where `battery = { watt_hours = 10000 }` is a sentence they
-//! can get wrong by three orders of magnitude. So every field carries its unit
-//! in its name, and [`SiteSettings::household`] is the one place the conversion
-//! happens.
-//!
-//! It also keeps the wire format independent of the domain: adding a serde
-//! derive to a newtype decides how it travels for every consumer of the crate,
-//! and a configuration file is not a good reason to make that decision (P3).
-//!
-//! # Everything has a default except the one thing that cannot have one
-//!
-//! `ems-service` reads a file, then the environment, then the defaults, and a
-//! file that is absent is a deployment nobody has customised rather than an
-//! error. Every field of [`SiteSettings`] therefore defaults to the reference
-//! household — the same house every figure in this project was measured on.
-//!
-//! The **driver list** does not, and it is the one thing `hemsd run` refuses to
-//! start without. A box with no drivers measures nothing, so the guard assumes
-//! every controllable device is drawing its nameplate power, for ever; and if
-//! the household is under § 14a, nothing could hear a reduction. Coming up
-//! quietly in either state is the failure this workspace keeps finding in
-//! itself, so it is refused rather than warned about
-//! (`crate::drivers::RegistryError::Uncommissioned`).
+//! TOML field names carry units. [`SiteSettings::household`] converts these
+//! values to domain quantities. Omitted site fields use reference-household
+//! defaults. Supported environment overrides take precedence over the file.
+//! Gateway startup requires a configured driver list.
 
 use std::collections::BTreeMap;
 
@@ -50,13 +20,33 @@ use serde::{Deserialize, Serialize};
 
 use crate::site::{ConnectionConfig, Declared, HouseholdConfig, REFERENCE_ASSETS};
 
+/// Whether the gateway may send device setpoints.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatingMode {
+    /// The gateway is responsible for its configured devices.
+    #[default]
+    Managed,
+    /// Observe the household while another controller enforces its grid limits.
+    Shadow,
+}
+
 /// The whole of a box's configuration.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Settings {
+    /// Installer contact shown beside a device that needs attention.
+    pub support_contact: Option<String>,
+    /// Installer-selected device control authority.
+    pub mode: OperatingMode,
+    /// Independent controller the installer confirmed enforces the grid limits.
+    pub external_limit_controller: Option<String>,
     /// The shell: where the health surface listens, how it logs, how long a
     /// shutdown may take.
     pub service: ems_service::Settings,
+    /// One read-only appliance on an existing local Matter fabric.
+    #[cfg(feature = "matter")]
+    pub matter: Option<crate::runtime::matter::Point>,
     /// The house.
     pub site: SiteSettings,
     /// What the household pays and earns for a kilowatt-hour.
@@ -166,7 +156,7 @@ impl AsMut<ems_service::Settings> for Settings {
     ///
     /// A daemon on a gateway box is configured from a file an installer edited
     /// and a daemon in a fleet from an orchestrator that only knows how to set
-    /// environment variables. Both are true at once, so `HEMS_HEMSD_LISTEN`
+    /// environment variables. Both are true at once, so `EMS_HEMSD_LISTEN`
     /// wins over the file — the file is what somebody wrote down last month.
     fn as_mut(&mut self) -> &mut ems_service::Settings {
         &mut self.service
@@ -1095,13 +1085,9 @@ pub struct Para9Settings {
 }
 
 impl Default for Para9Settings {
-    /// The reference household's roof: an intelligent metering system fitted in
-    /// 2024, so § 51 EEG has been taking the negative quarter hours since the
-    /// start of 2025 — and the § 9 Abs. 2 cap **still on**, because that one
-    /// runs until the operator's first successful Ansteuerbarkeit test and
-    /// nobody has run it.
+    /// An explicit declaration starts with no reported metering or control relief.
     fn default() -> Self {
-        Self::from(Para9Status::default().with_imsys_since(crate::site::REFERENCE_IMSYS_SINCE))
+        Self::from(Para9Status::default())
     }
 }
 
@@ -1401,53 +1387,22 @@ impl SiteSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "kebab-case")]
 pub enum DriverSettings {
-    /// SunSpec over Modbus TCP — an inverter, a meter or a battery.
-    ///
-    /// The one protocol that needs no membership, no registration and no
-    /// certificate, and the one most inverters sold in Germany speak.
+    /// SunSpec inverter, connection meter or storage telemetry over Modbus TCP.
+    /// Supported inverters can also receive production ceilings.
     Sunspec(SunspecSettings),
-    /// The EEBUS Controllable System of § 14a — the household side of a
-    /// network operator's Steuerbox.
+    /// Household-side EEBUS endpoint for limits from the operator’s Steuerbox.
     EebusLpc(EebusSettings),
-    /// An EEBUS hot-water circuit, read over MDT.
-    ///
-    /// The other direction from `eebus-lpc`, and the distinction is what makes
-    /// it a separate kind rather than a flag: § 14a is a network operator
-    /// dialling *this* box, and a hot-water tank is a device on the household's
-    /// own network that this box dials.
+    /// Domestic hot-water circuit. Reads tank temperature over MDT and can
+    /// request overrun when the peer supports it.
     EebusDhw(EebusDhwSettings),
-    /// An EEBUS charge point, read over EVCC and EVSOC — whether a car is
-    /// plugged in and how full it is.
-    ///
-    /// It reads and never commands. The charge point is already commanded, over
-    /// Modbus or through the § 14a envelope the arbiter shares out, and two
-    /// drivers claiming to command one wallbox is one wallbox nobody can
-    /// predict.
+    /// Observe EV connection, state of charge and capacity. Charging commands
+    /// require a separate actuator driver.
     EebusEv(EebusEvSettings),
-    /// An EEBUS heat-pump compressor, over OHPCF.
-    ///
-    /// The only driver in the box that can ask an appliance to consume **more**.
-    /// Everything else on the grid side is a ceiling, and a ceiling an appliance
-    /// is already under changes nothing — so a plan that has worked out the
-    /// house will be cheaper if the compressor runs while the roof is exporting
-    /// has no other way to say so.
-    ///
-    /// It commands and measures nothing: what the unit draws is the site meter's
-    /// business, and two drivers claiming to measure one asset are refused at
-    /// registration.
+    /// Control the compressor over OHPCF. Read room temperatures over MRT and
+    /// outdoor temperature over MOT when the peer reports it.
     EebusHeatPump(EebusHeatPumpSettings),
-    /// A device read through a **vendor's own register map** over Modbus TCP.
-    ///
-    /// For everything that answers Modbus and publishes no SunSpec model list,
-    /// which is most of the German heat-pump market: the register numbers are in
-    /// a PDF and every unit's are different.
-    ///
-    /// It reads and never writes, so it pairs with whatever commands the device —
-    /// an `eebus-heat-pump` compressor, say. The one measurement it exists for is
-    /// the **indoor temperature**: the planner models the building, learns it
-    /// from the household's own record and can pre-heat, and all of it is gated
-    /// on a number no EEBUS use case carries and a heat pump has been publishing
-    /// in a register the whole time.
+    /// Vendor-specific Modbus TCP map. Measurements use declared points.
+    /// Commands require explicit writable registers and allowed values.
     Registers(RegisterSettings),
 }
 
@@ -1490,13 +1445,8 @@ pub struct RegisterSettings {
     /// The map itself. At least one point, or the driver would poll nothing and
     /// report a device that is perfectly reachable and says nothing.
     pub points: Vec<ems_drv::modbus::registers::Point>,
-    /// The registers a command may write, if any.
-    ///
-    /// Empty by default, and a map with none is read-only — which is what every
-    /// register map in this workspace was until a reversible heat pump needed a
-    /// direction that no EEBUS use case carries. A write names the command it
-    /// serves and enumerates the raw values it may take, so nothing here is ever
-    /// computed from a scale.
+    /// Optional command registers with enumerated raw values. The default
+    /// empty list makes the map read-only.
     #[serde(default)]
     pub writes: Vec<ems_drv::modbus::registers::Write>,
 }
@@ -2144,9 +2094,7 @@ asset = "netzanschluss"
             (map.points[1].scale - 1.0).abs() < f64::EPSILON,
             "and an unscaled one defaults to 1, not to 0"
         );
-        // …and it is refused on its own, because a heat pump is controllable and
-        // a register map never writes: a typo in this file would otherwise start
-        // a compressor.
+        // This map declares no writes. A controllable heat pump needs an actuator.
         let refused = crate::runtime::assemble(&settings, None, time::OffsetDateTime::now_utc())
             .err()
             .expect("a heat pump nothing can move is refused");

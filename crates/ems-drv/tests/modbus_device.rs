@@ -468,10 +468,11 @@ fn a_model_longer_than_one_read_is_fetched_in_pieces_and_decoded_whole() {
         })
         .last()
         .expect("a measurement");
+    assert!(measured.estimated_availability);
     assert_eq!(
         measured.available_power,
         Some(Power::new(6000.0)),
-        "3 000 W at half throttle is a roof that could give 6 000 W"
+        "3 000 W at half throttle gives the control loop a 6 000 W estimate"
     );
 }
 
@@ -546,6 +547,32 @@ fn a_setpoint_stored_but_never_switched_on_is_not_an_accepted_command() {
         outcome.detail.is_some_and(|d| d.contains("WMaxLim_Ena")),
         "and the reason is the register that says so"
     );
+}
+
+#[test]
+fn a_delayed_write_is_confirmed_after_the_device_applies_it() {
+    let cadence = Cadence::default();
+    let applied = T0 + cadence.timeout - Duration::milliseconds(1);
+    let mut driver = SunSpec::new(AssetId::new("inverter").unwrap(), 1, cadence)
+        .with_rating(Power::from_kw(10.0));
+    let mut inverter = Inverter::new();
+    driver.on_timeout(T0);
+    exchange(&mut driver, &mut inverter, T0, 60);
+    while driver.poll_event().is_some() {}
+
+    let requested = Power::from_kw(2.0);
+    driver
+        .command(&Command::ProductionCeiling(requested), T0)
+        .unwrap();
+    let write = driver.poll_transmit().expect("write request");
+    driver.on_timeout(applied);
+    assert!(command_outcome(&mut driver).is_none());
+    driver.on_bytes(&inverter.answer(&write), applied).unwrap();
+    exchange(&mut driver, &mut inverter, applied, 8);
+    let outcome = command_outcome(&mut driver).expect("readback");
+    assert!(outcome.accepted);
+    assert_eq!(outcome.confirmed, Some(requested));
+    assert_eq!(outcome.at, applied);
 }
 
 #[test]

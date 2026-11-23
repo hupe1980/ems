@@ -127,7 +127,8 @@ html.glance .stale{opacity:.4}
 /* Day: a receipt, because money reads as a receipt */
 .receipt{font:400 14px/1.55 var(--mono);font-variant-numeric:tabular-nums;background:var(--card);border-radius:4px;padding:20px 18px 28px;margin-top:8px;
   -webkit-mask:radial-gradient(circle 5px at 50% 100%,#0000 98%,#000) 50% 100%/14px 100% repeat-x;mask:radial-gradient(circle 5px at 50% 100%,#0000 98%,#000) 50% 100%/14px 100% repeat-x}
-.receipt h3{text-align:center;font:700 15px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;margin:0}
+.export-links{margin-top:18px}
+.receipt h2{text-align:center;font:700 15px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;margin:0}
 .receipt .sub{text-align:center;color:var(--ink2);margin:2px 0 14px;font-size:13px}
 .li{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .li > span:first-child{min-width:0;overflow-wrap:anywhere}
@@ -184,6 +185,10 @@ input[role=switch]:checked::after{transform:translateX(20px)}
 .again .primary{margin:0;width:auto;padding:12px 18px}
 .find{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
 .find input{background:var(--bg)}
+.find label{display:flex;align-items:center;gap:6px;font-size:.85rem}
+.find label input{width:5em}
+.inverter-review summary{cursor:pointer}
+.inverter-review pre{white-space:pre-wrap;overflow-wrap:anywhere}
 .find button{border:0;border-radius:12px;background:var(--accent);color:#fff;font-weight:600;padding:0 16px;cursor:pointer}
 
 /* Sign in */
@@ -235,3 +240,28 @@ button.primary.small{padding:8px 16px;font-size:15px;width:auto;margin:0}
 
 /* The plan in sentences, under its strip. */
 .say.plan{font-size:17px;line-height:1.45;margin:12px 16px 0;color:var(--ink)}
+
+.goal-value{display:inline-flex;align-items:baseline;gap:.3em;font-variant-numeric:tabular-nums}
+.goal-value input{width:4em;padding:.35em;color:var(--ink);background:var(--bg);border:1px solid var(--sep);border-radius:.4em;font:inherit;text-align:end}
+
+.first-run{padding:1rem 0 3rem}
+.first-run .top{display:flex;gap:.75rem;align-items:flex-start;justify-content:space-between}
+.first-run fieldset,.first-run #review{min-width:0;margin:1rem 0;padding:1rem;background:var(--card);border:0;border-radius:12px}
+.first-run legend{padding:0 .4rem;font-weight:650}
+.first-run label{display:block;margin:.55rem 0}
+.first-run input:not([type=radio],[type=checkbox]),.first-run select{display:block;width:100%;padding:.55rem .7rem;background:var(--bg);border:1px solid var(--sep);border-radius:8px}
+.first-run pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.45 var(--mono)}
+.first-run .link{width:auto}
+
+#gridHistory{margin:16px 0;background:var(--card);border-radius:12px;color:var(--ink)}
+#gridHistory summary{padding:14px 16px}
+.history-body{padding:0 16px 16px}
+.history-controls,.history-result dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.history-controls label,.history-result dt{font-size:13px;color:var(--ink2)}
+.history-controls input,.history-controls select{width:100%;min-width:0;min-height:44px;margin-top:4px;border:1px solid var(--sep);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.history-result{margin-top:14px}
+.history-result dl{border-top:1px solid var(--sep);padding-top:12px;margin:0}
+.history-result dd{margin:3px 0 0;font-size:18px;font-variant-numeric:tabular-nums}
+.history-result .cap{margin:10px 0 0}
+#exportStatus:not(:empty){margin:0;padding:0 16px 14px;font-size:14px;overflow-wrap:anywhere}
+#exportStatus:empty{display:none}

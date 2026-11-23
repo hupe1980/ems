@@ -1,6 +1,6 @@
 [package]
 name        = "ems-realtime"
-description = "The one-second control loop of a home energy system — a guard plane that grid limits can never be argued out of, fair allocation of a limited budget across devices, and an arbiter that turns a plan plus live measurements into setpoints. Sans-I/O."
+description = "Local grid-limit enforcement, device allocation and command arbitration"
 keywords    = ["energy", "hems", "control", "smart-grid", "load-management"]
 categories  = ["science", "simulation"]
 readme      = "README.md"

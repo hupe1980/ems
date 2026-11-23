@@ -1,0 +1,33 @@
+{
+  "preisblatt": 1,
+  "contract": "V-2026-004712",
+  "valid_from": "2027-01-01",
+  "valid_until": null,
+  "priced_for_year": 2027,
+  "energy": {
+    "kind": "dynamic",
+    "index": "day-ahead-quarter-hour",
+    "bidding_zone": "DE-LU",
+    "markup_ct_per_kwh": "1.90"
+  },
+  "network": {
+    "modul": 3,
+    "ht_ct_per_kwh": "18.00",
+    "st_ct_per_kwh": "10.00",
+    "nt_ct_per_kwh": "4.00",
+    "hochtarif": [["17:00", "20:00"]],
+    "niedertarif": [["22:00", "06:00"]],
+    "billed_quarters": ["Q1", "Q4"],
+    "reduction_eur_per_year": "168.42",
+    "source": "https://netzbetreiber.example/preisblatt-2027.pdf"
+  },
+  "components_ct_per_kwh": {
+    "konzessionsabgabe": "1.66",
+    "stromsteuer": "2.05",
+    "paragraph_19_strom_nev": "2.027",
+    "kwkg": "0.451",
+    "offshore": "1.143"
+  },
+  "vat_rate": "0.19",
+  "standing_eur_per_year": { "grundpreis": "96.00", "messstellenbetrieb": "30.00" }
+}

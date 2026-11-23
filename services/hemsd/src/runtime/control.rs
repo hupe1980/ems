@@ -71,6 +71,8 @@ use crate::runtime::transport::Shared;
 /// What the control loop has decided, as a screen would show it.
 #[derive(Debug, Clone, Default)]
 pub struct Status {
+    /// Device writes are disabled by the commissioning configuration.
+    pub shadow: bool,
     /// When the last tick ran.
     pub at: Option<OffsetDateTime>,
     /// What every asset was last told, in watts.
@@ -116,6 +118,10 @@ pub struct Status {
     /// the first thing to look at when a device is not doing what the screen
     /// says it was told to.
     pub undriven: Vec<AssetId>,
+    /// Last measurement timestamps including devices that are now silent.
+    pub last_measured: BTreeMap<AssetId, OffsetDateTime>,
+    /// Operator feed-in instruction before applying other export constraints.
+    pub feed_in_ceiling: Option<Power>,
     /// The § 14a ceiling in force, if any.
     pub steuve_ceiling: Option<Power>,
     /// How much the controllable devices may draw in total, surplus included.
@@ -173,7 +179,7 @@ pub struct Status {
     /// operator's control box, so the stored failsafe value stands in.
     pub in_failsafe: bool,
     /// The last day the box closed, as it reported it to the fleet.
-    pub last_day: Option<ems_core::report::DayKpis>,
+    pub last_day: Option<crate::month::ClosedDay>,
     /// What each asset's own meter read this tick, and its state of charge
     /// where it has one.
     pub readings: BTreeMap<AssetId, (Option<Power>, Option<f64>)>,
@@ -201,6 +207,12 @@ pub struct Status {
 /// fourth gets added in the wrong order.
 #[derive(Debug, Clone)]
 pub struct Managed {
+    /// Observe device telemetry and keep all planned actions hypothetical.
+    pub shadow: bool,
+    /// The only flexible device on this site, if any, is solar generation.
+    pub can_replay: bool,
+    /// A single battery whose grid purchases and returned energy can be distinguished.
+    pub can_trace_storage: bool,
     /// The installation.
     pub site: Site,
     /// Which asset is the meter at the connection point.
@@ -264,12 +276,8 @@ pub struct Live {
     pub status: Arc<Mutex<Status>>,
     /// The plan in force, published by the planner.
     pub plan: Arc<tokio::sync::RwLock<Option<ems_core::prelude::Plan>>>,
-    /// The prices the plan was made against, for the quarter-hour registers.
-    ///
-    /// The registers MiSpeL and § 42c settle from carry two *prices* as well as
-    /// the metered quantities, and this loop has no tariff of its own — so
-    /// without them it could only write a register with two zeros in it, which
-    /// is worse than no register at all.
+    /// Effective prices used to annotate metered quarters. Missing spot or
+    /// support values remain unknown while measured energy is recorded.
     pub prices: Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     /// What the box has learned about its own roof and household.
     pub learned: Arc<Mutex<crate::runtime::planner::Learned>>,
@@ -284,6 +292,8 @@ pub struct Live {
     pub series: Option<Arc<crate::series::Series>>,
     /// What the household itself has asked for, shared with the HTTP surface.
     pub overrides: crate::runtime::overrides::Overrides,
+    /// The household’s car price cap is enforced even during fallback.
+    pub goals: crate::home::Goals,
     /// What a connected Customer Energy Manager has asked for, shared with the
     /// S2 surface.
     ///
@@ -310,6 +320,7 @@ pub async fn run(
         store,
         series,
         overrides,
+        goals,
         cem,
     } = shared;
     let arbiter = Arbiter::new(ArbiterConfig {
@@ -335,6 +346,12 @@ pub async fn run(
     let started = OffsetDateTime::now_utc();
 
     let mut carried = carried_from(started);
+    if let Some(store) = &store {
+        match store.lock().await.closed_days() {
+            Ok(mut days) => carried.last_day = days.pop(),
+            Err(error) => tracing::warn!(%error, "the latest closed receipt could not be read"),
+        }
+    }
 
     loop {
         tokio::select! {
@@ -348,23 +365,22 @@ pub async fn run(
         let now = OffsetDateTime::now_utc();
         let began = std::time::Instant::now();
 
-        // Read afresh each tick, and expired entries drop out on the way past:
-        // an override is a *desire* the arbiter narrows, so it costs nothing to
-        // ask and a household that boosted its car this morning is not still
-        // boosting it tonight.
-        let wanted = overrides.active(now).await;
         // The same rule, one voice down: an instruction a manager has stopped
         // renewing drops out here rather than being cancelled, and the asset
         // goes back to the box's own plan. See `runtime::s2`.
-        let instructed = cem.active(now).await;
-        let managed_assets: Vec<AssetId> = instructed.keys().cloned().collect();
+        let instructions = cem.instructions(now).await;
+        let instructed = instructions
+            .iter()
+            .map(|(asset, (_, request))| (asset.clone(), *request))
+            .collect();
         let held = plan.read().await;
         let (screen, silent) = tick(
             &arbiter,
             &managed,
             &registry,
-            &wanted,
-            &instructed,
+            &overrides,
+            &goals,
+            instructed,
             cem.status(now).await,
             held.as_ref(),
             &learned,
@@ -387,7 +403,7 @@ pub async fn run(
                 "a control tick took longer than its period"
             );
         }
-        tell_the_manager(&cem, managed_assets, &screen).await;
+        tell_the_manager(&cem, instructions, &screen).await;
         report_health(&health, &screen, silent, now);
         *status.lock().await = screen;
     }
@@ -409,6 +425,9 @@ fn carried_from(started: OffsetDateTime) -> Carried {
         phases: BTreeMap::new(),
         delivered: BTreeMap::new(),
         delivered_slot: Slot::containing(started),
+        slot_price: None,
+        replay: super::day::replay::Capture::default(),
+        storage_trace: super::day::storage::Capture::default(),
         local_day: ems_core::calendar::local_day(started),
         // A box that has just started did not watch the earlier part of today,
         // and saying so is the difference between "nothing went wrong" and
@@ -427,6 +446,7 @@ fn carried_from(started: OffsetDateTime) -> Carried {
         outdoor_samples: 0,
         heat_pump_wh: 0.0,
         samples: 0,
+        grid_measured_samples: 0,
         grid_draw_wh: 0.0,
         grid_feed_wh: 0.0,
         device_draw_wh: 0.0,
@@ -449,7 +469,6 @@ fn carried_from(started: OffsetDateTime) -> Carried {
 async fn close_the_quarter_hour(
     managed: &Managed,
     learned: &Arc<Mutex<crate::runtime::planner::Learned>>,
-    prices: &Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     store: Option<&Arc<Mutex<crate::store::Store>>>,
     carried: &mut Carried,
     period: std::time::Duration,
@@ -457,12 +476,14 @@ async fn close_the_quarter_hour(
     now: OffsetDateTime,
 ) {
     teach(managed, learned, carried, period).await;
-    register(managed, carried, prices, store).await;
+    let replay = carried.replay.close();
+    register(managed.shadow, carried, store, period, replay).await;
     // After the register, because the day being closed is built from the rows
     // this loop has written — including the one that was just written.
     close_the_day(managed, learned, carried, store, now).await;
     carried.delivered.clear();
     carried.samples = 0;
+    carried.grid_measured_samples = 0;
     carried.pv_wh = 0.0;
     carried.pv_samples = 0;
     carried.load_wh = 0.0;
@@ -478,7 +499,14 @@ async fn close_the_quarter_hour(
     carried.storage_draw_wh = 0.0;
     carried.storage_feed_wh = 0.0;
     carried.storage_samples = 0;
+    carried.storage_trace = super::day::storage::Capture::default();
+    if ems_core::calendar::local_day(carried.delivered_slot.start())
+        != ems_core::calendar::local_day(slot.start())
+    {
+        carried.replay = super::day::replay::Capture::default();
+    }
     carried.delivered_slot = slot;
+    carried.slot_price = None;
 }
 
 /// Which rule is holding each commanded value, where one is.
@@ -506,20 +534,28 @@ fn binding_rules(decision: &ems_realtime::Decision) -> BTreeMap<AssetId, String>
 /// request, because an instruction the guard happens to agree with is not
 /// overridden — and a manager told its instruction was refused on every
 /// § 14a-quiet afternoon would learn to ignore the message.
-async fn tell_the_manager(cem: &crate::runtime::s2::Cem, managed: Vec<AssetId>, screen: &Status) {
-    if managed.is_empty() {
-        return;
+async fn tell_the_manager(
+    cem: &crate::runtime::s2::Cem,
+    instructions: BTreeMap<AssetId, (s2_kit::types::Id, ems_realtime::CemRequest)>,
+    screen: &Status,
+) {
+    for (asset, (id, request)) in instructions {
+        let reason = if screen.undriven.contains(&asset) {
+            "no device driver can apply this instruction"
+        } else if let Some(reason) = screen.disobedient.get(&asset) {
+            reason
+        } else if let Some(reason) = screen.overriding.get(&asset)
+            && screen
+                .commanded
+                .get(&asset)
+                .is_some_and(|delivered| conflicts_with_request(&request, *delivered))
+        {
+            reason
+        } else {
+            continue;
+        };
+        cem.abort(&asset, id, reason).await;
     }
-    cem.note_overrides(
-        managed
-            .into_iter()
-            .filter_map(|asset| {
-                let rule = screen.overriding.get(&asset)?;
-                Some((asset, rule.clone()))
-            })
-            .collect(),
-    )
-    .await;
 }
 
 /// Say whether the box is managing the house, in the two ways it can fail to.
@@ -662,6 +698,7 @@ fn meter(managed: &Managed, carried: &mut Carried, observed: &Observed, seconds:
         .pv
         .as_ref()
         .and_then(|pv| observed.state.asset(pv))
+        .filter(|m| m.quality == metering::QualityFlag::Measured)
         .and_then(|m| m.power)
         .map(Power::outflow);
     let pv = measured_pv.unwrap_or(Power::ZERO);
@@ -671,7 +708,7 @@ fn meter(managed: &Managed, carried: &mut Carried, observed: &Observed, seconds:
     // nothing, and the quarter-hour record says `None` rather than nought
     // (D124). Kept apart from `samples`, which counts what the *load* teacher
     // saw.
-    carried.pv_samples += usize::from(measured_pv.is_some());
+    carried.pv_samples += u32::from(measured_pv.is_some());
     carried.load_wh += load.get() * hours;
     carried.samples += 1;
 
@@ -704,6 +741,12 @@ fn meter(managed: &Managed, carried: &mut Carried, observed: &Observed, seconds:
     // gave together — `Z1NB¼`, `Z1NE¼`, `Z2V¼`, `Z2E¼` — and the storage
     // system's own half of that pair, `Z3V¼` and `Z3E¼`.
     if let Some(grid) = observed.state.grid.and_then(|m| m.power) {
+        carried.grid_measured_samples += u32::from(
+            observed
+                .state
+                .grid
+                .is_some_and(|m| m.quality == metering::QualityFlag::Measured),
+        );
         carried.grid_draw_wh += grid.inflow().get() * hours;
         carried.grid_feed_wh += grid.outflow().get() * hours;
     }
@@ -723,6 +766,30 @@ fn meter(managed: &Managed, carried: &mut Carried, observed: &Observed, seconds:
         // goes negative — which is exactly what two independent passes over two
         // different sample sets would eventually produce.
         if is_storage {
+            if managed.can_trace_storage
+                && let Some(grid) = observed
+                    .state
+                    .grid
+                    .filter(|m| m.quality == metering::QualityFlag::Measured)
+                    .and_then(|m| m.power)
+                && let Some(soc) = observed
+                    .state
+                    .asset(asset)
+                    .filter(|m| m.quality == metering::QualityFlag::Measured)
+                    .and_then(|m| m.soc)
+            {
+                let roof = match &managed.pv {
+                    None => Some(Power::ZERO),
+                    Some(id) => observed
+                        .state
+                        .asset(id)
+                        .filter(|m| m.quality == metering::QualityFlag::Measured)
+                        .and_then(|m| m.power),
+                };
+                if let Some(roof) = roof {
+                    carried.storage_trace.observe(grid, roof, p, soc);
+                }
+            }
             carried.storage_draw_wh += p.inflow().get() * hours;
             carried.storage_feed_wh += p.outflow().get() * hours;
             carried.storage_samples += 1;
@@ -730,18 +797,6 @@ fn meter(managed: &Managed, carried: &mut Carried, observed: &Observed, seconds:
     }
 }
 
-/// Write the completed quarter hour's meter registers.
-///
-/// `Z1NB¼`, `Z1NE¼`, `Z2V¼` and `Z2E¼` — what crossed the connection point in
-/// each direction, and what the storage system and the charge point drew and
-/// gave. They are the quantities MiSpeL's Abgrenzung and § 42c's allocation are
-/// computed from, so every one is an **exact decimal**: a settlement that went
-/// through an `f64` is one nobody can reproduce (P3).
-///
-/// The two *prices* the register carries come from the plan's own stack. A
-/// register written with a zero anzulegender Wert would settle a month at the
-/// wrong figure and look complete while doing it, so a slot with no price is a
-/// slot with no register: skipped, and said out loud once.
 /// Queue the day's report where a Berlin calendar day has just ended.
 ///
 /// Called on the quarter-hour boundary and does nothing on the other ninety-five
@@ -806,16 +861,23 @@ async fn close_the_day(
 
     let site = managed.site.id.to_string();
     let mut guard = store.lock().await;
-    let built = crate::runtime::day::kpis(
+    let built = crate::runtime::day::report_and_bill(
         &guard, &site, finished, unplanned, clipping, feed_in, &scored,
     );
     match built {
-        Ok(Some(day)) => {
-            carried.last_day = Some(day.clone());
-            // Kept for the household's month before anything else is tried:
-            // the fleet's copy can be re-sent, the household's cannot.
-            if let Err(error) = guard.put_closed_day(&crate::month::ClosedDay::of_report(&day)) {
-                tracing::warn!(%error, %finished, "the closed day could not be kept");
+        Ok(Some(super::day::ClosedReport {
+            day,
+            bill,
+            comparison,
+            arbitrage,
+        })) => {
+            let mut receipt = crate::month::ClosedDay::of_report(&day);
+            receipt.metered_bill = Some(bill);
+            receipt.comparison = comparison;
+            receipt.arbitrage = arbitrage;
+            match guard.put_closed_day(&receipt) {
+                Ok(closed) => carried.last_day = closed,
+                Err(error) => tracing::warn!(%error, %finished, "the closed day could not be kept"),
             }
             let event = ems_events::Event::new(
                 ems_events::SITE_DAY_REPORTED,
@@ -855,22 +917,33 @@ async fn close_the_day(
     }
 }
 
+/// Keep the measured interval even when its tariff or market evidence is missing.
 async fn register(
-    managed: &Managed,
+    shadow: bool,
     carried: &Carried,
-    prices: &Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     store: Option<&Arc<Mutex<crate::store::Store>>>,
+    period: std::time::Duration,
+    replay: Option<super::day::replay::GridReplay>,
 ) {
-    let (Some(store), true) = (store, carried.samples > 0) else {
+    let (Some(store), true) = (store, carried.grid_measured_samples > 0) else {
         return;
     };
     let slot = carried.delivered_slot;
-    let held = prices.read().await;
-    let Some(price) = held.as_ref().and_then(|stack| stack.at(slot)) else {
-        tracing::debug!(%slot, "no price for this quarter hour, so no register");
-        return;
-    };
-    let _ = managed;
+    let price = carried.slot_price.as_ref();
+    let terms = price
+        .filter(|p| {
+            p.price_known
+                && (p.export_known || carried.grid_feed_wh == 0.0)
+                && p.shared_import_ct.is_none()
+                && period.checked_mul(carried.grid_measured_samples)
+                    == Some(std::time::Duration::from_mins(15))
+        })
+        .map(|p| crate::month::IntervalTerms {
+            import_ct: p.import_ct,
+            export_ct: p.export_known.then_some(p.export_ct),
+            annual_fixed_eur: p.annual_fixed_eur,
+            contract: p.contract.clone(),
+        });
 
     // Watt-hours to kilowatt-hours, at the millionth — four orders of magnitude
     // finer than anything a household meter resolves, and the same tolerance the
@@ -898,10 +971,9 @@ async fn register(
         // A4 is *defined* by a separately metered store.
         storage_consumption: (carried.storage_samples > 0).then(|| kwh(carried.storage_draw_wh)),
         storage_generation: (carried.storage_samples > 0).then(|| kwh(carried.storage_feed_wh)),
-        anzulegender_wert: price.export_ct,
-        spot_price: price.energy_ct,
+        anzulegender_wert: price.and_then(|p| p.support_ct),
+        spot_price: price.and_then(|p| p.market_ct),
     };
-    drop(held);
 
     // The roof is recorded **beside** the registers rather than inside them: the
     // MiSpeL set is the Festlegung's own and `Z2E¼` is the storage system's
@@ -909,6 +981,10 @@ async fn register(
     // measurement; this one has been accumulating the meter all quarter hour.
     let recorded = crate::store::Recorded {
         registers: quarter,
+        watched: shadow,
+        replay,
+        storage: carried.storage_trace.complete(period),
+        terms,
         production: (carried.pv_samples > 0).then(|| kwh(carried.pv_wh)),
     };
 
@@ -973,20 +1049,24 @@ async fn teach(
         .await
         .get(&carried.delivered_slot)
         .copied();
-    learned
-        .lock()
-        .await
-        .observe(carried.delivered_slot, modelled, pv, load);
+    learned.lock().await.observe(
+        carried.delivered_slot,
+        modelled.filter(|_| carried.pv_samples == carried.samples),
+        pv,
+        load,
+    );
 
     // The same truth, scored against the band the plan was actually made
     // against. This is the one half of the fleet's forecast picture a box can
     // produce honestly, and without it twenty independent *real* days would
     // never reach `obsd` — so `forecast_is_calibrated` could only ever be true
     // of simulations (D117).
-    let published = managed.bands.read().await;
-    carried
-        .scored
-        .observe(published.get(&carried.delivered_slot), pv, load.get());
+    if carried.has_forecast_actuals(period) {
+        let published = managed.bands.read().await;
+        carried
+            .scored
+            .observe(published.get(&carried.delivered_slot), pv, load.get());
+    }
 }
 
 /// Send what the arbiter decided to the drivers that speak for each asset.
@@ -1184,7 +1264,7 @@ struct Carried {
     /// the next one.
     roof_health: Option<ems_forecast::Health>,
     /// The last day the box closed, for the household's receipt.
-    last_day: Option<ems_core::report::DayKpis>,
+    last_day: Option<crate::month::ClosedDay>,
     /// How exposed this household is to § 14a control, refreshed slowly.
     ///
     /// A summary of up to two years of record, and a tick is a second, so it is
@@ -1201,6 +1281,10 @@ struct Carried {
     delivered: BTreeMap<AssetId, Energy>,
     /// Which quarter hour that is.
     delivered_slot: Slot,
+    /// Price observed while this slot was current, before the planner advances its horizon.
+    slot_price: Option<ems_tariff::SlotPrice>,
+    replay: super::day::replay::Capture,
+    storage_trace: super::day::storage::Capture,
     /// Which Berlin calendar day the loop is in, so the end of one is noticed.
     local_day: time::Date,
     /// Minutes the arbiter has spent on the fallback today.
@@ -1218,7 +1302,7 @@ struct Carried {
     /// How many ticks of it were actually read off a meter. Zero is a roof
     /// nobody measured, which is a different fact from a roof that produced
     /// nothing.
-    pv_samples: usize,
+    pv_samples: u32,
     /// The household's own load over the same, watt-hours.
     load_wh: f64,
     /// Indoor temperature summed over the quarter hour, °C, and how many ticks
@@ -1245,6 +1329,7 @@ struct Carried {
     heat_pump_wh: f64,
     /// How many ticks contributed to those two.
     samples: u32,
+    grid_measured_samples: u32,
     /// The quarter hour's metered flows, watt-hours, in the registers MiSpeL
     /// and § 42c settle from.
     ///
@@ -1283,6 +1368,36 @@ struct Carried {
 }
 
 impl Carried {
+    fn has_forecast_actuals(&self, period: std::time::Duration) -> bool {
+        self.pv_samples == self.samples
+            && self.grid_measured_samples == self.samples
+            && period.checked_mul(self.samples) == Some(std::time::Duration::from_mins(15))
+    }
+
+    /// Account for the decision against the quarter's plan and matched replay.
+    fn account_decision(
+        &mut self,
+        managed: &Managed,
+        observed: &Observed,
+        decision: &ems_realtime::arbiter::Decision,
+        period: std::time::Duration,
+        now: OffsetDateTime,
+    ) {
+        if managed.can_replay {
+            let sample = super::day::replay::Sample::from_tick(observed, managed, now, decision);
+            self.replay.observe(sample, managed.shadow, period);
+        }
+
+        for (asset, watts) in &decision.commanded {
+            let moved = Energy::new(watts.get() * period.as_secs_f64() / 3600.);
+            *self.delivered.entry(asset.clone()).or_insert(Energy::ZERO) += moved;
+        }
+        self.clipping.tick(
+            decision.clipped.values().copied().sum(),
+            u32::try_from(period.as_secs()).unwrap_or(u32::MAX),
+        );
+    }
+
     /// How far back the exposure figure looks.
     ///
     /// Ninety days, and the figure comes from the Festlegung's own publication
@@ -1352,39 +1467,6 @@ impl Carried {
     }
 }
 
-/// Write this tick's measurements to the box's own series.
-///
-/// Every failure is a **warning**, never an error that reaches the loop: the
-/// series is the household's diagnostic history, and a full disk or a locked
-/// directory must not stop a box from managing a house or from keeping the
-/// record a network operator can ask for.
-fn record_series(
-    series: Option<&crate::series::Series>,
-    observed: &Observed,
-    netzwirksam: Option<Power>,
-    now: OffsetDateTime,
-) {
-    let Some(series) = series else { return };
-    // Absent where no driver measured it, and absent is not zero: a box with no
-    // roof has not measured a dark one (D124). The roof is an asset like any
-    // other and needs no point of its own; the two that are not assets are the
-    // connection point and the figure a § 14a ceiling is measured against.
-    let assets: Vec<(ems_core::prelude::AssetId, Power)> = observed
-        .state
-        .assets
-        .iter()
-        .filter_map(|(id, m)| m.power.map(|p| (id.clone(), p)))
-        .collect();
-    let points = crate::series::tick_points(
-        observed.state.grid.and_then(|m| m.power),
-        netzwirksam,
-        &assets,
-    );
-    if let Err(error) = series.record(now, &points) {
-        tracing::warn!(%error, "a tick could not be written to the measurement series");
-    }
-}
-
 /// Record how far the connection point went over its § 9 EEG ceiling.
 ///
 /// The guard derives that ceiling from the site on every tick — § 9 Abs. 2
@@ -1411,6 +1493,36 @@ fn watch_feed_in(managed: &Managed, carried: &mut Carried, observed: &Observed) 
     );
 }
 
+async fn household_requests(
+    overrides: &crate::runtime::overrides::Overrides,
+    goals: &crate::home::Goals,
+    evse: Option<&AssetId>,
+    observed: &Observed,
+    prices: Option<&ems_tariff::PriceStack>,
+    now: OffsetDateTime,
+) -> BTreeMap<AssetId, UserOverride> {
+    let mut wanted = overrides.active(now).await;
+    if let Some(id) = evse {
+        let slot = Slot::containing(now);
+        let cap = goals.get().car.and_then(|g| g.price_cap_ct);
+        let allowed = cap.is_none_or(|c| prices.is_some_and(|p| p.within_cap(slot, c)));
+        let known = prices
+            .and_then(|p| p.at(slot))
+            .is_some_and(|p| p.price_known);
+        let vehicle = observed
+            .vehicles
+            .get(id)
+            .filter(|_| !observed.silent.contains(id));
+        if goals.boost_for_tick(vehicle, allowed && known, now) {
+            wanted.insert(id.clone(), UserOverride::Boost);
+        }
+        if !allowed {
+            wanted.insert(id.clone(), UserOverride::Pause);
+        }
+    }
+    wanted
+}
+
 /// One turn of the loop: drain the drivers, decide, command, account.
 ///
 /// Returns what a screen should show and how many devices could not be heard
@@ -1420,8 +1532,9 @@ async fn tick(
     arbiter: &Arbiter,
     managed: &Managed,
     registry: &Shared,
-    overrides: &BTreeMap<AssetId, UserOverride>,
-    cem: &BTreeMap<AssetId, ems_realtime::CemRequest>,
+    overrides: &crate::runtime::overrides::Overrides,
+    goals: &crate::home::Goals,
+    mut cem: BTreeMap<AssetId, ems_realtime::CemRequest>,
     cem_status: crate::runtime::s2::CemStatus,
     plan: Option<&ems_core::prelude::Plan>,
     learned: &Arc<Mutex<crate::runtime::planner::Learned>>,
@@ -1438,7 +1551,7 @@ async fn tick(
     // which is what makes it the right place to teach the forecasts.
     let slot = Slot::containing(now);
     if slot != carried.delivered_slot {
-        close_the_quarter_hour(managed, learned, prices, store, carried, period, slot, now).await;
+        close_the_quarter_hour(managed, learned, store, carried, period, slot, now).await;
     }
 
     // Counted here rather than derived from the plan's age on the screen: the
@@ -1451,12 +1564,13 @@ async fn tick(
     );
 
     // ── 1. What the drivers said ────────────────────────────────────────────
-    let (observed, failsafe): (Observed, _) = {
+    let (observed, failsafe, events) = {
         let mut guard = registry.lock().await;
         // Taken rather than merely folded: the § 14a evidence record is built
         // from exactly these, and an event nobody journals is a control action
         // nobody can prove was carried out.
-        for (asset, event) in guard.drain() {
+        let events = guard.drain();
+        for (asset, event) in &events {
             tracing::debug!(%asset, ?event, "a driver reported");
         }
         let failsafe = guard
@@ -1467,11 +1581,38 @@ async fn tick(
         // measured *there*, and a registry that had to work out which of its
         // meters was the grid one would be inferring the most important fact in
         // the system from an asset kind.
-        (guard.observe(managed.grid_meter.as_ref(), now), failsafe)
+        (
+            guard.observe(managed.grid_meter.as_ref(), now),
+            failsafe,
+            events,
+        )
     };
     keep_the_failsafe(failsafe, carried, store).await;
 
+    let current_prices = prices.read().await;
+    if let Some(price) = current_prices.as_ref().and_then(|stack| stack.at(slot))
+        && carried.slot_price.as_ref() != Some(price)
+    {
+        carried.slot_price = Some(price.clone());
+    }
+    let wanted = household_requests(
+        overrides,
+        goals,
+        managed.evse.as_ref(),
+        &observed,
+        current_prices.as_ref(),
+        now,
+    )
+    .await;
+    drop(current_prices);
+
     // ── 2. The decision ─────────────────────────────────────────────────────
+    let superseded = plan
+        .filter(|p| !p.is_stale(now, arbiter.config().max_plan_age))
+        .and_then(|p| Some((p.slot_at(now)?, goals.goals_for_plan(p.id))))
+        .map_or_else(Vec::new, |(slot, saved)| {
+            respect_household_goals(&mut cem, &managed.site, &observed, slot, saved, now)
+        });
     let decision = arbiter.tick(Tick {
         now,
         site: &managed.site,
@@ -1483,39 +1624,19 @@ async fn tick(
         // sensible with the WAN cut — and the *reason* it is doing so is
         // reported rather than assumed.
         plan,
-        overrides,
-        cem,
+        overrides: &wanted,
+        cem: &cem,
         previous: &carried.previous,
         delivered: &carried.delivered,
         phases: &carried.phases,
     });
 
     // ── 3. Back to the hardware ─────────────────────────────────────────────
-    deliver(registry, &decision.setpoints, now).await;
-
-    // The energy each asset has moved since the slot began, which is what turns
-    // a plan into a commitment. Accumulated from what was *commanded* rather
-    // than from what was measured, because not every asset has a sub-meter and a
-    // commitment tracked only for the instrumented half of a house is worse than
-    // one tracked for none of it.
-    let seconds = period.as_secs_f64();
-    for (asset, watts) in &decision.commanded {
-        let moved = Energy::new(watts.get() * seconds / 3600.0);
-        *carried
-            .delivered
-            .entry(asset.clone())
-            .or_insert(Energy::ZERO) += moved;
+    if !managed.shadow {
+        deliver(registry, &decision.setpoints, now).await;
     }
 
-    // What the hardware would not take. The arbiter resolves a command a device
-    // cannot hold — a charge point below 6 A, a hot-water relay part way on —
-    // and every layer above then believes the decided value; counting it is the
-    // only thing that says a household's wallbox is not the one the planner is
-    // modelling.
-    carried.clipping.tick(
-        decision.clipped.values().copied().sum(),
-        u32::try_from(period.as_secs()).unwrap_or(u32::MAX),
-    );
+    carried.account_decision(managed, &observed, &decision, period, now);
 
     // …and whether the § 9 EEG ceiling held.
     watch_feed_in(managed, carried, &observed);
@@ -1536,23 +1657,98 @@ async fn tick(
     // reports. Where the grid meter is silent there is nothing to learn from
     // this tick, and nothing is invented: a house nobody measured did not use
     // nothing.
-    meter(managed, carried, &observed, seconds);
+    meter(managed, carried, &observed, period.as_secs_f64());
 
     // …and the tick itself, for the household's own history. Written **after**
     // the evidence record and the meters: a series is diagnostic, and a store
     // that could not take it must not delay a record `[A1 7.2]` asks for.
-    record_series(series, &observed, Some(decision.verdict.netzwirksam), now);
+    if let Some(series) = series
+        && let Err(error) = series.record_events(
+            &events,
+            managed.grid_meter.as_ref(),
+            decision.verdict.netzwirksam,
+            now,
+        )
+    {
+        tracing::warn!(%error, "some diagnostic observations could not be recorded");
+    }
 
     carried.refresh_exposure(store, learned, now).await;
 
     carried.previous.clone_from(&decision.commanded);
     carried.phases.clone_from(&decision.phases);
 
+    let (mut screen, silent) =
+        tick_status(managed, carried, observed, decision, cem_status, plan, now);
+    for id in superseded {
+        screen
+            .overriding
+            .entry(id)
+            .or_insert_with(|| "household goal".to_owned());
+    }
+    (screen, silent)
+}
+
+fn respect_household_goals(
+    cem: &mut BTreeMap<AssetId, ems_realtime::CemRequest>,
+    site: &Site,
+    observed: &Observed,
+    slot: &ems_core::prelude::SlotPlan,
+    saved: crate::home::GoalSet,
+    now: OffsetDateTime,
+) -> Vec<AssetId> {
+    let mut superseded = Vec::new();
+    cem.retain(|id, request| {
+        let has_goal = match site.asset(id) {
+            Some(ems_core::prelude::Asset::Evse(_)) => {
+                saved.car.is_some()
+                    && observed
+                        .vehicles
+                        .get(id)
+                        .and_then(|v| v.current_soc(now))
+                        .is_some()
+            }
+            Some(ems_core::prelude::Asset::Dhw(_)) => saved.tank.is_some(),
+            _ => false,
+        };
+        let target = slot.target(id);
+        if has_goal
+            && !observed.silent.contains(id)
+            && target.is_some_and(|t| conflicts_with_request(request, t.power))
+        {
+            superseded.push(id.clone());
+            false
+        } else {
+            true
+        }
+    });
+    superseded
+}
+
+fn conflicts_with_request(request: &ems_realtime::CemRequest, planned: Power) -> bool {
+    request
+        .power
+        .is_some_and(|power| (power - planned).abs() > Power::new(f64::EPSILON))
+        || request
+            .envelope
+            .is_some_and(|bound| !bound.contains(planned))
+}
+
+fn tick_status(
+    managed: &Managed,
+    carried: &Carried,
+    observed: Observed,
+    decision: ems_realtime::Decision,
+    cem_status: crate::runtime::s2::CemStatus,
+    plan: Option<&ems_core::prelude::Plan>,
+    now: OffsetDateTime,
+) -> (Status, usize) {
     let silent = observed.silent.len();
     let overriding = binding_rules(&decision);
     let reasons = reasons_of(&decision);
     (
         Status {
+            shadow: managed.shadow,
             at: Some(now),
             // Carried, not recomputed: the roof's verdict is settled once a day
             // on the local-day boundary, and a tick is a second.
@@ -1562,7 +1758,11 @@ async fn tick(
             // years of record and a tick is a second. `Carried::exposure` is
             // refreshed on its own slow cadence.
             exposure: carried.exposure.clone(),
-            commanded: decision.commanded,
+            commanded: if managed.shadow {
+                BTreeMap::new()
+            } else {
+                decision.commanded
+            },
             silent: observed.silent.iter().cloned().collect(),
             assumed_available: observed.assumed_available.iter().cloned().collect(),
             assumed_nominal: decision.verdict.assumed_nominal.clone(),
@@ -1583,6 +1783,8 @@ async fn tick(
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect(),
+            last_measured: observed.last_measured,
+            feed_in_ceiling: observed.limits.feed_in_ceiling,
             steuve_ceiling: observed.limits.steuve_ceiling,
             steuve_budget: decision.verdict.steuve_budget,
             netzwirksam: Some(decision.verdict.netzwirksam),
@@ -1602,4 +1804,129 @@ async fn tick(
         },
         silent,
     )
+}
+
+#[cfg(test)]
+mod goal_priority_tests {
+    use super::*;
+    use crate::home::{CarGoal, Goals};
+    use ems_core::prelude::{AssetTarget, Envelope, PlanId, SlotPlan};
+    use ems_realtime::CemRequest;
+
+    #[tokio::test]
+    async fn a_replanned_household_goal_supersedes_only_conflicting_manager_instructions() {
+        let house = crate::Household::build(&crate::HouseholdConfig::default()).unwrap();
+        let id = house.evse.unwrap();
+        let now = OffsetDateTime::UNIX_EPOCH;
+        let until = now + time::Duration::hours(1);
+        let planned = Power::from_kw(6.0);
+        let slot = SlotPlan {
+            slot: Slot::containing(now),
+            targets: vec![AssetTarget::fixed(id.clone(), planned)],
+            marginal_eur_per_kwh: None,
+            flexibility_eur_per_kwh: None,
+        };
+        let saved = Goals::default();
+        let goal = CarGoal {
+            target_soc: 0.8,
+            by_minute: 420,
+            price_cap_ct: None,
+        };
+        saved.change(|g| g.car = Some(goal)).await.unwrap();
+        let plan_id = PlanId::new();
+        saved.record_plan(plan_id, saved.get());
+        let mut observed = Observed::default();
+        observed.vehicles.insert(
+            id.clone(),
+            ems_drv::VehiclePresence {
+                connected: true,
+                soc: Some(0.3),
+                capacity_wh: Some(60_000.0),
+                at: now,
+            },
+        );
+        let refused = |request, at, snapshot: &Observed| {
+            let mut requests = BTreeMap::from([(id.clone(), request)]);
+            let superseded = respect_household_goals(
+                &mut requests,
+                &house.site,
+                snapshot,
+                &slot,
+                saved.goals_for_plan(plan_id),
+                at,
+            );
+            assert_eq!(requests.is_empty(), !superseded.is_empty());
+            !superseded.is_empty()
+        };
+        let pause = CemRequest::power(Power::ZERO, until);
+        assert!(refused(pause, now, &observed));
+        assert!(!refused(CemRequest::power(planned, until), now, &observed));
+        assert!(refused(
+            CemRequest::envelope(Envelope::at_most(Power::from_kw(2.0)), until),
+            now,
+            &observed
+        ));
+        observed.vehicles.get_mut(&id).unwrap().connected = false;
+        assert!(!refused(pause, now, &observed));
+        observed.vehicles.get_mut(&id).unwrap().connected = true;
+        saved
+            .change(|g| {
+                g.car = Some(CarGoal {
+                    target_soc: 0.7,
+                    ..goal
+                });
+            })
+            .await
+            .unwrap();
+        assert!(
+            !refused(pause, now, &observed),
+            "the old plan cannot speak for a freshly edited goal"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tariff_register_tests {
+    use super::*;
+
+    #[test]
+    fn forecast_scoring_requires_a_full_quarter_of_measured_roof_and_connection_data() {
+        let mut carried = carried_from(time::OffsetDateTime::UNIX_EPOCH);
+        let period = std::time::Duration::from_secs(5);
+        carried.samples = 1;
+        carried.pv_samples = 1;
+        carried.grid_measured_samples = 1;
+        assert!(!carried.has_forecast_actuals(period));
+        carried.samples = 180;
+        carried.pv_samples = 180;
+        assert!(!carried.has_forecast_actuals(period));
+        carried.grid_measured_samples = 180;
+        assert!(carried.has_forecast_actuals(period));
+        carried.pv_samples = 179;
+        assert!(!carried.has_forecast_actuals(period));
+    }
+
+    #[tokio::test]
+    async fn measured_energy_survives_without_price_or_forecast() {
+        let now = time::macros::datetime!(2026-11-23 10:00 UTC);
+        let mut carried = carried_from(now);
+        carried.grid_measured_samples = 900;
+        carried.grid_draw_wh = 1_250.0;
+        let store = Arc::new(Mutex::new(crate::store::Store::in_memory().unwrap()));
+        register(
+            false,
+            &carried,
+            Some(&store),
+            std::time::Duration::from_secs(1),
+            None,
+        )
+        .await;
+        let rows = store.lock().await.quarter_hours().unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.registers.grid_draw, rust_decimal::dec!(1.25));
+        assert!(row.terms.is_none());
+        assert!(row.registers.spot_price.is_none());
+        assert!(row.registers.anzulegender_wert.is_none());
+    }
 }

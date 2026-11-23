@@ -1,6 +1,6 @@
 [package]
 name        = "ems-events"
-description = "Every CloudEvents type the hems workspace emits, the envelope they travel in, and the Standard Webhooks signature that says a box sent one — a compile-time catalogue checked by a workspace guard, so an event nobody consumes and a consumer of an event nobody emits are both build failures"
+description = "EMS CloudEvents and signed webhook deliveries"
 keywords    = ["energy", "cloudevents", "hems", "events"]
 categories  = ["science"]
 readme      = "README.md"

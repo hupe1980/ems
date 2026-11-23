@@ -1,19 +1,7 @@
-# fleetd — enrolment, configuration and releases.
-#
-#   fleetd --config /etc/hems/fleetd.toml
-#
-# The daemon a box talks to **first**, which is why it is the one that has to
-# stay up while another is being deployed — and why its state is in PostgreSQL
-# rather than in a file. The environment overrides the file (`HEMS_FLEETD_…`).
-#
-# This file is parsed by a test in `config.rs`, so an example that has drifted
-# from the struct it documents fails the build rather than misleading an
-# operator.
+# Fleet enrolment and signed manifests. Run: fleetd --config /etc/hems/fleetd.toml
+# Supported EMS_FLEETD_* environment overrides take precedence.
 
-# How long a box may be quiet before the roster calls it silent, seconds.
-#
-# A top-level key, so it is above every table: in TOML a bare key after
-# `[service]` belongs to `service`.
+# Seconds since last contact before a site is marked silent.
 silent_after_s = 3600
 
 # ── The shell ────────────────────────────────────────────────────────────────
@@ -32,7 +20,7 @@ shutdown_grace_s = 20
 # whole service, so two replicas with a file each would each accept the same
 # installer secret once.
 [database]
-url = "env:HEMS_FLEETD_DATABASE_URL"
+url = "env:EMS_FLEETD_DATABASE_URL"
 pool_size = 10
 acquire_timeout_s = 5
 statement_timeout_s = 30
@@ -50,7 +38,7 @@ tls = true
 # What an installer puts on the box. Single-use: a second attempt with the same
 # secret is refused, because a secret that still works once the box is in the
 # field is a credential sitting in an installer's notes.
-enrolment_secret = "env:HEMS_FLEETD_SECRET_REFERENCE_HOUSEHOLD"
+enrolment_secret = "env:EMS_FLEETD_SECRET_REFERENCE_HOUSEHOLD"
 # The configuration document the box should be running, and the version it
 # reports back on. Convergence is what the box *says*, never what was pushed.
 config         = "{}"
@@ -82,7 +70,7 @@ config_signature = "3045022100c0ffee…"
 # gone quiet — an inventory of who is worth attacking and which of them is
 # unpatched. An **operator's** read, never a box's own enrolment credential.
 [[operators]]
-token  = "env:HEMS_FLEETD_OPERATOR_TOKEN"
+token  = "env:EMS_FLEETD_OPERATOR_TOKEN"
 tenant = "*"
 
 # [tenants]

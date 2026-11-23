@@ -435,13 +435,28 @@ pub struct QuarterHour {
     pub storage_generation: Option<Decimal>,
     /// `AW¼` — the anzulegender Wert of the generating plant in this quarter
     /// hour, ct/kWh. Zero in the hours § 51 EEG switches support off.
-    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
-    pub anzulegender_wert: Decimal,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, with = "rust_decimal::serde::str_option")
+    )]
+    pub anzulegender_wert: Option<Decimal>,
     /// `SP¼` — the spot price in this quarter hour, ct/kWh. Only the
     /// Pauschaloption reads it, `[MiSpeL A2 (P5)]`.
     #[cfg_attr(feature = "serde", serde(default))]
-    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str"))]
-    pub spot_price: Decimal,
+    #[cfg_attr(feature = "serde", serde(with = "rust_decimal::serde::str_option"))]
+    pub spot_price: Option<Decimal>,
+}
+
+/// A producer's immutable revision of one settlement interval.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+pub struct RegisterAssertion {
+    /// Source revision time, stable across retries, with microsecond precision.
+    #[cfg_attr(feature = "serde", serde(with = "time::serde::rfc3339"))]
+    pub recorded_at: OffsetDateTime,
+    /// The complete register set at this revision.
+    pub registers: QuarterHour,
 }
 
 impl QuarterHour {
@@ -457,8 +472,8 @@ impl QuarterHour {
             device_generation: Decimal::ZERO,
             storage_consumption: None,
             storage_generation: None,
-            anzulegender_wert: Decimal::ZERO,
-            spot_price: Decimal::ZERO,
+            anzulegender_wert: None,
+            spot_price: None,
         }
     }
 
@@ -484,14 +499,14 @@ impl QuarterHour {
     /// `(24)¼ = WENN[AW¼ > 0 ; 1 ; 0]` — whether support is payable at all in
     /// this quarter hour, `[MiSpeL A1 (24)]`.
     #[must_use]
-    pub fn supported(&self) -> bool {
-        self.anzulegender_wert > Decimal::ZERO
+    pub fn supported(&self) -> Option<bool> {
+        self.anzulegender_wert.map(|aw| aw > Decimal::ZERO)
     }
 
     /// `(P5)¼ = WENN[SP¼ ≥ 0 ; 1 ; 0]`, `[MiSpeL A2 (P5)]`.
     #[must_use]
-    pub fn spot_non_negative(&self) -> bool {
-        self.spot_price >= Decimal::ZERO
+    pub fn spot_non_negative(&self) -> Option<bool> {
+        self.spot_price.map(|spot| spot >= Decimal::ZERO)
     }
 }
 
@@ -513,6 +528,12 @@ pub enum MispelError {
         /// Which quantity.
         field: &'static str,
     },
+    /// The applicable support value could not be established for exported energy.
+    #[error("unknown support value for feed-in at {0}")]
+    MissingSupportValue(Slot),
+    /// Feed-in occurred and the published spot price needed by (P5) is unknown.
+    #[error("no published spot price for feed-in at {0}")]
+    MissingSpotPrice(Slot),
     /// Case A4 needs the separate storage meter, `[MiSpeL A1 3.2.4]`.
     #[error("Basisfall A4 requires the separately metered storage values Z3V/Z3E")]
     MissingStorageMeter,
@@ -574,6 +595,16 @@ fn series(
         .collect::<Result<Vec<_>, _>>()?;
     Series::new(Resolution::QUARTER_HOUR, DayBoundary::Strom, intervals)
         .map_err(|e| MispelError::Metering(e.to_string()))
+}
+
+fn supported_quarters(quarters: &[QuarterHour]) -> Result<BTreeSet<OffsetDateTime>, MispelError> {
+    if let Some(missing) = quarters
+        .iter()
+        .find(|q| q.grid_feed_in > Decimal::ZERO && q.anzulegender_wert.is_none())
+    {
+        return Err(MispelError::MissingSupportValue(missing.slot));
+    }
+    Ok(gate(quarters, |q| q.supported() == Some(true)))
 }
 
 fn gate(
@@ -744,7 +775,7 @@ pub fn abgrenzung_month(
         (Basisfall::A4, Some(z3v), Some(z3e)) => ma::Basisfall::MitSpeicherzaehler { z3v, z3e },
         (Basisfall::A4, ..) => return Err(MispelError::MissingStorageMeter),
     };
-    let supported = gate(quarters, QuarterHour::supported);
+    let supported = supported_quarters(quarters)?;
     let monat = ma::Abgrenzungsoption {
         z1nb: &z1nb,
         einspeisung: Einspeisung::Z1(&z1ne),
@@ -945,8 +976,14 @@ pub fn pauschal_period(
     }
     let z1nb = series(quarters, |q| q.grid_draw)?;
     let z1ne = series(quarters, |q| q.grid_feed_in)?;
-    let sp = gate(quarters, QuarterHour::spot_non_negative);
-    let aw = gate(quarters, QuarterHour::supported);
+    if let Some(missing) = quarters
+        .iter()
+        .find(|q| q.grid_feed_in > Decimal::ZERO && q.spot_price.is_none())
+    {
+        return Err(MispelError::MissingSpotPrice(missing.slot));
+    }
+    let sp = gate(quarters, |q| q.spot_non_negative() == Some(true));
+    let aw = supported_quarters(quarters)?;
     let zeitraum = match period {
         PauschalPeriod::Year(year) => mp::Zeitraum::Kalenderjahr(year),
         PauschalPeriod::Rumpfjahr { first, last } => mp::Zeitraum::Rumpfjahr {

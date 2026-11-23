@@ -745,6 +745,17 @@ const MGCP_CLIENT_FEATURE: u32 = 5;
 /// path into the state machine: they are the same machine reached without a
 /// session, which is what a simulator, a relay input and a conformance test use.
 impl Driver for Lpc {
+    fn last_lpc_heartbeat(&self) -> Option<OffsetDateTime> {
+        use eebus::usecases::signals::Signals;
+        if self.which != Use::Lpc {
+            return None;
+        }
+        let signals = self.actor.system().signals(eebus::usecases::lpc::DIRECTION);
+        let seconds = signals.get("lpc:lastHeartbeat")?.as_f64()?;
+        self.started_at
+            .checked_add(time::Duration::seconds_f64(seconds))
+    }
+
     fn asset(&self) -> &AssetId {
         &self.asset
     }
@@ -979,6 +990,29 @@ mod tests {
             d.on_heartbeat(at(t));
             t += every;
         }
+    }
+
+    #[test]
+    fn a_returning_heartbeat_waits_for_the_guards_write() {
+        let mut driver = lpc();
+        driver.on_heartbeat(at(0));
+        driver.on_limit(&LimitWrite::active(4_200.0), at(1));
+        driver.on_timeout(at(121));
+        assert_eq!(driver.state(), LpcState::Failsafe);
+        driver.on_heartbeat(at(130));
+        assert_eq!(driver.state(), LpcState::Failsafe);
+        driver.on_limit(&LimitWrite::active(6_000.0), at(131));
+        assert_eq!(driver.state(), LpcState::Limited);
+        assert_eq!(driver.ceiling(), Some(Power::from_kw(6.0)));
+    }
+
+    #[test]
+    fn heartbeat_diagnostics_follow_the_protocol_clock() {
+        let mut driver = lpc();
+        assert_eq!(driver.last_lpc_heartbeat(), None);
+        driver.on_heartbeat(at(12));
+        driver.on_timeout(at(120));
+        assert_eq!(driver.last_lpc_heartbeat(), Some(at(12)));
     }
 
     #[test]

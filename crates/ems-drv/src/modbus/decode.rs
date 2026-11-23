@@ -101,16 +101,9 @@ fn battery(regs: &[u16], into: &mut Measurement) {
     into.soc = Soc::new(scaled(i64::from(m.soc), m.soc_sf) / 100.0).ok();
 }
 
-/// Model 701: DER measurement — the one that can say what a roof *could* do.
-///
-/// `ThrotPct` is how much throttling is in effect, so the unthrottled figure is
-/// `W / (1 − ThrotPct)`. Without it a controller reads back exactly what it
-/// commanded and never lifts its own curtailment.
-///
-/// A hundred per cent throttled is a real state (a roof commanded to zero) and
-/// the division would be by zero, so it reports nothing rather than infinity:
-/// "I cannot tell" is the honest answer there, and the caller's nameplate
-/// fallback is better than a number that is not one.
+/// Model 701 reports active power and throttling as a percentage of maximum
+/// active power. At partial throttle the controller can estimate headroom;
+/// consumers that need independent availability must exclude that estimate.
 fn der(regs: &[u16], into: &mut Measurement) {
     let Ok(m) = Model701::parse(regs) else {
         return;
@@ -126,6 +119,7 @@ fn der(regs: &[u16], into: &mut Measurement) {
         let fraction = f64::from(throttled) / 100.0;
         if fraction < 1.0 {
             into.available_power = Some(Power::new(producing.abs() / (1.0 - fraction)));
+            into.estimated_availability = throttled != 0;
         }
     }
 }

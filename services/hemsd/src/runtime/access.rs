@@ -512,6 +512,7 @@ const HOUSEHOLD_ONLY: &[&str] = &[
     "/v1/pairing",
     "/v1/managers",
     "/v1/goals",
+    "/v1/tariff",
     // The page's own document carries the goals — when the car leaves, when
     // the water is wanted — and the day's receipt. A manager reads `/v1/status`.
     "/v1/home",

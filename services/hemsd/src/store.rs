@@ -51,9 +51,9 @@
 
 use std::path::Path;
 
-use ems_core::prelude::{Power, Slot};
+use ems_core::prelude::Power;
 use ems_grid::evidence::{ComplianceSample, ControlEvent};
-use ems_grid::mispel::QuarterHour;
+use ems_grid::mispel::{QuarterHour, RegisterAssertion};
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -155,6 +155,9 @@ const FAILSAFE: TableDefinition<&str, &[u8]> = TableDefinition::new("failsafe");
 /// What the household asked for on its page — the car by seven, the water by
 /// six — as one document under one key.
 const GOALS: TableDefinition<&str, &[u8]> = TableDefinition::new("goals");
+
+/// Exact accepted envelopes, keyed by their first eligible quarter.
+const PRICE_SHEETS: TableDefinition<i64, &str> = TableDefinition::new("price_sheets");
 
 /// The CloudEvents queued for the fleet.
 const OUTBOUND: TableDefinition<u64, &[u8]> = TableDefinition::new("outbound");
@@ -334,7 +337,7 @@ pub struct OutboundEvent {
 ///
 /// The absence of a production meter is `None` rather than zero: a box with none
 /// has not measured a dark roof (D124).
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Recorded {
     /// The registers a settlement is computed from.
     pub registers: QuarterHour,
@@ -346,6 +349,15 @@ pub struct Recorded {
     /// reader that has ever parsed one (P3).
     #[serde(default, with = "rust_decimal::serde::str_option")]
     pub production: Option<rust_decimal::Decimal>,
+    /// Prices captured for the household receipt when this interval closed.
+    pub terms: Option<crate::month::IntervalTerms>,
+    /// Paired energy integrals over identical end-use load.
+    pub replay: Option<crate::runtime::day::replay::GridReplay>,
+    /// Measured battery state for a quarter with verified grid-source and household-use flows.
+    pub storage: Option<crate::runtime::day::storage::Trace>,
+    /// Shadow mode was active when the interval was recorded.
+    #[serde(default)]
+    pub watched: bool,
 }
 
 /// One event as it is held.
@@ -362,9 +374,24 @@ pub struct StoredEvent {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RegisterRow {
     recorded: Recorded,
-    recorded_at: i64,
+    #[serde(with = "time::serde::timestamp")]
+    recorded_at: OffsetDateTime,
+    /// Fraction of the recorded second. Previously captured rows have whole-second precision.
+    #[serde(default)]
+    microsecond: u32,
     #[serde(default)]
     forwarded_at: Option<i64>,
+}
+
+impl RegisterRow {
+    fn revision(&self) -> Result<OffsetDateTime, StoreError> {
+        self.recorded_at
+            .replace_microsecond(self.microsecond)
+            .map_err(|error| StoreError::NotReadable {
+                id: self.recorded.registers.slot.start().unix_timestamp(),
+                detail: error.to_string(),
+            })
+    }
 }
 
 /// An event row: the event **without** its trace, and what the store knows about
@@ -462,6 +489,7 @@ impl Store {
             sql!(write.open_table(OUTBOUND_BY_EVENT))?;
             sql!(write.open_table(MANAGERS))?;
             sql!(write.open_table(GOALS))?;
+            sql!(write.open_table(PRICE_SHEETS))?;
             sql!(write.open_table(PUSH))?;
             sql!(write.open_table(WEBHOOKS))?;
             sql!(write.open_table(DAYS))?;
@@ -490,6 +518,33 @@ impl Store {
         let next = sql!(meta.get(counter))?.map_or(1, |v| v.value() + 1);
         sql!(meta.insert(counter, next))?;
         Ok(next)
+    }
+
+    pub(crate) fn transfer(
+        &self,
+    ) -> Result<Option<crate::runtime::authority::Transfer>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let table = sql!(read.open_table(IDENTITY))?;
+        sql!(table.get("control-transfer"))?
+            .map(|bytes| decode(0, bytes.value()))
+            .transpose()
+    }
+
+    pub(crate) fn put_transfer(
+        &self,
+        transfer: Option<&crate::runtime::authority::Transfer>,
+    ) -> Result<(), StoreError> {
+        let write = sql!(self.db.begin_write())?;
+        {
+            let mut table = sql!(write.open_table(IDENTITY))?;
+            if let Some(transfer) = transfer {
+                let bytes = encode(transfer)?;
+                sql!(table.insert("control-transfer", bytes.as_slice()))?;
+            } else {
+                sql!(table.remove("control-transfer"))?;
+            }
+        }
+        sql!(write.commit())
     }
 
     /// The box's EEBUS identity and the peers it trusts, if it has been given
@@ -637,12 +692,15 @@ impl Store {
     /// One transaction, bounded by construction: the table never holds more
     /// than [`crate::month::KEPT_DAYS`] rows, so the most this can delete — on
     /// a box switched on again after a year — is ninety small documents. A day
-    /// closed twice replaces itself.
+    /// already closed keeps its original receipt, including the prices in force.
     ///
     /// # Errors
     /// [`StoreError`] where the write fails, or
     /// [`StoreError::NotSerialisable`] for a day whose date is not one.
-    pub fn put_closed_day(&self, day: &crate::month::ClosedDay) -> Result<(), StoreError> {
+    pub fn put_closed_day(
+        &self,
+        day: &crate::month::ClosedDay,
+    ) -> Result<Option<crate::month::ClosedDay>, StoreError> {
         let Some(date) = day.date() else {
             return Err(StoreError::NotSerialisable {
                 detail: format!("`{}` is not a calendar day", day.day),
@@ -651,13 +709,26 @@ impl Store {
         let key = date.to_julian_day();
         let bytes = encode(day)?;
         let write = sql!(self.db.begin_write())?;
-        {
+        let receipt = {
             let mut days = sql!(write.open_table(DAYS))?;
-            sql!(days.insert(key, bytes.as_slice()))?;
+            let newest = sql!(days.last())?.map_or(key, |(date, _)| date.value().max(key));
             let kept = i32::try_from(crate::month::KEPT_DAYS).unwrap_or(i32::MAX);
-            sql!(days.retain_in(..=key.saturating_sub(kept), |_, _| false))?;
-        }
-        sql!(write.commit())
+            let cutoff = newest.saturating_sub(kept);
+            let existing = sql!(days.get(key))?
+                .map(|value| decode(i64::from(key), value.value()))
+                .transpose()?;
+            if key <= cutoff {
+                None
+            } else if existing.is_some() {
+                existing
+            } else {
+                sql!(days.insert(key, bytes.as_slice()))?;
+                sql!(days.retain_in(..=cutoff, |_, _| false))?;
+                Some(day.clone())
+            }
+        };
+        sql!(write.commit())?;
+        Ok(receipt)
     }
 
     /// The closed days the box holds, oldest first.
@@ -876,6 +947,41 @@ impl Store {
         sql!(write.commit())
     }
 
+    /// Current signed supply schedule in order of first applicable quarter.
+    pub(crate) fn price_sheets(&self) -> Result<Vec<(i64, String)>, StoreError> {
+        let read = sql!(self.db.begin_read())?;
+        let table = sql!(read.open_table(PRICE_SHEETS))?;
+        sql!(table.iter())?
+            .map(|row| {
+                let (start, signed) = sql!(row)?;
+                Ok((start.value(), signed.value().to_owned()))
+            })
+            .collect()
+    }
+
+    /// Keep the last active predecessor and all future changes in one transaction.
+    pub(crate) fn put_price_sheet(
+        &self,
+        now: i64,
+        start: i64,
+        signed: &str,
+    ) -> Result<(), StoreError> {
+        let write = sql!(self.db.begin_write())?;
+        {
+            let mut table = sql!(write.open_table(PRICE_SHEETS))?;
+            let last = sql!(table.range(..=now))?
+                .next_back()
+                .transpose()
+                .map_err(|e| StoreError::Sql(e.to_string()))?
+                .map(|(key, _)| key.value());
+            if let Some(last) = last {
+                sql!(table.retain(|key, _| key >= last))?;
+            }
+            sql!(table.insert(start, signed))?;
+        }
+        sql!(write.commit())
+    }
+
     /// Keep the household's goals.
     ///
     /// # Errors
@@ -953,19 +1059,43 @@ impl Store {
         if quarters.is_empty() {
             return Ok(());
         }
+        // PostgreSQL stores microseconds; compare revisions at that same precision.
+        let recorded_at =
+            recorded_at - time::Duration::nanoseconds(i64::from(recorded_at.nanosecond() % 1_000));
         let write = sql!(self.db.begin_write())?;
         {
             let mut table = sql!(write.open_table(REGISTERS))?;
             let mut owed = sql!(write.open_table(REGISTERS_OWED))?;
             for quarter in quarters {
                 let slot = quarter.registers.slot.start().unix_timestamp();
+                let previous = sql!(table.get(slot))?
+                    .map(|bytes| decode::<RegisterRow>(slot, bytes.value()))
+                    .transpose()?;
+                let mut revision = recorded_at;
+                let mut forwarded_at = None;
+                if let Some(previous) = previous {
+                    let last = previous.revision()?;
+                    if previous.recorded.registers == quarter.registers {
+                        revision = last;
+                        forwarded_at = previous.forwarded_at;
+                    } else if recorded_at <= last {
+                        revision =
+                            last.checked_add(time::Duration::MICROSECOND)
+                                .ok_or_else(|| {
+                                    StoreError::Sql("register revision time exhausted".into())
+                                })?;
+                    }
+                }
                 let row = RegisterRow {
-                    recorded: *quarter,
-                    recorded_at: recorded_at.unix_timestamp(),
-                    forwarded_at: None,
+                    recorded: quarter.clone(),
+                    recorded_at: revision,
+                    microsecond: revision.microsecond(),
+                    forwarded_at,
                 };
                 sql!(table.insert(slot, encode(&row)?.as_slice()))?;
-                sql!(owed.insert(slot, ()))?;
+                if forwarded_at.is_none() {
+                    sql!(owed.insert(slot, ()))?;
+                }
             }
         }
         sql!(write.commit())
@@ -1102,21 +1232,24 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError`].
-    pub fn pending_quarter_hours(&self, limit: usize) -> Result<Vec<Recorded>, StoreError> {
+    pub fn pending_quarter_hours(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<RegisterAssertion>, StoreError> {
         let read = sql!(self.db.begin_read())?;
         let owed = sql!(read.open_table(REGISTERS_OWED))?;
         let registers = sql!(read.open_table(REGISTERS))?;
         let mut out = Vec::new();
-        for entry in sql!(owed.iter())? {
+        for entry in sql!(owed.iter())?.take(limit) {
             let (slot, _) = sql!(entry)?;
             let Some(bytes) = sql!(registers.get(slot.value()))? else {
                 continue;
             };
             let row: RegisterRow = decode(slot.value(), bytes.value())?;
-            out.push(row.recorded);
-            if out.len() >= limit {
-                break;
-            }
+            out.push(RegisterAssertion {
+                recorded_at: row.revision()?,
+                registers: row.recorded.registers,
+            });
         }
         Ok(out)
     }
@@ -1334,7 +1467,7 @@ impl Store {
     pub fn mark_forwarded(
         &mut self,
         events: &[i64],
-        slots: &[Slot],
+        assertions: &[RegisterAssertion],
         at: OffsetDateTime,
     ) -> Result<(), StoreError> {
         let write = sql!(self.db.begin_write())?;
@@ -1353,11 +1486,14 @@ impl Store {
             }
             let mut register_rows = sql!(write.open_table(REGISTERS))?;
             let mut registers_owed = sql!(write.open_table(REGISTERS_OWED))?;
-            for slot in slots {
-                let key = slot.start().unix_timestamp();
+            for assertion in assertions {
+                let key = assertion.registers.slot.start().unix_timestamp();
                 let existing = sql!(register_rows.get(key))?.map(|b| b.value().to_vec());
                 if let Some(bytes) = existing {
                     let mut row: RegisterRow = decode(key, &bytes)?;
+                    if row.revision()? != assertion.recorded_at {
+                        continue;
+                    }
                     row.forwarded_at = Some(at.unix_timestamp());
                     sql!(register_rows.insert(key, encode(&row)?.as_slice()))?;
                 }
@@ -1460,6 +1596,7 @@ impl Store {
             sql!(sql!(write.open_table(MANAGERS))?.retain(|_, _| false))?;
             // The next household did not ask for this one's car by seven.
             sql!(sql!(write.open_table(GOALS))?.retain(|_, _| false))?;
+            sql!(sql!(write.open_table(PRICE_SHEETS))?.retain(|_, _| false))?;
             // And the browsers it may notify: a resold box that kept them would
             // go on telling the previous household's phones what the new one's
             // network operator is doing. The signing key went with `IDENTITY`.
@@ -1584,6 +1721,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ems_core::prelude::Slot;
     use ems_core::prelude::{AssetId, GuardRule};
     use ems_grid::evidence::Action;
     use ems_grid::para14a::ControlMode;
@@ -1611,6 +1749,10 @@ mod tests {
                 ..QuarterHour::empty(Slot::containing(at))
             },
             production: Some(Decimal::new(2, 1)),
+            watched: false,
+            replay: None,
+            storage: None,
+            terms: None,
         }
     }
 
@@ -1673,6 +1815,10 @@ mod tests {
                 ..quarter(NOW).registers
             },
             production: Some(Decimal::new(2, 1)),
+            watched: false,
+            replay: None,
+            storage: None,
+            terms: None,
         };
         store.put_quarter_hour(&written, NOW).unwrap();
         assert_eq!(store.quarter_hours().unwrap(), vec![written]);
@@ -1699,6 +1845,11 @@ mod tests {
                 saved_ct: offset,
                 ..crate::month::Money::default()
             }),
+
+            forecast: None,
+            metered_bill: None,
+            comparison: None,
+            arbitrage: None,
             imported_wh: 12_345,
             produced_wh: 3_200,
             reduced_minutes: None,
@@ -1741,9 +1892,11 @@ mod tests {
         assert_eq!(kept.len(), crate::month::KEPT_DAYS);
         assert_eq!(kept.first().unwrap().day, closed(30).day);
         assert_eq!(kept.last().unwrap().day, closed(119).day);
-        // A day closed twice corrects itself rather than appearing twice.
-        store.put_closed_day(&closed(119)).unwrap();
-        assert_eq!(store.closed_days().unwrap().len(), crate::month::KEPT_DAYS);
+        let mut repriced = closed(119);
+        repriced.money = None;
+        store.put_closed_day(&repriced).unwrap();
+        store.put_closed_day(&closed(29)).unwrap();
+        assert_eq!(store.closed_days().unwrap(), kept);
     }
 
     #[test]
@@ -1830,12 +1983,7 @@ mod tests {
         store.put_control_event(&event(NOW)).unwrap();
         store.put_closed_day(&closed(1)).unwrap();
         // Everything the fleet is owed, taken — a reset refuses otherwise.
-        let slots: Vec<Slot> = store
-            .quarter_hours()
-            .unwrap()
-            .iter()
-            .map(|r| r.registers.slot)
-            .collect();
+        let slots = store.pending_quarter_hours(usize::MAX).unwrap();
         let ids: Vec<i64> = store
             .control_events()
             .unwrap()
@@ -1912,6 +2060,10 @@ mod tests {
                 Recorded {
                     registers: QuarterHour::empty(Slot::containing(at)),
                     production: None,
+                    watched: false,
+                    replay: None,
+                    storage: None,
+                    terms: None,
                 }
             })
             .collect();
@@ -1988,12 +2140,7 @@ mod tests {
             .iter()
             .map(|e| e.id)
             .collect();
-        let slots: Vec<Slot> = store
-            .pending_quarter_hours(10)
-            .unwrap()
-            .iter()
-            .map(|q| q.registers.slot)
-            .collect();
+        let slots = store.pending_quarter_hours(10).unwrap();
         store.mark_forwarded(&ids, &slots, NOW).unwrap();
 
         assert!(store.backlog().unwrap().is_empty());
@@ -2023,12 +2170,7 @@ mod tests {
                 .put_quarter_hour(&quarter(NOW + time::Duration::days(day)), NOW)
                 .unwrap();
         }
-        let slots: Vec<Slot> = store
-            .pending_quarter_hours(3)
-            .unwrap()
-            .iter()
-            .map(|q| q.registers.slot)
-            .collect();
+        let slots = store.pending_quarter_hours(3).unwrap();
         assert_eq!(slots.len(), 3, "the limit is a limit");
         store.mark_forwarded(&[], &slots, NOW).unwrap();
         assert_eq!(store.backlog().unwrap().quarter_hours, 4);
@@ -2040,15 +2182,20 @@ mod tests {
         // correction is outstanding even though the slot is not new.
         let mut store = Store::in_memory().unwrap();
         store.put_quarter_hour(&quarter(NOW), NOW).unwrap();
-        store
-            .mark_forwarded(&[], &[Slot::containing(NOW)], NOW)
-            .unwrap();
+        let original = store.pending_quarter_hours(1).unwrap();
+        store.mark_forwarded(&[], &original, NOW).unwrap();
         assert!(store.backlog().unwrap().is_empty());
 
         let mut restated = quarter(NOW);
         restated.registers.grid_draw = Decimal::new(9_999_999, 6);
         store.put_quarter_hour(&restated, NOW).unwrap();
-        assert_eq!(store.backlog().unwrap().quarter_hours, 1);
+        // A late ACK for the original send must leave the correction queued.
+        store.mark_forwarded(&[], &original, NOW).unwrap();
+        let corrected = store.pending_quarter_hours(1).unwrap();
+        assert_eq!(corrected[0].recorded_at, NOW + time::Duration::MICROSECOND);
+        store.mark_forwarded(&[], &corrected, NOW).unwrap();
+        store.put_quarter_hour(&restated, NOW).unwrap();
+        assert!(store.backlog().unwrap().is_empty());
         assert_eq!(
             store.quarter_hours().unwrap()[0].registers.grid_draw,
             Decimal::new(9_999_999, 6)
@@ -2107,14 +2254,21 @@ mod tests {
     #[test]
     fn a_reopened_store_still_has_everything_and_re_runs_no_migration() {
         let path = temp_path("reopen");
-        {
+        let revision = NOW + time::Duration::nanoseconds(123_456_789);
+        let sent = {
             let mut store = Store::open(&path).unwrap();
             store.put_control_event(&event(NOW)).unwrap();
-            store.put_quarter_hour(&quarter(NOW), NOW).unwrap();
-        }
+            store.put_quarter_hour(&quarter(NOW), revision).unwrap();
+            store.pending_quarter_hours(1).unwrap()
+        };
         let store = Store::open(&path).unwrap();
         assert_eq!(store.control_events().unwrap().len(), 1);
         assert_eq!(store.quarter_hours().unwrap().len(), 1);
+        assert_eq!(
+            sent[0].recorded_at,
+            NOW + time::Duration::microseconds(123_456)
+        );
+        assert_eq!(store.pending_quarter_hours(1).unwrap(), sent);
         let read = store.db.begin_read().unwrap();
         let meta = read.open_table(META).unwrap();
         assert_eq!(

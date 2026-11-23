@@ -80,12 +80,8 @@ impl ModelMap {
         }
     }
 
-    /// Whether this device can say what it *could* produce.
-    ///
-    /// Model 701 carries `ThrotPct`, and with it `W / (1 − ThrotPct)` recovers
-    /// the unthrottled figure. Nothing else in the common model set can, so a
-    /// device without 701 reports `false` and the caller falls back to a
-    /// nameplate knowing that it has.
+    /// Whether the device publishes the power and throttle inputs for an
+    /// availability estimate. Each reading carries its own provenance.
     #[must_use]
     pub fn reports_available_power(&self) -> bool {
         self.has(701)

@@ -16,7 +16,7 @@
       "@type": "BreadcrumbList",
       "@id": "{{ section.permalink }}#breadcrumb",
       "itemListElement": [
-        { "@type": "ListItem", "position": 1, "name": "hems", "item": "{{ config.base_url }}/" },
+        { "@type": "ListItem", "position": 1, "name": {{ config.title | json_encode | safe }}, "item": "{{ config.base_url }}/" },
         { "@type": "ListItem", "position": 2, "name": {{ section.title | json_encode | safe }}, "item": "{{ section.permalink }}" }
       ]
     }{% endset %}
@@ -24,26 +24,24 @@
 {% endblock %}
 
 {% block content %}
-<div class="docs-shell">
-  {% set here = section.path %}
-  <article>
-    <h1>{{ section.title }}</h1>
-    {% if section.description %}<p class="lead">{{ section.description }}</p>{% endif %}
-    {{ section.content | safe }}
-    {% set_global n = 0 %}
-    {% for g in config.extra.doc_groups %}
-    <h2 class="cards-title">{{ g }}</h2>
-    <ol class="cards">
-      {% for page in section.pages %}{% if page.extra.group == g %}{% set_global n = n + 1 %}
-      <li class="card">
-        <span class="num">{{ n }}</span>
-        <h3><a href="{{ page.permalink }}">{{ page.title }}</a></h3>
-        <p>{{ page.description | default(value="") }}</p>
-      </li>
+<div class="docs-index">
+  <header class="manual-intro">
+    <div>
+      <h1>{{ section.title }}</h1>
+      <p>{{ section.description }}</p>
+    </div>
+    {% include "partials/search.html" %}
+  </header>
+  <div class="manual-start">{{ section.content | safe }}</div>
+  {% for g in config.extra.doc_groups %}
+  <section class="guide-group" aria-labelledby="group-{{ loop.index }}">
+    <h2 id="group-{{ loop.index }}">{{ g }}</h2>
+    <ul class="guide-list">
+      {% for page in section.pages %}{% if page.extra.group == g %}
+      <li><a href="{{ page.permalink }}"><strong>{{ page.title }}</strong><span>{{ page.description }}</span></a></li>
       {% endif %}{% endfor %}
-    </ol>
-    {% endfor %}
-  </article>
-  {% include "partials/docs-nav.html" %}
+    </ul>
+  </section>
+  {% endfor %}
 </div>
 {% endblock %}

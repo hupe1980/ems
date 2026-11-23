@@ -12,6 +12,8 @@
 
 pub mod fleet;
 mod modbus;
+#[cfg(test)]
+mod reference_trials;
 pub mod registers;
 pub mod steuerbox;
 
@@ -119,11 +121,12 @@ pub struct Reading {
 /// The devices and the registers they publish.
 #[derive(Debug)]
 pub struct Physics {
+    write_requests: u64,
     inverter: Unit,
     meter: Unit,
     battery: Unit,
     pv: PvSim,
-    pack: BatterySim,
+    pack: Option<BatterySim>,
     array: ArrayModel,
     rating: Power,
     location: GeoPoint,
@@ -138,12 +141,16 @@ pub struct Physics {
 impl Physics {
     fn new(scenario: &Scenario) -> anyhow::Result<Self> {
         let config = &scenario.config;
-        let (Some(pv), Some(battery)) = (config.pv, config.battery) else {
-            anyhow::bail!("the virtual house needs a roof and a battery in its configuration");
-        };
-        let mut pack = BatterySim::new(battery.kwh, battery.power);
-        pack.stored = battery.kwh * battery.reserve_soc.fraction().max(0.30);
+        let pv = config
+            .pv
+            .ok_or_else(|| anyhow::anyhow!("the virtual house needs a roof"))?;
+        let pack = config.battery.map(|battery| {
+            let mut pack = BatterySim::new(battery.kwh, battery.power);
+            pack.stored = battery.kwh * battery.reserve_soc.fraction().max(0.30);
+            pack
+        });
         Ok(Self {
+            write_requests: 0,
             inverter: Unit::inverter(),
             meter: Unit::meter(),
             battery: Unit::battery(),
@@ -173,12 +180,15 @@ impl Physics {
             .inverter
             .curtailment()
             .map_or(self.rating, |fraction| self.rating * fraction);
-        let (pv, _) = self.pv.step(available, ceiling, dt);
+        let (pv, curtailed) = self.pv.step(available, ceiling, dt);
         let produced = pv.outflow();
         let load = self
             .weather
             .load_at(at, crate::scenario::household_load(Slot::containing(at)));
-        let battery = self.pack.step(produced - load, dt);
+        let battery = self
+            .pack
+            .as_mut()
+            .map_or(Power::ZERO, |p| p.step(produced - load, dt));
         let grid = load + battery - produced;
 
         self.produced_wh += produced.get() * hours;
@@ -190,9 +200,13 @@ impl Physics {
             load_w: load.get(),
             battery_w: battery.get(),
             grid_w: grid.get(),
-            soc: self.pack.soc().fraction(),
+            soc: self.pack.as_ref().map_or(0.0, |p| p.soc().fraction()),
         };
-        self.inverter.set_inverter(produced.get(), self.produced_wh);
+        self.inverter.set_inverter(
+            produced.get(),
+            self.produced_wh,
+            100.0 * curtailed.get() / self.rating.get(),
+        );
         self.meter
             .set_meter(grid.get(), self.imported_wh, self.exported_wh);
         self.battery.set_battery(self.reading.soc);
@@ -228,6 +242,15 @@ impl House {
             .reading
     }
 
+    /// Count of write requests received by the simulated Modbus server, including refusals.
+    #[must_use]
+    pub fn write_requests(&self) -> u64 {
+        self.physics
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .write_requests
+    }
+
     /// The production ceiling the box has written to the inverter, as a
     /// fraction of its rating; `None` while no limit is in force.
     #[must_use]
@@ -259,7 +282,7 @@ impl Drop for House {
 ///
 /// # Errors
 /// Where the address is not loopback and [`Options::exposed`] is unset, the
-/// port cannot be bound, or the scenario has no roof or battery.
+/// port cannot be bound, or the scenario has no roof.
 pub async fn start(options: Options) -> anyhow::Result<House> {
     if !options.listen.ip().is_loopback() && !options.exposed {
         anyhow::bail!(
@@ -353,6 +376,38 @@ pub fn configuration(
         fleet = house.fleet,
         location = fleet::LOCATION,
     );
+    let (battery_kwh, battery_kw) = scenario
+        .config
+        .battery
+        .map_or((0.0, 0.0), |b| (b.kwh.kwh(), b.power.kw()));
+    let declared: std::collections::BTreeMap<_, _> = scenario
+        .config
+        .declared
+        .iter()
+        .filter(|(id, _)| {
+            household
+                .site
+                .assets
+                .iter()
+                .any(|asset| asset.id().as_str() == id.as_str())
+        })
+        .map(|(id, facts)| (id, crate::config::DeclaredSettings::from(*facts)))
+        .collect();
+    let mut site = toml::Table::new();
+    site.insert("declared".into(), toml::Value::try_from(declared)?);
+    for (name, value) in [
+        ("pv_kwp", scenario.config.pv.map_or(0.0, |p| p.kwp.kw())),
+        ("pv_ac_kw", rating_kw),
+        ("battery_kwh", battery_kwh),
+        ("battery_kw", battery_kw),
+    ] {
+        site.insert(name.to_owned(), value.into());
+    }
+    writeln!(
+        &mut out,
+        "\n{}",
+        toml::to_string(&std::collections::BTreeMap::from([("site", site)]))?
+    )?;
     if let (Some(ship), Some(ski)) = (ship, &house.steuerbox_ski) {
         write!(
             out,

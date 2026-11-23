@@ -12,14 +12,14 @@ use histd::{Settings, Store};
 #[command(name = "histd", version, about = "The hems history service")]
 struct Cli {
     /// The configuration file. Absent, or absent from disk, means the defaults.
-    #[arg(long, env = "HEMS_HISTD_CONFIG")]
+    #[arg(long, env = "EMS_HISTD_CONFIG")]
     config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_HISTD")?;
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "EMS_HISTD")?;
     ems_service::init_tracing(
         ems_service::identity!(),
         &settings.service.log_filter,
@@ -35,7 +35,9 @@ async fn main() -> anyhow::Result<()> {
     // under an advisory lock, so several replicas starting together is safe.
     let db = ems_service::db::connect(&settings.database, ems_service::identity!().name).await?;
     ems_service::db::migrate(&db, histd::store::MIGRATIONS).await?;
-    let store = Store::new(db);
+    let store = Store::new(db)
+        .with_register_meters(&settings.database, settings.register_meters.clone())
+        .await?;
     let health = Health::new();
     tracing::info!("history open");
 

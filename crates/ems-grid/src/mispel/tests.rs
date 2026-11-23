@@ -19,7 +19,8 @@ fn q(i: i64, nb: f64, ne: f64, v: f64, e: f64, aw: f64) -> QuarterHour {
         grid_feed_in: dec(ne),
         device_consumption: dec(v),
         device_generation: dec(e),
-        anzulegender_wert: dec(aw),
+        anzulegender_wert: Some(dec(aw)),
+        spot_price: Some(Decimal::ZERO),
         ..QuarterHour::empty(slot(i))
     }
 }
@@ -298,16 +299,43 @@ fn a_storage_case_without_a_capacity_is_refused() {
 }
 
 #[test]
+fn exported_energy_with_missing_support_is_retained_but_cannot_be_settled() {
+    let missing = QuarterHour {
+        anzulegender_wert: None,
+        ..q(0, 0.0, 1.0, 0.0, 0.0, 8.0)
+    };
+    assert_eq!(
+        abgrenzung_month(Basisfall::A3, RULES, &[missing]),
+        Err(MispelError::MissingSupportValue(missing.slot))
+    );
+}
+
+#[test]
+fn pauschal_requires_observed_wholesale_prices_for_export() {
+    let missing = QuarterHour {
+        spot_price: None,
+        ..q(0, 0.0, 1.0, 0.0, 0.0, 8.0)
+    };
+    let result = pauschal_period(
+        plant(PauschalFall::P1, 1.0, 10.0),
+        RULES,
+        PauschalPeriod::Year(2026),
+        &[missing],
+    );
+    assert_eq!(result, Err(MispelError::MissingSpotPrice(missing.slot)));
+}
+
+#[test]
 fn only_feed_in_above_the_threshold_and_at_non_negative_prices_is_settleable() {
     // (P1) = 500, (P2)P1 = 0,01, (P3) = 5, (P4) = 505.
     let mut year: Vec<QuarterHour> = (0..600)
         .map(|i| QuarterHour {
-            spot_price: dec(5.0),
+            spot_price: Some(dec(5.0)),
             ..q(i, 1.0, 1.0, 0.0, 0.0, 8.0)
         })
         .collect();
     for h in year.iter_mut().take(50) {
-        h.spot_price = dec(-2.0);
+        h.spot_price = Some(dec(-2.0));
     }
     let r = pauschal_period(
         plant(PauschalFall::P1, 1.0, 10.0),

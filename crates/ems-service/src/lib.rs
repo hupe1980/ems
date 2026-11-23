@@ -51,6 +51,7 @@ pub mod auth;
 pub mod config;
 #[cfg(feature = "postgres")]
 pub mod db;
+pub mod edge;
 pub mod health;
 pub mod http;
 pub mod mcp;

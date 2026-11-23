@@ -1,11 +1,38 @@
 # Changelog
 
-All notable changes to hems. The format follows
+All notable changes to ems. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/) — before 1.0, a minor version may
 break anything, and says so here.
 
-## [Unreleased]
+## [0.8.0] — 2026-11-23
+
+### Added
+
+- Household Setup commissions a SunSpec connection meter, observed PV and storage, and a fixed or signed tariff. `hemsd doctor` reports device, pairing and history status.
+- Household Plan previews goal costs, checks the quote on confirmation and recovers an interrupted save. Shadow mode compares measured bills and modelled savings at equal service. Replay includes heat missing at its deadline.
+- Household power history shows quarter-hour ranges and sample counts. Exports flag missing device histories. Webhooks report grid limits, device loss and failsafe recovery.
+- The optional Matter appliance reader observes power through a local Matter Server. `histd` uses per-site MeterStore market bindings for register ingestion, settlement and export.
+- `bemsd` replays a charging reduction across two simulated OCPP stations and compares community electricity allocations across the repeated autumn hour.
+- `cemsd` compares battery dispatch times, reconciles meter traces and optionally rehearses OpenADR requests and cancellations over loopback.
+- The site offers solar EV charging and industrial peak simulations. Both use build-time results from the native Rust models. The shared industrial replay is available through the `ems-sim` crate’s `peak` feature.
+- Linux release archives and dependency inventories are available for all three edge daemons.
+
+### Changed — breaking
+
+- Household history uses Chronix 0.10 integer sample counts. For a gateway with an existing 0.9 tier, export the history and start with a fresh Chronix directory. Keep the separate redb store.
+
+- Local diagnostic power history starts a new trace in 0.8. Cached readings from earlier control ticks cannot supply fresh-observation counts. Export any older diagnostic history before updating.
+- Historian register submissions carry a stable source revision per quarter. Identical retries return 204, conflicting retries return 409 atomically, and settlement returns the effective RFC 3339 cutoff for a repeatable register read.
+
+- MiSpeL registers retain measured energy when wholesale or EEG support prices are missing. Settlement reports the exported quarter that needs a price.
+- S2 battery discharge factors now run from maximum discharge at 0 to idle at 1. EV mode factors use the charging point’s advertised minimum and maximum power. A manager receives a terminal abort if its instruction conflicts with a saved household goal or the device cannot follow it.
+- The home API and day history now use the same receipt with whole cents and watt-hours. Measured charges and modelled savings have separate totals.
+- In the home API, a saved goal persists in the response when device telemetry is missing. Its feasibility assessment can be null.
+- Environment variables take the `EMS_` prefix: `EMS_<SERVICE>_*` for every
+  service (`EMS_HEMSD_*` included) and `EMS_TEST_POSTGRES` for the test suite.
+  `HEMS_TOKEN`, `HEMS_STORE` and `HEMS_API_TOKEN` belong to hemsd and keep theirs.
+- Releases are titled `ems <version>`.
 
 ## [0.7.0] — 2026-11-22
 
@@ -290,7 +317,7 @@ hardware.
 - `rmcp` 3.11 (RUSTSEC-2026-0457, -0461) and `ctutils` 0.4.8 (RUSTSEC-2026-0385).
 - Every override and S2 instruction is logged with the credential that made it.
 
-[Unreleased]: https://github.com/hupe1980/ems/compare/v0.7.0...HEAD
+[0.8.0]: https://github.com/hupe1980/ems/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hupe1980/ems/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hupe1980/ems/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hupe1980/ems/compare/v0.4.0...v0.5.0

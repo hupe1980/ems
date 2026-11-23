@@ -1,0 +1,25 @@
+[package]
+name = "bemsd"
+description = "Building handover and shared connection capacity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ems-core = { workspace = true }
+ems-grid = { workspace = true }
+time = { workspace = true }
+rust_decimal = { workspace = true }
+base64 = { workspace = true }
+uuid = { workspace = true }
+ocpp-kit = { workspace = true, features = ["tokio"] }
+ems-drv = { workspace = true, features = ["ocpp"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+ems-service = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "net", "sync", "time"] }

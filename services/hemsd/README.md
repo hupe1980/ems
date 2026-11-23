@@ -1,125 +1,56 @@
 # hemsd
 
-The [hems](https://github.com/hupe1980/ems) edge daemon: the process that runs
-on the box in the house.
+A household energy gateway with a local control loop, planner and browser UI. The gateway uses SunSpec/Modbus TCP and EEBUS to communicate with devices and exposes S2 to an external energy manager.
 
-It is **one** process on purpose. The § 14a failsafe is a sixty-second heartbeat
-and a two-hour minimum, and an IPC hop inside that path buys nothing — so the
-guard, the arbiter, the planner, the drivers, the evidence recorder and the box's
-own stores all live here, and every other daemon in the workspace is cloud.
+## Try the interface
 
-Two stores, and the split is forced rather than tidy. **`redb`** holds the § 14a
-evidence, the settlement registers, the outbox and what the box has learned —
-every value a serde document, so a field added to one of them cannot be lost the
-way a hand-written column list once lost two. It also takes an exclusive lock on
-its file, so a second `hemsd` against the same store is refused rather than
-becoming a second writer on one household's record. **`chronix`** holds the
-one-second measurement series — every reading the guard acts on, kept seven days
-and served at `/v1/series/{point}`. The registers stay out of it for a
-transactional reason rather than a typing one: a register and the outbox marker
-saying the fleet still owes it are written in **one** `redb` transaction, and two
-stores have no shared one.
-
-```mermaid
-flowchart TB
-  M["measurements, every second"] --> G
-  L["§ 14a limit from the Steuerbox<br/>§ 9 EEG cap · fuses · reserve"] --> G
-  G["<b>Guard</b><br/>an interval per asset"]
-  F["forecasts · prices · site state"] --> P["<b>Planner</b><br/>two days of quarter hours,<br/>re-solved every quarter hour"]
-  P -- "target · envelope · a price per asset" --> A["<b>Arbiter</b>, once a second"]
-  G -- "the interval nothing may widen" --> A
-  A --> S["setpoints, each naming its Reason"]
-  S --> D["driver registry"]
-  D --> M
-  A --> E["evidence record<br/>[A1 7.2], kept two years"]
+```sh
+cargo run -p hemsd -- demo --days 1
 ```
 
-## Running a house
+Open the [household page](http://127.0.0.1:8080/). **Now** explains what the devices are doing, **Plan** lets you price a departure or hot-water goal, and **Day** shows the energy and cost for a closed day.
 
-```console
-$ hemsd run --check --config /etc/hems/hemsd.toml   # validate, open nothing
-$ hemsd run --config /etc/hems/hemsd.toml
+## Run a gateway
+
+```sh
+cargo run -p hemsd -- run --config house.toml
 ```
 
-`run` reads the site, the tariff and the drivers from TOML — the annotated
-starting point is [`hemsd.example.toml`](hemsd.example.toml) — and opens one task
-per driver: SunSpec and vendor maps over Modbus TCP, EEBUS over SHIP for the
-Steuerbox, the heat pump, the hot-water tank and the car. It plans against
-`tariffd` and `forecastd`, serves the household's page and API — over HTTPS
-whenever it listens off loopback, behind a token it issues itself — and accepts
-an external energy manager over S2 at `/s2/{asset}`. It prints the box's SKI and
-access code at start-up; the Setup view prints both as a handover sheet.
+With an empty or missing file, sign in with the printed access code, identify the three-phase SunSpec connection meter, and review the fuse and tariff before confirming. PV and battery observation also require the device nameplate and an identified controller enforcing site limits.
 
-The API is a contract: [`openapi.json`](openapi.json) (OpenAPI 3.1) is generated
-from the handlers' types, `hemsd openapi` prints it, and `cargo xtask check-api`
-fails when the two differ.
+For a configured site, use `hemsd run --check --config house.toml` to validate the file before opening connections. The gateway serves its page and API over HTTPS when bound off loopback. Local evidence and its delivery outbox use `redb`. [Example configuration](hemsd.example.toml) · [Installation guide](https://hupe1980.github.io/ems/docs/getting-started/)
 
-## Without hardware
+## Local power history
 
-```console
-$ cargo run -p hemsd -- demo                                   # a replayed day on the household page
-$ cargo run -p hemsd --features house -- house --run --at 16:58   # a house, and the box managing it
-```
+Enable `[series]` in the gateway configuration. In **Day**, inspect a quarter hour at the grid connection to see mean power, the highest and lowest readings, and how many observations the meter supplied. The JSON download includes each measurement point and identifies any failed reads. [History API](https://hupe1980.github.io/ems/docs/api/#local-power-history)
 
-`demo` serves a simulated day minute by minute (`--days 30` adds a month
-before it). `house` serves a SunSpec inverter, meter and battery over Modbus
-TCP, dials the box as a Steuerbox over EEBUS, answers for its day's prices and
-sky as `tariffd` and `forecastd` would, and writes the configuration an
-ordinary `run` manages it with; `--run` starts that box in the same process.
+## Gateway diagnostics
 
-## Simulating a day
+Run `hemsd doctor --config house.toml` with the household credential in `HEMS_TOKEN` or `[api].token`. For private HTTPS, add `--ca-cert hems.pem`. Doctor checks device responses, Steuerbox trust and the control clock. Setup shows the last accepted LPC heartbeat. When stored quarters need recalculation, doctor and Setup show a history warning until automatic maintenance finishes. A pending or unreadable check exits nonzero.
 
-```console
-$ cargo run -p hemsd -- simulate --day winter
-```
+## Observe an installation
 
-The same guard, arbiter and planner against `ems-sim`'s hardware and a seeded
-weather the planner never sees, in seconds. `--json` for a machine, and:
+Set `mode = "shadow"`, configure `external_limit_controller` and set a local `store_path`. The gateway reads the connection meter and previews the plan. Once the meter and actuator paths have been verified, the household can authorize installer handover for one hour. [Observation and receipts](https://hupe1980.github.io/ems/docs/household/#observe-a-household)
 
-| Flag | What it does |
+## Seller price sheets
+
+Run `hemsd price-sheet FILE --at 2027-01-05T17:00:00+01:00` for the gross import price at one instant. Add the net index with `--index-ct` for dynamic contracts. Use `--signed` for an Ed25519 JWS. Setup shows the signer fingerprint and asks the household to approve the effective contract. [Worked example](https://hupe1980.github.io/ems/docs/tariffs/#check-a-seller-sheet-locally)
+
+## Matter appliance power
+
+Build with `cargo build -p hemsd --features matter`. Select a commissioned appliance in the local Matter Server and run `hemsd matter-read --config house.toml` for a single JSON observation. Setup displays signed watts and the last successful read. Run `just matter-recovery` to exercise peer loss and gateway restart against a simulated Matter Server over its WebSocket API. [Configuration and reading states](https://hupe1980.github.io/ems/docs/household/#matter-appliance-power)
+
+## Exercise a controller
+
+| Command from the workspace root | What it exercises |
 |---|---|
-| `--perfect-foresight` | hand the planner the exact series the simulator is about to run. A comparison, never a default: any saving quoted from it is an upper bound no box in a real house can reach |
-| `--wear-eur-per-kwh 0` | reproduce a cost-only optimiser |
-| `--no-phase-switching` | wire the charge point to three fixed conductors |
-| `--imsys` | run as though an intelligent metering system with a control device were in operation, which lifts the § 9 Abs. 2 EEG 60 % cap |
-| `--heat-pump-on-off` | a single-speed compressor rather than a modulating one — the only configuration in which a minimum runtime constrains anything |
-| `--uniform-weights` | give every asset the same allocation weight |
-| `--sharing` | put the household in a § 42c energy-sharing community |
-| `--risk` | how the planner treats the fact that its forecasts are wrong |
-| `--store <path>` | keep the day's § 14a evidence and quarter-hour registers in the box's own database |
-| `--report-to <url>` | report the day to an `obsd` as a **signed** CloudEvent |
+| `cargo run --release -p hemsd -- simulate --day winter` | The planner, guard and arbiter against simulated devices and seeded weather. Add `--json` for machine-readable results. |
+| `cargo run -p hemsd --features house -- house --run --at 16:58` | A gateway connected to a virtual inverter, battery, meter and Steuerbox over local sockets. |
+| `cargo run --release -p hemsd -- backtest --day summer --days 20` | Forecast coverage across independent simulated days. |
+| `just quote-trial` | Slider-to-price latency over 20 accepted departure goals. |
+| `just retained-history-trial` | Export during virtual control with 1,095 days of stored quarters. |
 
-Two more subcommands answer questions a single day cannot:
-
-```console
-$ cargo run --release -p hemsd -- backtest --day summer --days 20   # is the band the width it claims?
-$ cargo run --release -p hemsd -- risk --day deadline --days 20     # what does hedging cost, and buy?
-```
-
-Forecast error is correlated across a day, so ninety-six quarter hours of one
-Tuesday are close to one draw; and a single realisation pays a hedge's premium
-every time and makes its claim never. Both are minutes rather than seconds, which
-is why neither is in CI.
-
-## The registry is a check, not a formality
-
-`hemsd` owns the set of drivers, gives each one its bytes, and folds what they say
-into the two things the control planes read. Registration refuses four mismatches
-that would otherwise be found months later by a limit that never arrived: a
-driver for an asset the site does not have, two drivers for one asset, a
-controllable asset whose driver cannot command it, and a § 14a household with
-nothing that could hear a reduction.
-
-## The record is written first
-
-`[A1 7.3]` keeps a control event for two years. The box holds its **own** copy in
-its own embedded store and forwards second, keeping what is owed as a set — so what the fleet
-has not acknowledged is a backlog rather than a gap. A record that exists only
-once it has been uploaded is an intention with a network dependency, and the day
-a network operator asks about is the day the link was down.
-
-See the [architecture](https://hupe1980.github.io/ems/docs/architecture/) and
-[simulation](https://hupe1980.github.io/ems/docs/simulation/) pages.
+For API integration, `hemsd openapi` emits the schema and `cargo xtask check-api` verifies it against the checked-in contract. [OpenAPI 3.1](openapi.json) · [Device capabilities](https://hupe1980.github.io/ems/docs/devices/)
 
 ## License
 

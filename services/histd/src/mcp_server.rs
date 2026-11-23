@@ -210,8 +210,8 @@ impl Handler {
                     "grid_feed_in_kwh": q.grid_feed_in.to_string(),
                     "device_consumption_kwh": q.device_consumption.to_string(),
                     "device_generation_kwh": q.device_generation.to_string(),
-                    "anzulegender_wert_ct": q.anzulegender_wert.to_string(),
-                    "spot_price_ct": q.spot_price.to_string(),
+                    "anzulegender_wert_ct": q.anzulegender_wert.map(|value| value.to_string()),
+                    "spot_price_ct": q.spot_price.map(|value| value.to_string()),
                 })
             })
             .collect();

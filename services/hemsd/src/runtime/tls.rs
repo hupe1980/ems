@@ -88,6 +88,15 @@ mod tests {
     }
 
     #[test]
+    fn factory_reset_rotates_the_https_identity() {
+        let mut store = crate::store::Store::in_memory().unwrap();
+        let (_, old) = server_config(Some(&store)).unwrap();
+        store.factory_reset().unwrap();
+        let (_, new) = server_config(Some(&store)).unwrap();
+        assert_ne!(old, new);
+    }
+
+    #[test]
     fn a_lan_address_in_clear_is_refused_unless_written_down() {
         let lan: std::net::SocketAddr = "0.0.0.0:8080".parse().unwrap();
         let loopback: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();

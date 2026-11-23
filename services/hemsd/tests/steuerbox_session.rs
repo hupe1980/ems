@@ -155,6 +155,7 @@ async fn a_steuerbox_over_tls_reduces_a_running_household() {
     .await
     .expect("the handshake has to finish");
 
+    let exchange_started = std::time::Instant::now();
     let mut required = Some(LimitWrite::active(4_200.0));
     let mut accepted = false;
     for _ in 0..256 {
@@ -220,6 +221,11 @@ async fn a_steuerbox_over_tls_reduces_a_running_household() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+    assert!(registry.lock().await.last_lpc_heartbeat(&asset).is_some());
+    assert!(
+        exchange_started.elapsed() < limitation::HEARTBEAT_PERIOD,
+        "the online guard took more than a heartbeat period to restore its limit"
+    );
     trigger.trigger();
 
     assert_eq!(

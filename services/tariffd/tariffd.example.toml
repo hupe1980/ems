@@ -1,25 +1,7 @@
-# tariffd — what a kilowatt-hour costs, from the five sources that publish it.
-#
-#   tariffd --config /etc/hems/tariffd.toml
-#
-# It fetches, reconciles under a written trust order, and caches two days each
-# way so a WAN outage never costs a box its plan. What it serves is a **net
-# wholesale** curve: a household pays that plus the supplier's markup, the
-# network charge, the levies and VAT, so the *spread* is meaningful and the level
-# is not.
-#
-# The environment overrides the file (`HEMS_TARIFFD_…`).
-#
-# This file is parsed by a test in `config.rs`, so an example that has drifted
-# from the struct it documents fails the build rather than misleading an
-# operator.
+# Day-ahead wholesale prices. Run: tariffd --config /etc/hems/tariffd.toml
+# Supported EMS_TARIFFD_* environment overrides take precedence.
 
-# How often to ask each source, seconds. The day-ahead auction clears once a
-# day, so this is not about resolution — it is about how quickly the fleet has
-# tomorrow's curve, and how quickly it recovers from a failed fetch. A quarter
-# of an hour is ninety-six requests a day, which is polite to a free API.
-#
-# Top-level keys, so they are above every table.
+# Seconds between upstream price requests.
 poll_interval_s = 900
 request_timeout_s = 20
 # A fleet retrying a failed public API every fifteen seconds is a denial of
@@ -52,7 +34,7 @@ shutdown_grace_s = 20
 [sources.entsoe]
 url = "https://web-api.tp.entsoe.eu/api"
 [sources.entsoe.headers]
-SECURITY-TOKEN = "env:HEMS_TARIFFD_ENTSOE_TOKEN"
+SECURITY-TOKEN = "env:EMS_TARIFFD_ENTSOE_TOKEN"
 
 [sources.smard]
 url = "https://www.smard.de/app/chart_data"
@@ -63,7 +45,7 @@ url = "https://www.smard.de/app/chart_data"
 # [sources.tibber]
 # url = "https://api.tibber.com/v1-beta/gql"
 # [sources.tibber.headers]
-# Authorization = "env:HEMS_TARIFFD_TIBBER_TOKEN"
+# Authorization = "env:EMS_TARIFFD_TIBBER_TOKEN"
 
 # The grid's carbon intensity, which is what makes a carbon price do something
 # different from an autarky premium: with a flat annual intensity the two are

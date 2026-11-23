@@ -1,65 +1,12 @@
-//! What a driver is, and what it may not be.
+//! Sans-I/O device and grid drivers for the EMS edge systems.
 //!
-//! A driver is the only part of this workspace that knows a protocol. It is
-//! also the part most likely to be written by somebody who has never read the
-//! rest of it, against a device that behaves badly, in a hurry. So the contract
-//! is deliberately narrow: **bytes and a clock in, events and bytes out**.
+//! The caller supplies frames and timestamps and handles transport. Device
+//! drivers publish [`DriverEvent::Measured`] and accept device commands.
+//! Grid drivers publish [`DriverEvent::GridLimit`]. [`DriverCapabilities`]
+//! describes what the registry can accept for a site.
 //!
-//! # Sans-I/O, and why that is not a style preference
-//!
-//! No socket, no thread, no clock. A driver is handed the bytes that arrived and
-//! the time it is now, and it answers with what it would like to send and when
-//! it would like to be woken. `hemsd` owns the socket and the runtime.
-//!
-//! Three things follow, and the third is the one that matters.
-//!
-//! *A whole day is a unit test.* The § 14a failsafe is a sixty-second heartbeat
-//! and a two-hour minimum: a driver that read a clock could only be tested by
-//! waiting. Passing time as a parameter makes "the Steuerbox goes quiet at
-//! 17:04 and comes back at 19:11" an ordinary assertion, and it is the same
-//! property `ems-core`, `ems-grid` and `ems-realtime` are built on — the
-//! `just purity` gate fails the build if any of them reaches for a clock.
-//!
-//! *A device that misbehaves is reproducible.* The interesting failures are
-//! partial frames, a register that stops updating, a peer that answers late.
-//! All of them are a byte slice and a timestamp.
-//!
-//! *And the guard cannot be lied to by accident.* A driver reports what it
-//! **read**; it does not decide what the site may do. That decision belongs to
-//! `ems-realtime::Guard`, which sees every asset at once. A driver that
-//! computed its own limit would be a second control plane nobody audited.
-//!
-//! # Two kinds of driver, one trait
-//!
-//! A **device** driver speaks to something the household owns: an inverter, a
-//! wallbox, a meter. It reports [`DriverEvent::Measured`] and accepts
-//! [`ems_core::setpoint::Command`].
-//!
-//! A **grid** driver speaks to something the network operator owns: a Steuerbox
-//! over EEBUS, a ripple-control receiver. It reports
-//! [`DriverEvent::GridLimit`] and accepts nothing — a household does not
-//! command its own reduction.
-//!
-//! They are one trait because `hemsd` runs one loop, and because the difference
-//! is in what a driver *emits* rather than in how it is driven. A driver
-//! declares which of the two it is through [`DriverCapabilities`], and a
-//! mismatch is caught at registration rather than by a limit that never arrives.
-//!
-//! # One crate, protocols behind features
-//!
-//! The protocols live here — [`eebus`] and [`modbus`] — rather than in a crate
-//! each, and that was measured against this workspace's own sizing rather than
-//! chosen by taste. All of it together is about two thousand lines; `ems-grid`
-//! alone is five thousand and `ems-device` is eight hundred as a *single*
-//! crate. Three crates for two thousand lines of pure code is ceremony, and this
-//! project's standing rule is that machinery has to be earned: the *trait* is,
-//! by two implementors of genuinely different shapes, and a crate each is not.
-//!
-//! The isolation a crate each would buy is bought by `optional = true` instead.
-//! A box that speaks only Modbus never compiles, audits or ships the EEBUS
-//! stack, because `--features modbus` does not pull it in. What one crate adds
-//! is that the whole feature matrix is in one manifest rather than spread across
-//! four.
+//! Enable `modbus` or `eebus` for household drivers, `ocpp` for charging-station
+//! evidence or `matter` for appliance power mapping.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::pedantic)]
@@ -71,6 +18,12 @@
     clippy::doc_markdown,
     clippy::cast_precision_loss
 )]
+
+#[cfg(feature = "ocpp")]
+pub mod ocpp;
+
+#[cfg(feature = "matter")]
+pub mod matter;
 
 mod capability;
 mod event;
@@ -172,6 +125,16 @@ pub trait Driver {
     /// asks a driver for something it has not declared, which is the cheap half
     /// of the bug where a command is sent for a year and silently ignored.
     fn capabilities(&self) -> DriverCapabilities;
+
+    /// Whether this connected device exposes a usable production-ceiling control.
+    fn can_limit_production(&self) -> bool {
+        false
+    }
+
+    /// Last heartbeat that the consumption limitation actor accepted from its Energy Guard.
+    fn last_lpc_heartbeat(&self) -> Option<OffsetDateTime> {
+        None
+    }
 
     /// The transport under this driver opened or closed.
     ///

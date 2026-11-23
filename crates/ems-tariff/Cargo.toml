@@ -1,6 +1,6 @@
 [package]
 name        = "ems-tariff"
-description = "What a kilowatt-hour costs a German household in a given quarter hour — dynamic energy prices, § 14a Modul 1/2/3 network charges, levies and taxes, feed-in remuneration with the § 51 EEG negative-price rule, parsers for what ENTSO-E, SMARD, aWATTar, Tibber and Energy-Charts publish, and an advisor that compares the module choices against a household's own history"
+description = "German retail electricity prices, network charges and feed-in remuneration by quarter hour"
 keywords    = ["energy", "tariff", "enwg", "epex", "smart-grid"]
 categories  = ["science", "finance"]
 readme      = "README.md"

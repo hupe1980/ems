@@ -1,22 +1,7 @@
-# forecastd — what the sky will do, per location.
-#
-#   forecastd --config /etc/hems/forecastd.toml
-#
-# It serves the **sky** and never a finished forecast. The correction for a
-# particular roof — the tree that shades the east string, the chimney, the
-# soiling — is the box's, because it is a property of one address and can only
-# be learned from that address's own meter.
-#
-# The environment overrides the file (`HEMS_FORECASTD_…`).
-#
-# This file is parsed by a test in `config.rs`, so an example that has drifted
-# from the struct it documents fails the build rather than misleading an
-# operator.
+# Quarter-hour irradiance and temperature. Run: forecastd --config /etc/hems/forecastd.toml
+# Supported EMS_FORECASTD_* environment overrides take precedence.
 
-# How often to fetch, seconds. ICON-D2 runs eight times a day, so an hour is
-# comfortably inside that and polite to a free endpoint.
-#
-# Top-level keys, so they are above every table.
+# Seconds between weather requests.
 poll_interval_s = 3600
 request_timeout_s = 20
 max_backoff_s = 3600

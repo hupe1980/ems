@@ -1,4 +1,4 @@
-# hems — task runner (https://just.systems)
+# ems — task runner (https://just.systems)
 #
 # `just` on its own lists every recipe.
 
@@ -20,6 +20,25 @@ default:
 # ✅ Everything CI runs, in CI order
 ci: fmt-check lint purity test guards publishable deny doc
     @echo "✅ all checks passed"
+
+# Exercise read load while the loopback gateway controls the virtual house.
+history-trial:
+    cargo build --locked -p hemsd --features house
+    python3 xtask/history_load.py target/debug/hemsd
+
+# Exercise the gateway's read-only appliance path through peer loss and restart.
+matter-recovery:
+    cargo build --locked -p hemsd --features house,matter
+    uv run xtask/matter_recovery.py target/debug/hemsd
+
+# Measure 20 exact goal quotes in the browser against the optimized virtual gateway.
+quote-trial:
+    cargo test --locked --release -p hemsd --test planned_house browser_prices_twenty_departure_targets -- --ignored --nocapture
+
+# Export a populated 1,095-day history while the virtual gateway controls the house.
+retained-history-trial:
+    cargo build --locked -p hemsd --features house --bin hemsd --example seed_history
+    uv run xtask/retained_history.py target/debug/hemsd target/debug/examples/seed_history
 
 # 🎨 Format the workspace
 fmt:
@@ -69,7 +88,7 @@ purity:
 # container runtime (Docker, Podman or Colima) and nothing else installed.
 # `just db-stop` removes it.
 #
-# `HEMS_TEST_POSTGRES=postgres://user:pass@host:5432` points the suite at a server
+# `EMS_TEST_POSTGRES=postgres://user:pass@host:5432` points the suite at a server
 # that is already running instead — a developer's own instance, or a CI service
 # container. There is deliberately **no** way to skip: a test that passed without
 # reaching a database would report green for a query nobody ran.
@@ -79,14 +98,14 @@ test:
     cargo test --workspace --all-features
 
 # A PostgreSQL to develop against, so `psql` has something to open and
-# `HEMS_TEST_POSTGRES` has something to point at. Ephemeral: `--rm`, no volume,
+# `EMS_TEST_POSTGRES` has something to point at. Ephemeral: `--rm`, no volume,
 # and the port is the standard one so a connection string is guessable.
 #
 # 🐘 A PostgreSQL for development
 db:
     docker run --rm -d --name hems-postgres -p 5432:5432 \
         -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres postgres:18-alpine
-    @echo "  export HEMS_TEST_POSTGRES=postgres://postgres:postgres@127.0.0.1:5432"
+    @echo "  export EMS_TEST_POSTGRES=postgres://postgres:postgres@127.0.0.1:5432"
 
 # The suite starts **one** container for the whole workspace — `docker run --rm`,
 # by name, on port 55432 — so this is the teardown. `--rm` means stopping it
@@ -153,11 +172,7 @@ box config="services/hemsd/hemsd.example.toml":
 demo day="winter":
     cargo run -p hemsd -- simulate --day {{ day }}
 
-# 🏠 Every day, and the six comparisons worth seeing
-# `the_landing_page_prints_the_day_it_says_it_does` holds both transcripts to this
-# report, so this is what regenerates them when a figure moves.
-
-# Print the winter day the landing page and the README pin
+# Print the winter report used in the simulation guide.
 day-report:
     cargo run -q -p hemsd --example print_winter_day
 
@@ -222,7 +237,9 @@ backtest day="summer" days="20":
 # 🚢 Everything the release workflow checks, before the tag exists
 release-check:
     cargo publish --workspace --locked --dry-run
-    cargo build --locked --release -p hemsd
+    cargo build --locked --release -p hemsd -p bemsd -p cemsd
+    ./target/release/bemsd --version
+    ./target/release/cemsd reconcile crates/ems-sim/fixtures/shift-trace.json
     ./target/release/hemsd simulate --day winter
     @echo "🚢 verified — tag it with: git tag v{{ version }} && git push origin v{{ version }}"
 
@@ -267,29 +284,25 @@ fleet-demo day="winter":
     # credential is not in the file even in a demonstration.
     cat > "$conf" <<'TOML'
     [webhook_secrets]
-    reference-household = ["env:HEMS_OBSD_SECRET_REFERENCE_HOUSEHOLD"]
+    reference-household = ["env:EMS_OBSD_SECRET_REFERENCE_HOUSEHOLD"]
 
     [[operators]]
-    token  = "env:HEMS_OBSD_OPERATOR_TOKEN"
+    token  = "env:EMS_OBSD_OPERATOR_TOKEN"
     tenant = "*"
     TOML
     sed -i'' -e 's/^    //' "$conf"
-    HEMS_OBSD_SECRET_REFERENCE_HOUSEHOLD=whsec_fleet-demo HEMS_OBSD_OPERATOR_TOKEN=tok-demo \
+    EMS_OBSD_SECRET_REFERENCE_HOUSEHOLD=whsec_fleet-demo EMS_OBSD_OPERATOR_TOKEN=tok-demo \
         ./target/debug/obsd --config "$conf" &
     obsd=$!
     trap 'kill $obsd 2>/dev/null; rm -f "$conf"' EXIT
     sleep 2
-    HEMS_OBSD_SECRET=whsec_fleet-demo \
+    EMS_OBSD_SECRET=whsec_fleet-demo \
         ./target/debug/hemsd simulate --day {{ day }} --report-to http://127.0.0.1:8080
     echo
     echo "  ── the fleet view ──"
     view="$(curl -s -H "Authorization: Bearer tok-demo" localhost:8080/v1/fleet)"
     echo "$view"
-    # Checked, not merely printed. This demonstration ran for months with a
-    # panic in it — `reqwest::blocking` dropped inside `#[tokio::main]` (D115) —
-    # and nothing noticed, because printing a summary with no sites in it looks
-    # like output. A demonstration that asserts nothing is a test that cannot
-    # fail, which is the failure this workspace keeps finding in itself.
+    # Require the simulated site to reach the fleet view.
     case "$view" in
         *'"sites":1'*) ;;
         *) echo "  ✗ the day did not reach the fleet view"; exit 1 ;;
@@ -298,20 +311,32 @@ fleet-demo day="winter":
     curl -s localhost:8080/readyz
     echo
 
-# 🌐 Serve the documentation site locally
-site:
-    cd site && zola serve
+# Verify the historian's MeterStore register path against PostgreSQL.
+histd-registers:
+    cargo test --locked -p histd --test meterstore_registers
 
-# 🌐 Build the documentation site
-site-build:
-    cd site && zola build
+# Build the browser module and compare its results with the native calculation.
+site-wasm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rustup target add wasm32-unknown-unknown
+    cargo build --locked --release --target wasm32-unknown-unknown -p ems-wasm
+    target_dir=$(cargo metadata --locked --no-deps --format-version=1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+    module="$target_dir/wasm32-unknown-unknown/release/ems_wasm.wasm"
+    node tools/ems-wasm/parity.mjs "$module"
+    cp "$module" site/static/ems.wasm
 
-# 🖼️  Re-render the social preview card from its source
-#
-# `og.png` is what a link to hems looks like in a chat window or a search
-# result, and it is a **build artefact**: the text on it is in `og-card.svg`, so
-# a claim that changes there changes in one place rather than in an image
-# nobody can grep.
+# Build and check the static site, including the household and industrial simulations.
+site-build: site-wasm
+    zola --root site check --skip-external-links
+    zola --root site build
+    python3 xtask/check_site.py
+
+# Serve the documentation and browser simulations locally.
+site: site-wasm
+    zola --root site serve
+
+# Re-render the social preview from its SVG source.
 site-card:
     rsvg-convert -w 1200 -h 630 site/og-card.svg -o site/static/og.png
     @echo "✅ site/static/og.png"

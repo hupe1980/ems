@@ -1,31 +1,9 @@
-//! The car, over EEBUS.
+//! Observe an EV session through the charge point’s EEBUS connection.
 //!
-//! What the planner has always been missing about a charge point is not power —
-//! the arbiter has commanded amperes since the first day — but *whether there is
-//! a car on the end of it, and how full it is*. `EvSession` has been in the
-//! optimiser from the beginning and has never been built on a running box,
-//! because nothing reported an arrival.
-//!
-//! # An arrival has no message
-//!
-//! EVCC scenario 1 is the one place in EEBUS where the absence of a payload *is*
-//! the payload: an `EV` entity **appearing** underneath the `EVSE` entity is how
-//! a car says it is plugged in, and scenario 8 is the entity going away again.
-//! So this driver watches the peer's own entity tree rather than waiting for a
-//! message that is never sent.
-//!
-//! That is also why it is a driver rather than a reader: the fact lives in
-//! SPINE's discovery, which only a device that is *talking to* the charge point
-//! has.
-//!
-//! # What it does not decide
-//!
-//! It reports an arrival, a state of charge and a capacity. It does not report a
-//! **departure time** or an **energy target**, and no EEBUS use case carries
-//! either: both are things the household wants rather than things the car knows.
-//! They are configuration, and the planner takes them from there — which is the
-//! right split, because a car that published a departure time would be
-//! publishing a guess about its driver.
+//! The EV entity appears under the EVSE when a car connects and disappears
+//! when it leaves. The driver reports presence, state of charge and capacity.
+//! The gateway combines these observations with the household’s departure goal.
+//! Power commands are handled by the charge point’s actuator driver.
 
 use core::time::Duration as StdDuration;
 
@@ -88,6 +66,7 @@ pub struct EvCharger {
     battery: evsoc::Battery,
     /// What was last reported upwards, so an unchanged session is not re-emitted.
     last: Option<VehiclePresence>,
+    soc_seen: Option<OffsetDateTime>,
     /// When the entity tree is next re-read.
     ///
     /// A cable going in is an entity *appearing*, and there is no message for
@@ -145,6 +124,7 @@ impl EvCharger {
             readings: Readings::new(),
             battery: evsoc::Battery::new(),
             last: None,
+            soc_seen: None,
             next_discovery: None,
             started_at,
             link: LinkState::Down,
@@ -169,6 +149,12 @@ impl EvCharger {
             Function::NodeManagementUseCaseData,
         ] {
             let _ = self.engine.read(&destination, &source, function, elapsed);
+        }
+        if let Some(feature) = &self.measurement {
+            let client = self.client();
+            let _ = self
+                .engine
+                .read(feature, &client, Function::MeasurementListData, elapsed);
         }
     }
 
@@ -223,10 +209,14 @@ impl EvCharger {
                 }
             }
             SpineEvent::DataNotified {
-                feature, resolved, ..
+                feature,
+                data,
+                resolved,
             }
             | SpineEvent::ReplyReceived {
-                feature, resolved, ..
+                feature,
+                data,
+                resolved,
             } => {
                 let ours = self.measurement.as_ref() == Some(feature)
                     || self.electrical.as_ref() == Some(feature);
@@ -240,7 +230,15 @@ impl EvCharger {
                 if self.readings.describe(resolved) {
                     return;
                 }
-                if self.battery.apply(resolved, &self.readings) {
+                // A cached SoC in a merged capacity or health reply cannot
+                // renew a request to charge now. Only an actual SoC sample can.
+                let mut received = evsoc::Battery::new();
+                received.apply(data, &self.readings);
+                let fresh = received.state_of_charge.is_some();
+                if fresh {
+                    self.soc_seen = Some(now);
+                }
+                if self.battery.apply(resolved, &self.readings) || fresh {
                     self.report(true, now);
                 }
             }
@@ -250,6 +248,7 @@ impl EvCharger {
 
     /// Everything that was true of the car that has just left.
     fn forget_car(&mut self) {
+        self.soc_seen = None;
         self.measurement = None;
         self.electrical = None;
         self.readings = Readings::new();
@@ -267,7 +266,7 @@ impl EvCharger {
                 .then_some(self.battery.state_of_charge.map(|pct| pct / 100.0))
                 .flatten(),
             capacity_wh: connected.then_some(self.battery.nominal_capacity).flatten(),
-            at,
+            at: self.soc_seen.unwrap_or(at),
         };
         // Compared without the timestamp: a notification that repeats what is
         // already known is not news, and the registry is edge-driven.
@@ -275,6 +274,7 @@ impl EvCharger {
             last.connected == presence.connected
                 && last.soc == presence.soc
                 && last.capacity_wh == presence.capacity_wh
+                && (presence.soc.is_none() || presence.at - last.at < DISCOVERY_PERIOD)
         });
         if unchanged {
             return;

@@ -1,0 +1,16 @@
+[package]
+name = "ems-wasm"
+description = "Household and industrial simulations for the EMS site"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+ems-sim = { workspace = true, features = ["peak"] }
+ems-core = { workspace = true }
+ems-device = { workspace = true }

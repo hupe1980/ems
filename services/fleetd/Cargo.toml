@@ -1,6 +1,6 @@
 [package]
 name        = "fleetd"
-description = "Enrolment, versioned configuration and signed releases: the service a household box is adopted by, told what to run, and offered updates whose integrity it can check without trusting the server that offered them"
+description = "Gateway enrolment, versioned configuration and signed release distribution"
 publish     = false
 version.workspace      = true
 authors.workspace      = true

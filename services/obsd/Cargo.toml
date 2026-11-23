@@ -1,6 +1,6 @@
 [package]
 name        = "obsd"
-description = "The fleet's observability service: what every household's day came to, what it saved, and — counted rather than averaged — which of them did not respect a network operator's instruction"
+description = "Fleet observability for household outcomes and grid-limit compliance"
 publish     = false
 version.workspace      = true
 authors.workspace      = true

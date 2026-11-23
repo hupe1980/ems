@@ -19,7 +19,7 @@ self.addEventListener("push", (event) => {
     dir: (n && n.dir) || "auto",
     tag: (n && n.tag) || "hems",
     icon: "/icon.svg",
-    data: { navigate: (n && n.navigate) || "/" },
+    data: { navigate: (n && n.navigate) || "/", event_id: n?.data?.event_id },
   }));
 });
 

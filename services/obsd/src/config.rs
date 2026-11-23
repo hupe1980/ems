@@ -57,7 +57,7 @@ pub struct Settings {
     /// forgot the environment variable is exactly the one nobody would notice.
     ///
     /// Each is a [`ems_service::Secret`], so the usual deployment writes
-    /// `haus-1 = ["env:HEMS_OBSD_SECRET_HAUS_1"]` and the credential never
+    /// `haus-1 = ["env:EMS_OBSD_SECRET_HAUS_1"]` and the credential never
     /// enters the configuration file at all.
     pub webhook_secrets: std::collections::BTreeMap<String, Vec<ems_service::Secret>>,
     /// Tokens that may **read** the fleet view.

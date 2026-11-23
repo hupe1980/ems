@@ -93,6 +93,9 @@ pub struct Measurement {
     /// the right way round for a quantity that only ever *relaxes* a bound.
     #[cfg_attr(feature = "serde", serde(default))]
     pub available_power: Option<Power>,
+    /// Whether availability was inferred from throttling rather than observed.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub estimated_availability: bool,
 }
 
 impl Measurement {
@@ -113,6 +116,7 @@ impl Measurement {
             outdoor_c: None,
             frequency_hz: None,
             available_power: None,
+            estimated_availability: false,
         }
     }
 

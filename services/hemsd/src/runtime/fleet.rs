@@ -143,9 +143,9 @@ impl Prices {
         self.points
             .iter()
             .filter_map(|p| {
-                p.price_ct
-                    .parse::<Decimal>()
+                Decimal::from_str_exact(&p.price_ct)
                     .ok()
+                    .filter(|ct| ct.abs() <= Decimal::from(1_000_000) && ct.scale() <= 10)
                     .map(|ct| (Slot::containing(p.slot), ct))
             })
             .collect()

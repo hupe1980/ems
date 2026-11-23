@@ -1,56 +1,24 @@
-# hemsd — the configuration of one household.
-#
-#   hemsd run --config /etc/hems/hemsd.toml
-#
-# Every value in [service], [control] and [site] below is the default, so a file
-# that sets none of them describes the reference household. The `[[drivers]]`
-# list has no default and `hemsd run` refuses to start without it: a box with no
-# drivers measures nothing, so the guard would assume every controllable device
-# was drawing its nameplate power, for ever.
-#
-# The environment overrides the file (`HEMS_HEMSD_…`), because the file is what
-# somebody wrote down last month and the environment is what an operator reaches
-# for when something is on fire.
-#
-# This file is parsed by a test in `config.rs`, so an example that has drifted
-# from the struct it documents fails the build rather than misleading an
-# installer.
+# Household gateway configuration. Replace example addresses and assets for your site.
+# Validate with: hemsd run --check --config /etc/hems/hemsd.toml
+# Supported EMS_HEMSD_* environment overrides take precedence.
 
-# The box's own two years, and what it has learned about its own house.
-#
-# [A1 7.3] documents a control event for two years and G3 says the house is
-# never worse off when the cloud is gone, so a record that exists only once it
-# has been uploaded is an intention with a network dependency. It is also where
-# the correction this roof has earned and this household's own quarter hours are
-# kept, and without it every reboot costs a fortnight of both.
+# This installation enforces limits and may send device setpoints.
+mode = "managed"
+# For an observing gateway select "shadow" and identify its independent controller.
+# external_limit_controller = "Building controller A"
+
+# Embedded evidence, registers, outbox and learned state.
 store_path = "/var/lib/hemsd/hemsd.redb"
 
-# ── The household's own measurement history ──────────────────────────────────
-#
-# Every meter reading the guard acts on, kept so that "what was the battery doing
-# at half past two" has an answer. Served at `/v1/series/{point}`, where a point
-# is `grid`, `netzwirksam` or an asset id.
-#
-# Two tiers: seconds for `keep_days`, and quarter-hour means for three years. The
-# answer says which of the two it is.
-#
-# A **separate** store from `store_path`, holding no settlement quantity: a
-# series field is an `f64` and a MiSpeL register is an exact decimal.
-#
-# Remove the section to keep no series. `/v1/series` then answers 404 rather
-# than an empty list — nothing kept and nothing happened are different answers.
+# Local measurement history: observations for keep_days, quarter-hour mean, range and count for three years.
+# Omit [series] to disable /v1/series.
 [series]
 path = "/var/lib/hemsd/series"
-# How long the *second-by-second* tier is kept. A diagnostic window, not the
-# statutory one: `[A1 7.3]`'s two years are the events and registers above, and
-# the household's own three years are the quarter-hour tier.
 keep_days = 7
 
 # ── The shell ────────────────────────────────────────────────────────────────
 [service]
-# Loopback, not 0.0.0.0. A daemon on a household gateway box is on the
-# household's own network, and a box that binds every interface by default is a
-# box that is exposed by default. Put a proxy in front of it to change that.
+# Use loopback for local access. Configure HTTPS for a LAN listener.
 listen = "127.0.0.1:8080"
 log_filter = "info"
 log_json = false
@@ -58,137 +26,58 @@ shutdown_grace_s = 20
 
 # ── How fast the planes run ──────────────────────────────────────────────────
 [control]
-# The guard and the arbiter. The guard needs this as arithmetic and not only as
-# a schedule: a bound on a *state* — a backup reserve, a full battery — is only
-# a bound on a *rate* once you know how long the rate will be held for.
-#
-# It also decides how much of the household's own consumption the guard is
-# willing to lend the roof as § 9 EEG feed-in headroom. A loan is outstanding
-# until the guard next runs, so a heat pump answering its own thermostat puts
-# the connection point over a statutory ceiling for one of these. At a second
-# the whole draw is lendable; raising this number curtails the roof instead.
+# Guard and arbiter interval. Longer ticks reduce usable PV feed-in headroom.
 tick_period_s = 1
 # The planner, on a receding horizon.
 replan_every_s = 300
-# Two days of quarter hours. One is not enough: a re-plan at six in the evening
-# on a one-day horizon is told there is no sun *and* no household tomorrow.
+# Planning horizon in quarter-hours. 192 covers two days.
 horizon_slots = 192
-# What the solver may spend, seconds. 0 means "no limit", which is what a
-# household wants if it needs the same inputs to give the same plan every time.
+# Solver time limit in seconds. Zero disables the limit.
 solve_budget_s = 10.0
 
-# How the planner treats the fact that its forecasts are wrong.
-#
-#   median       one future, the median of both forecasts. The default, and what
-#                every figure in this project is measured against.
-#   expected     three futures from the band the forecast already carries,
-#                minimising the expected cost across them.
-#   hedged       the same three, with a third of the objective on the worst.
-#   pessimistic  one pessimistic quantile of each — the cheap robustness knob,
-#                and the inferior construction: it is optimal against a world
-#                nobody expects, and the household pays the hedge every ordinary
-#                day with no credit on the bad one.
-#
-# Measured over twenty seeded weathers on each of two days: three futures beat
-# the median where a service is at risk (€0,84 against €0,46 a day, the worst
-# day from -€1,19 to -€0,26) and cost €0,08 where nothing is; "hedged" beats
-# the median on both days, on the mean and on the worst day, at about three
-# times the solve. The default stays "median" until that is measured on more
-# days than two — a household that wants the hedge sets it here.
+# Forecast policy: median, expected, hedged or pessimistic. Expected and hedged
+# evaluate multiple scenarios and take longer to solve.
 risk = "median"
 
-# What this household will pay to avoid something other than money.
-#
-# Both default to zero, which is the plain economic plan — and both are terms the
-# planner's objective has always read while *nothing could set them*, so a
-# household that had bought a battery for independence had no way to say so.
-#
-# They are prices rather than a "mode", and that is deliberate: an enum of goals
-# (cost / carbon / self-sufficiency) swaps the energy price for grams and leaves
-# battery wear, comfort and curtailment in euros, so the plan ends up minimising
-# a sum of two currencies. As prices they are comparable with every other term
-# and they add up.
+# Optional prices added to the cost objective. Zero disables each preference.
 [control.preferences]
-# 55 €/t — the German price for heating and transport fuels — is 0.055. It only
-# does something different from the dial below where the tariff carries a
-# per-slot carbon intensity, which `tariffd` serves from Energy-Charts: with a
-# flat intensity a carbon price *is* an autarky premium, because every hour is
-# equally dirty.
+# Carbon price in €/kg. A time-varying carbon intensity enables shifting between hours.
 co2_eur_per_kg = 0.0
-# The self-sufficiency dial, honest about its price: near the day's spread it
-# makes the plan prefer its own roof even where importing would be marginally
-# cheaper, and the difference is what independence cost.
+# Extra cost assigned to each imported kWh.
 autarky_eur_per_kwh = 0.0
 
 # ── The house ────────────────────────────────────────────────────────────────
 #
-# Every field carries its unit in its name. A configuration file is read by a
-# person with a clipboard standing in a cellar.
-#
-# **A size of zero means the household has no such device, and the site says
-# so**: `pv_kwp = 0` builds no roof, `battery_kwh = 0` no battery,
-# `evse_max_a = 0` no charge point, `heat_pump_kw = 0` no heat pump,
-# `dhw_litres = 0` no tank. An absent asset is never decided for, never appears
-# in the S2 description, and a driver configured for one is refused at start-up
-# — which is the mismatch `run --check` exists to catch.
+# Set the capacity of an absent asset to zero. A driver referring to it fails validation.
 [site]
 pv_kwp = 9.8
 pv_ac_kw = 8.0
 
-# The roof's own geometry, and the two numbers an installer reads off it in ten
-# seconds. Tilt is the pitch, 0 flat and 90 a wall; azimuth is degrees clockwise
-# from north, so 180 is due south, 90 east and 270 west.
-#
-# **The azimuth is the field most worth checking and the one nobody changes.** It
-# decides *when* the roof produces, not how much: an east-west array left on due
-# south produces two shoulders where the plan expects one midday peak, so the box
-# charges the battery from a sun that is not there and the evening comes up short.
-# The correction the box learns from its own meter is a *level* per hour of the
-# day and it is bounded, so it takes seasons to absorb a shape error and never
-# absorbs it fully.
-#
-# For a split east-west array, state the string that carries more of the kWp; the
-# residual corrector picks up the rest.
+# Tilt: 0° flat, 90° vertical. Azimuth clockwise from north: 90° east, 180° south.
+# For split arrays, enter the orientation with the larger installed capacity.
 pv_tilt_deg = 35.0
 pv_azimuth_deg = 180.0
 
 battery_kwh = 10.0
 battery_kw = 5.0
-# Held back for a power cut. The planner never plans below it and the guard
-# bounds the discharge power so a whole control period cannot cross it.
+# Fraction of battery capacity reserved for a power cut.
 reserve_soc = 0.1
-# What a kilowatt-hour of throughput costs in battery life. Leave it at zero and
-# the plan will cycle the pack for a spread that does not cover the damage.
+# Battery wear in euros per kWh of throughput.
 battery_wear_eur_per_kwh = 0.08
 fuse_a = 35.0
 
-# The contractually agreed connection power, kW, where the Netzanschlussvertrag
-# names one. It narrows three things at once: the guard's physical headroom, the
-# planner's import ceiling, and the `ContractualConsumptionNominalMax` this box
-# reports to an EEBUS Energy Guard [LPC-042]. Omitted, all three see nothing but
-# the fuse above.
+# Optional contractual connection limit in kW. Applies to the guard, planner and EEBUS.
 # contract_power_kw = 30.0
 
-# The identifiers a Marktkommunikation message is addressed with, and the
-# Netzbereich [A1 8.2.b] that lets this household find its own row in the
-# operator's monthly § 14a publication. A MaLo-ID carries a check digit and is
-# refused at start-up if it does not match, rather than being put on a message
-# that names somebody else's connection point.
+# Market location, metering location, operator and grid area. MaLo-ID includes a check digit.
 # malo = "41373559241"
 # melo = "DE0001234567890000000000000123456"
 # dso_code = "9903386000006"
 # netzbereich = "NB-0001"
 
-# The federal state whose public holidays decide a day type — a holiday counts
-# as a Sunday in a load profile, and Fronleichnam is a working day in Berlin and
-# is not in Bayern.
+# Federal state used for public holidays in the load profile.
 bundesland = "BE"
-# The household's own annual consumption, kWh — WITHOUT heat pump, car or
-# battery: the "Haushaltsstrom" a household of this size uses. It scales BDEW's
-# H25 profile, which the box plans its first days on until it has measured the
-# household. Leave it out and the box scales H25 to its own first whole day, and
-# before that to its first reading, never below a typical family house. Not the
-# figure on a bill that meters a heat pump or a wallbox on the same register.
+# Annual household consumption excluding the heat pump, EV and battery, used to scale the initial load profile.
 # household_kwh_per_year = 3500
 
 latitude = 52.52
@@ -493,7 +382,7 @@ url = "https://histd.internal:7580"
 site = "reference-household"
 # The *reference*, never the credential: one in a configuration file is one in
 # an image, in a backup and eventually in a repository.
-token = "env:HEMS_HISTD_TOKEN"
+token = "env:EMS_HISTD_TOKEN"
 # Slow on purpose. What is being forwarded is already safe on the box, so
 # urgency buys nothing but load on a service the household does not own.
 every_s = 300
@@ -517,7 +406,7 @@ url = "https://obsd.internal:7780"
 # households that did not respect a network operator's reduction, so an
 # unauthenticated write can put a compliant site on it. A token says who is
 # asking; a signature says what was said.
-secret = "env:HEMS_OBSD_SECRET"
+secret = "env:EMS_OBSD_SECRET"
 
 # ── How the box presents itself on the EEBUS network ─────────────────────────
 #
@@ -576,18 +465,9 @@ announce = true
 
 # ── Being managed by somebody else's energy manager ──────────────────────────
 #
-# S2 (EN 50491-12-2) is the European interface between a Customer Energy Manager
-# and the Resource Managers in a building. Everywhere else in this file the box
-# is the manager; here it is the *managed* — turn it on where the household has
-# delegated its optimising to an aggregator or a flexibility service.
-#
-# A manager opens one WebSocket per resource at `ws://<this box>/s2/<asset>`,
-# because no S2 message carries a resource identifier. It rides on the same
-# socket as `[service] listen`.
-#
-# **An instruction outranks this box's own plan and is narrowed by the guard like
-# everything else**: a manager cannot ask its way past a § 14a ceiling, and a
-# person pressing *boost* in the kitchen outranks it. `[A1 4.6 S. 3]`.
+# A delegated manager connects to wss://<box>/s2/<asset> on the service port.
+# Its instructions take precedence over the local plan. Household overrides
+# and the guard still apply. [A1 4.6 S. 3]
 [s2]
 enabled = false
 # How long an instruction is believed. One market interval: a manager that has
@@ -604,14 +484,9 @@ report_every_secs = 5
 
 # ── What speaks to the hardware ──────────────────────────────────────────────
 #
-# One entry per device, and `asset` has to name an asset the site above has.
-#
-# An asset may have **two** drivers: one that commands it and one that measures
-# it — a wallbox driven over Modbus and read over EEBUS EVCC/EVSOC, a heat pump
-# started over OHPCF and read through its register map. What is refused is two of
-# either, along with a driver for an asset that does not exist and a controllable
-# asset no driver can command: all at start-up, rather than months later by a
-# limit that never arrived.
+# Each entry names an asset declared in [site]. When an asset has multiple
+# drivers, use a single source for each control or measurement capability.
+# For example, an EV session observer can accompany the wallbox actuator.
 
 # The inverter, over SunSpec on Modbus TCP.
 [[drivers]]
@@ -691,31 +566,14 @@ listens_only = true
 # address = "192.168.1.40:4712"
 # ski = "0000000000000000000000000000000000000000"
 
-# A device read through the vendor's own register map.
+# Vendor-specific Modbus map. Use the manufacturer’s addresses for the exact
+# model. Read points cannot issue commands. Declare permitted writes separately.
 #
-# Everything that answers Modbus and publishes no SunSpec model list: the
-# register numbers are in a PDF and every unit's are different. It reads and
-# never writes — a map that could write is one where a typo in this file starts a
-# compressor — so it pairs with whatever commands the device, and is refused
-# alone on a controllable asset.
-#
-# For a heat pump it is the **alternative** to `eebus-heat-pump` above rather
-# than a companion: both measure, and two measuring drivers for one asset is two
-# sources of truth with nothing that could tell which to believe.
-#
-# `space` is "holding" (the default) or "input"; most vendors put sensors in the
-# input space that SunSpec never touches, and the two are separately addressed,
-# so reading the wrong one returns a plausible number from somewhere else.
-# `word` is u16 (default), s16, u32, s32, u32_swapped or s32_swapped — the
-# swapped pair are the word orders many gateways use, and getting it wrong is the
-# most common way a map reads plausibly and is several orders of magnitude out.
-# `scale` multiplies the raw value into the field's own unit, and a negative one
-# is how a vendor that reports generation as positive becomes this workspace's
-# load convention. `field` is power, temperature_c or soc.
-#
-# The **indoor temperature** is why this driver exists: the planner models the
-# building, learns it from the household's own record and can pre-heat into a
-# cheap hour, and all of it is gated on a number no EEBUS use case carries.
+# For each point, choose "holding" (default) or "input", a word format
+# (u16, s16, u32, s32, u32_swapped, s32_swapped), and a scale that converts
+# the raw value to watts, °C or state-of-charge fraction. Power is positive
+# into the asset. A read-only map can accompany a separate actuator, provided
+# the two drivers do not both claim the measurement role.
 #
 # [[drivers]]
 # kind = "registers"
@@ -728,35 +586,16 @@ listens_only = true
 #   { space = "input", register = 507, word = "s16", scale = 0.1, field = "temperature_c" },
 #   { register = 2240, word = "u32", field = "power" },
 # ]
-# # The registers a command may write. Omit `writes` and the driver is read-only.
-# # A write enumerates the raw values it may take, so nothing is computed from a
-# # scale; always one holding register, sixteen bits. Take the values from the
-# # unit's own documentation.
-# #
-# # `thermal_mode` is the one command no protocol here can carry — EEBUS has no
-# # cooling process — so a reversible heat pump needs this register or
-# # `run --check` refuses the household.
+# # Optional thermal-mode command. Use the holding register and the exact
+# # 16-bit raw values specified by the manufacturer for heating and cooling.
 # writes = [
 #   { command = "thermal_mode", register = 1501, heat = 1, cool = 2 },
 # ]
 
-# The heat pump, over EEBUS. Three use cases on one session, because they are
-# three parts of one decision:
-#
-#   OHPCF — starts and stops the compressor's process. The only lever in the
-#           whole set that can ask an appliance to consume *more*: everything
-#           else on the grid side is a ceiling, and a ceiling an appliance is
-#           already under changes nothing. Set `heat_pump_control = "compressor"`
-#           under [site] to have the planner's decision reach it.
-#   MRT   — the air temperature of each room the unit monitors, averaged. This is
-#           the state the thermal plan is integrated from, and the unit has been
-#           measuring it all along: its own heating curve runs on it.
-#   MOT   — the outdoor temperature, from the sensor on this building rather than
-#           a forecast for the grid square. The plan still uses the forecast, but
-#           the box identifies *which house this is* from the thermometer.
-#
-# It does not report power: what the unit draws is the site meter's business.
-#
+# Optional EEBUS heat pump. OHPCF controls the compressor, MRT reports room
+# temperatures and MOT reports outdoor temperature. Set heat_pump_control =
+# "compressor" under [site] to enable compressor commands.
+
 # [[drivers]]
 # kind = "eebus-heat-pump"
 # asset = "waermepumpe"
@@ -787,3 +626,12 @@ spine_unique = "hems-1"
 # [service.http.tls_roots]
 # from = "pinned"
 # bundle = "/etc/hems/fleet-ca.pem"
+
+# Read one commissioned appliance in Setup (build hemsd with --features matter).
+# Use hexadecimal fabric and node IDs. Test with: hemsd matter-read --config PATH
+# [matter]
+# name = "Washing machine"
+# fabric = "beef"
+# node = "a"
+# endpoint = 2
+# port = 5580

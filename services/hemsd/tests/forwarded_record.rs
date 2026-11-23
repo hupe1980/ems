@@ -26,7 +26,7 @@ use axum::routing::post;
 use ems_core::prelude::{AssetId, Power, Slot};
 use ems_core::setpoint::GuardRule;
 use ems_grid::evidence::ControlEvent;
-use ems_grid::mispel::QuarterHour;
+use ems_grid::mispel::{QuarterHour, RegisterAssertion};
 use ems_grid::para14a::ControlMode;
 use ems_service::{Secret, Shutdown};
 use hemsd::runtime::outbox::{HistdSettings, Outbox};
@@ -62,9 +62,10 @@ async fn histd_on_loopback() -> (String, Arc<Landed>, Shutdown) {
         )
         .route(
             "/v1/sites/{site}/quarter-hours",
-            post(move |body: axum::Json<Vec<QuarterHour>>| {
+            post(move |body: axum::Json<Vec<RegisterAssertion>>| {
                 let seen = Arc::clone(&for_registers);
                 async move {
+                    assert!(body.0.iter().all(|row| row.recorded_at == NOW));
                     seen.registers.fetch_add(body.0.len(), Ordering::SeqCst);
                     axum::http::StatusCode::ACCEPTED
                 }
@@ -93,6 +94,10 @@ fn register(i: i64) -> Recorded {
             ..QuarterHour::empty(Slot::containing(NOW + time::Duration::minutes(15 * i)))
         },
         production: Some(Decimal::new(10, 2)),
+        watched: false,
+        replay: None,
+        storage: None,
+        terms: None,
     }
 }
 

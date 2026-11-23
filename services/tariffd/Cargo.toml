@@ -1,6 +1,6 @@
 [package]
 name        = "tariffd"
-description = "The fleet's price service: fetches the five published day-ahead sources, reconciles a curve that arrives twice, and keeps two days of it so a WAN outage never costs a household a plan"
+description = "Day-ahead electricity price ingestion and caching for EMS gateways"
 publish     = false
 version.workspace      = true
 authors.workspace      = true

@@ -32,7 +32,7 @@
 //!
 //! # The escape hatch, and why it is not a skip
 //!
-//! `HEMS_TEST_POSTGRES` points at a server that is already running, which is how
+//! `EMS_TEST_POSTGRES` points at a server that is already running, which is how
 //! CI runs it. There is deliberately no way to *skip*: a test that passes when
 //! it could not reach a database reports green for a query nobody ran.
 
@@ -173,7 +173,7 @@ impl Postgres {
 /// The counter alone is not enough and the way it failed is worth keeping. With
 /// a server per test *binary* it was safe, because each binary had one to
 /// itself. Against a **shared** server — which is what this is, and what
-/// `HEMS_TEST_POSTGRES` gives in CI — `cargo test` runs the binaries in parallel
+/// `EMS_TEST_POSTGRES` gives in CI — `cargo test` runs the binaries in parallel
 /// and every one of them asked for `hems_test_1`. The process id is what makes
 /// the name unique across binaries; the counter is what makes it unique within
 /// one.
@@ -207,7 +207,7 @@ async fn connect_to(url: &str, pool_size: usize) -> Db {
 /// The server this run will use, as a `postgres://…` base with no database on
 /// it.
 async fn server() -> Result<String, String> {
-    if let Ok(url) = std::env::var("HEMS_TEST_POSTGRES") {
+    if let Ok(url) = std::env::var("EMS_TEST_POSTGRES") {
         // Given as a full URL with a database on it, or as a base. Taking
         // everything before the last `/` after the host is what a base *is*;
         // trimming a trailing segment blindly would guess.
@@ -250,7 +250,7 @@ fn ensure_container() -> Result<(), String> {
                 "`docker` could not be run ({e}). The fleet daemons deploy on \
                  PostgreSQL and their queries are tested against it, so this \
                  suite needs either a container runtime (Docker, Podman or \
-                 Colima) on the PATH, or HEMS_TEST_POSTGRES pointing at a server \
+                 Colima) on the PATH, or EMS_TEST_POSTGRES pointing at a server \
                  it may create databases on"
             ));
         }
@@ -302,7 +302,7 @@ fn ensure_container() -> Result<(), String> {
                  running and could not be removed. Docker itself is wedged — \
                  most often a full VM disk, which turns its metadata store \
                  read-only. Free it (`docker system prune`, or reset the \
-                 runtime), or set HEMS_TEST_POSTGRES to a server this suite may \
+                 runtime), or set EMS_TEST_POSTGRES to a server this suite may \
                  create databases on.\ndocker said: {}",
                 stderr.trim()
             ));
@@ -315,7 +315,7 @@ fn ensure_container() -> Result<(), String> {
             // somebody looking at the database.
             return Err(format!(
                 "the test PostgreSQL could not be started: {}\nEither free the \
-                 container runtime, or set HEMS_TEST_POSTGRES to a server this \
+                 container runtime, or set EMS_TEST_POSTGRES to a server this \
                  suite may create databases on. `just db-stop` removes a stale \
                  container.",
                 stderr.trim()
@@ -366,7 +366,7 @@ async fn wait_until_ready(base: &str) -> Result<(), String> {
     Err(format!(
         "the test PostgreSQL on port {PORT} did not accept a connection within \
          {}s: {last}\nRun `just db-stop` to remove a stale container, or set \
-         HEMS_TEST_POSTGRES to a server this suite may create databases on.",
+         EMS_TEST_POSTGRES to a server this suite may create databases on.",
         READY_TIMEOUT.as_secs()
     ))
 }

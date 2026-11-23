@@ -599,21 +599,30 @@ impl Session {
         };
         match &self.offer {
             Offer::Battery(d) => Some(if power < Power::ZERO {
-                (d.discharge, fraction(self.ratings.discharge))
+                (d.discharge, 1.0 - fraction(self.ratings.discharge))
             } else {
                 (d.charge, fraction(self.ratings.charge))
             }),
             Offer::Ev(d) => {
-                if power < Power::ZERO {
-                    // A one-way charge point has no discharge mode to name, and
-                    // naming the charging one for a negative power would be a
-                    // status a CEM cannot reconcile with the measurement beside
-                    // it. It should not happen; if it does, saying nothing is
-                    // the honest answer.
-                    Some((d.discharge?, fraction(self.ratings.discharge)))
+                let mode = if power < Power::ZERO {
+                    d.discharge?
                 } else {
-                    Some((d.charge, fraction(self.ratings.charge)))
+                    d.charge
+                };
+                let range = d.power_range(&mode)?;
+                let watts = power.get();
+                if !(range.start_of_range..=range.end_of_range).contains(&watts) {
+                    return None;
                 }
+                let width = range.end_of_range - range.start_of_range;
+                Some((
+                    mode,
+                    if width > 0.0 {
+                        (watts - range.start_of_range) / width
+                    } else {
+                        0.0
+                    },
+                ))
             }
             Offer::Dhw(d) => Some((d.heat, fraction(self.ratings.charge))),
             // An SG Ready unit's state is a contact position rather than
@@ -853,7 +862,7 @@ impl Session {
         // session and a planner cannot disagree about what a factor meant.
         let power = |direction: instruct::Direction, factor: f64| match direction {
             instruct::Direction::In => Power::new(self.ratings.charge.get() * factor),
-            instruct::Direction::Out => Power::new(-self.ratings.discharge.get() * factor),
+            instruct::Direction::Out => Power::new(-self.ratings.discharge.get() * (1.0 - factor)),
         };
         let decoded: Result<(Id, Instructed), InstructError> = match (&self.offer, message) {
             (Offer::Battery(d), Message::FrbcInstruction(i)) => {
@@ -861,8 +870,19 @@ impl Session {
                     .map(|(id, dir, f)| (id, Instructed::Power(power(dir, f))))
             }
             (Offer::Ev(d), Message::FrbcInstruction(i)) => {
-                instruct::actuator_factor(&d.actuator, &d.charge, d.discharge.as_ref(), i)
-                    .map(|(id, dir, f)| (id, Instructed::Power(power(dir, f))))
+                instruct::actuator_factor(&d.actuator, &d.charge, d.discharge.as_ref(), i).and_then(
+                    |(id, _, f)| {
+                        let r = d
+                            .power_range(&i.operation_mode)
+                            .ok_or(InstructError::UnknownOperationMode)?;
+                        Ok((
+                            id,
+                            Instructed::Power(Power::new(
+                                r.start_of_range + f * (r.end_of_range - r.start_of_range),
+                            )),
+                        ))
+                    },
+                )
             }
             (Offer::Dhw(d), Message::FrbcInstruction(i)) => {
                 instruct::actuator_factor(&d.actuator, &d.heat, None, i)
@@ -1135,6 +1155,63 @@ mod tests {
         (session, description)
     }
 
+    #[test]
+    fn ev_instructions_and_reports_use_the_same_advertised_range() {
+        use ems_core::asset::Evse;
+        use ems_core::prelude::Current;
+
+        let ev = Evse {
+            meta: battery().meta,
+            min_current: Current::new(6.0),
+            max_current: Current::new(16.0),
+            bidirectional: true,
+            public: false,
+            charge_limit: None,
+        };
+        let mode = PhaseMode::Three;
+        let description = crate::describe::describe_ev(
+            &ev,
+            &crate::EvStorage {
+                stored: Energy::from_kwh(18.0),
+                capacity: Energy::from_kwh(60.0),
+                efficiency: 0.92,
+            },
+            mode,
+            T0,
+        );
+        let mut session = Session::new(
+            ev.meta.id.clone(),
+            resource_manager_details(&Asset::Evse(ev.clone()), mode, true),
+            Offer::Ev(Box::new(description.clone())),
+            Ratings::both(ev.max_power(mode), ev.max_power(mode)),
+        );
+        let _ = negotiate(&mut session, ControlType::FillRateBasedControl);
+        let _ = session.drain();
+        let min = ev.min_power(mode).get();
+        let max = ev.max_power(mode).get();
+        for (mode_id, from, to) in [
+            (description.charge, min, max),
+            (description.discharge.unwrap(), -max, -min),
+        ] {
+            for factor in [0.0, 0.25, 1.0] {
+                let expected = Power::new(from + factor * (to - from));
+                let instruction = frbc::Instruction {
+                    id: Id::generate(),
+                    message_id: Id::generate(),
+                    actuator_id: description.actuator,
+                    operation_mode: mode_id,
+                    operation_mode_factor: factor,
+                    execution_time: utc(T0),
+                    abnormal_condition: false,
+                };
+                session.on_message(&instruction.into(), T0);
+                assert!(session.drain().iter().any(|event| matches!(event, SessionEvent::Instructed {wanted: Instructed::Power(p), ..} if *p == expected)));
+                assert_eq!(session.activity(expected), Some((mode_id, factor)));
+            }
+        }
+        assert_eq!(session.activity(Power::ZERO), None);
+    }
+
     /// Everything the session sent, drained.
     fn sent(session: &mut Session) -> Vec<Message> {
         let mut out = Vec::new();
@@ -1360,7 +1437,7 @@ mod tests {
                 message_id: Id::generate(),
                 actuator_id: description.actuator,
                 operation_mode: description.discharge,
-                operation_mode_factor: 0.5,
+                operation_mode_factor: 0.25,
                 execution_time: utc(T0),
                 abnormal_condition: false,
             }
@@ -1373,8 +1450,8 @@ mod tests {
             events,
             vec![SessionEvent::Instructed {
                 asset: AssetId::new("battery").unwrap(),
-                // Half of a 5 kW discharge, load convention.
-                wanted: Instructed::Power(Power::from_kw(-2.5)),
+                // One quarter of the way from −5 kW to zero.
+                wanted: Instructed::Power(Power::from_kw(-3.75)),
                 instruction: id,
             }]
         );
@@ -1755,7 +1832,7 @@ mod tests {
 
         session.report(
             &Report {
-                power: Some(Power::from_kw(-2.5)),
+                power: Some(Power::from_kw(-3.75)),
                 fill: Some(6.4),
             },
             T0,
@@ -1766,7 +1843,7 @@ mod tests {
             Message::PowerMeasurement(p) => p.values.first().map(|v| v.value),
             _ => None,
         });
-        assert_eq!(measured, Some(-2500.0));
+        assert_eq!(measured, Some(-3750.0));
 
         let status = out.iter().find_map(|m| match m {
             Message::FrbcActuatorStatus(s) => Some(s),
@@ -1774,7 +1851,7 @@ mod tests {
         });
         let status = status.expect("an actuator status");
         assert_eq!(status.active_operation_mode_id, description.discharge);
-        assert!((status.operation_mode_factor - 0.5).abs() < 1e-9);
+        assert!((status.operation_mode_factor - 0.25).abs() < 1e-9);
 
         assert!(
             out.iter()

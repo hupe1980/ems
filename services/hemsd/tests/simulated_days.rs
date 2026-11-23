@@ -233,7 +233,7 @@ fn a_summer_day_of_negative_prices_earns_no_support_for_those_quarter_hours() {
     let unsupported: Vec<_> = r
         .quarter_hours
         .iter()
-        .filter(|q| q.anzulegender_wert.is_zero() && q.grid_feed_in > Decimal::ZERO)
+        .filter(|q| q.anzulegender_wert == Some(Decimal::ZERO) && q.grid_feed_in > Decimal::ZERO)
         .collect();
     assert!(
         !unsupported.is_empty(),
@@ -1669,6 +1669,10 @@ fn the_day_the_household_would_be_asked_about_survives_the_process() {
                     &hemsd::store::Recorded {
                         registers: *quarter,
                         production: r.production_kwh_by_slot.get(&quarter.slot).copied(),
+                        watched: false,
+                        replay: None,
+                        storage: None,
+                        terms: None,
                     },
                     r.quarter_hours[0].slot.start(),
                 )
@@ -1831,14 +1835,18 @@ fn a_box_closes_its_day_from_what_it_wrote_down() {
                 device_generation: rust_decimal::Decimal::new(90, 2),
                 storage_consumption: None,
                 storage_generation: None,
-                anzulegender_wert: rust_decimal::Decimal::new(786, 2),
-                spot_price: rust_decimal::Decimal::new(1250, 2),
+                anzulegender_wert: Some(rust_decimal::Decimal::new(786, 2)),
+                spot_price: Some(rust_decimal::Decimal::new(1250, 2)),
             };
             store
                 .put_quarter_hour(
                     &hemsd::store::Recorded {
                         registers: quarter,
                         production: Some(rust_decimal::Decimal::new(10, 2)),
+                        watched: false,
+                        replay: None,
+                        storage: None,
+                        terms: None,
                     },
                     midnight,
                 )
@@ -2020,50 +2028,39 @@ fn the_day_counts_the_hours_ss_51_eeg_took_the_remuneration_in() {
     );
 }
 
-/// The landing page prints the winter day's report. It has to be **that** report.
-///
-/// A terminal transcript on a marketing page is a number printed where nobody
-/// compares it: it is copied once, and every change to the physics, the tariff or
-/// the planner moves it silently. This session's own irradiance and free-heat
-/// work moved every line of it and nothing failed.
-///
-/// So the page's block is parsed and held to the day it claims to be. `hemsd` is
-/// `publish = false`, which is what makes reaching outside the crate for the
-/// template legitimate — a published crate could not package it.
-///
-/// A line the report does not have, or has differently, fails here rather than on
-/// somebody's screenshot.
+/// Compare every published winter reading with the household simulation.
 #[test]
-fn the_landing_page_prints_the_day_it_says_it_does() {
-    const PAGE: &str = include_str!("../../../site/templates/index.html");
-    // The README shows the *same* day, and for four versions nothing held it to
-    // anything: it had drifted to a bill of €21,03 where the day reported
-    // €19,88, and to a saving of €2,14 where the day said €2,18. A transcript on
-    // a landing page and a transcript in a README are the same artefact with the
-    // same failure mode, and there is no reason to guard one and not the other.
-    const README: &str = include_str!("../../../README.md");
-    const OPENING: &str = "2026-01-15 — with a § 14a reduction";
-
+fn the_simulation_guide_matches_the_winter_report() {
+    let guide = include_str!("../../../site/content/docs/simulation.md");
+    let (_, section) = guide
+        .split_once("## Winter report")
+        .expect("winter report section");
+    let (_, example) = section.split_once("```text\n").expect("report block");
+    let (example, _) = example.split_once("\n```").expect("closed report block");
     let scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
     let day = run(&scenario).unwrap();
     let report = hemsd::render::day(&scenario, &day);
-
-    // The README carries the whole report; the landing page an excerpt, which
-    // still has to be long enough to carry the argument — a bill, what it would
-    // have been, and the § 14a reduction it was made under.
-    for (what, page, terminator, at_least) in [
-        ("the landing page", PAGE, "</code></pre>", 7),
-        ("README.md", README, "\n```", 20),
+    let title = example.lines().next().expect("report title").trim();
+    assert!(report.lines().any(|line| line.trim() == title));
+    check_block("simulation guide", example, &report, 20);
+    let demo = hemsd::demo::Demo::record(&scenario).unwrap();
+    let receipt = demo
+        .home_at(0, hemsd::home::GoalSet::default())
+        .receipt
+        .unwrap();
+    let money = receipt.money.unwrap();
+    for (label, cents) in [
+        ("cost of the day", money.cost_ct),
+        ("without optimisation", money.without_ct),
+        ("saved", money.saved_ct),
     ] {
-        let Some(start) = page.find(OPENING) else {
-            panic!("{what} no longer shows a winter day, or shows another one");
-        };
-        let block = &page[start
-            ..start
-                + page[start..]
-                    .find(terminator)
-                    .unwrap_or_else(|| panic!("{what} has an unclosed transcript block"))];
-        check_block(what, block, &report, at_least);
+        let (_, printed) = example
+            .lines()
+            .map(split_report_line)
+            .find(|(key, _)| *key == label)
+            .unwrap();
+        let euros: rust_decimal::Decimal = printed.trim_end_matches(" €").parse().unwrap();
+        assert_eq!(euros, rust_decimal::Decimal::new(cents, 2), "{label}");
     }
 }
 

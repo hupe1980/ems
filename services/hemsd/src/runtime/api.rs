@@ -37,6 +37,8 @@ use time::OffsetDateTime;
 /// What the API needs to answer.
 #[derive(Clone)]
 pub struct Local {
+    #[cfg(feature = "matter")]
+    matter: Option<super::matter::Meter>,
     status: Arc<Mutex<Status>>,
     site: String,
     ski: Option<String>,
@@ -55,11 +57,18 @@ pub struct Local {
     /// generates, and on the box that means the household's own local API rather
     /// than a fleet service — this is the one-second half of it.
     series: Option<Arc<crate::series::Series>>,
+    history_reader: Arc<tokio::sync::Semaphore>,
     /// What only the household page reads: the site, the plan, the goal.
     home: HomeSources,
     /// What the configuration says about this box's devices, for the handover
     /// sheet and discovery.
     commissioning: crate::runtime::handover::Commissioning,
+    settings: Option<Arc<crate::Settings>>,
+    installer: Option<(
+        Arc<super::installation::Installer>,
+        ems_service::shutdown::ShutdownTrigger,
+    )>,
+    registry: Option<super::transport::Shared>,
     /// The store the closed days are read from, where the box keeps one.
     days: Option<Arc<Mutex<crate::store::Store>>>,
     /// The Web Push sender, where the box has a store to keep subscriptions in.
@@ -71,6 +80,8 @@ pub struct Local {
 /// What the household page needs beyond `/v1/status`.
 #[derive(Clone, Default)]
 pub struct HomeSources {
+    /// Planner readiness shared with the control loop.
+    pub health: ems_service::Health,
     /// The house, so the page can name its devices.
     pub site: Option<Arc<ems_core::prelude::Site>>,
     /// The plan in force.
@@ -79,6 +90,8 @@ pub struct HomeSources {
     pub prices: Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
     /// The household's goals, shared with the planner.
     pub goal: crate::home::Goals,
+    /// Trigger a fresh plan after a contract change.
+    pub tariff_changed: Arc<tokio::sync::Notify>,
     /// The car as the planner last saw it.
     pub car: crate::home::CarFacts,
     /// The tank as the planner last saw it.
@@ -92,6 +105,14 @@ pub struct HomeSources {
 }
 
 impl Local {
+    /// Attach the diagnostic appliance reading to the household page.
+    #[cfg(feature = "matter")]
+    #[must_use]
+    pub fn with_matter(mut self, meter: super::matter::Meter) -> Self {
+        self.matter = Some(meter);
+        self
+    }
+
     /// Give the household page what it reads beyond `/v1/status`.
     #[must_use]
     pub fn with_home(mut self, home: HomeSources) -> Self {
@@ -107,6 +128,58 @@ impl Local {
         commissioning: crate::runtime::handover::Commissioning,
     ) -> Self {
         self.commissioning = commissioning;
+        self
+    }
+
+    /// Supply the effective site configuration for read-only installer previews.
+    #[must_use]
+    pub fn with_settings(mut self, settings: crate::Settings) -> Self {
+        self.settings = Some(Arc::new(settings));
+        self
+    }
+
+    /// Read commissioning diagnostics from the active protocol actors.
+    #[must_use]
+    pub fn with_registry(mut self, registry: super::transport::Shared) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    /// Expose an aggregate control-box alert without household or device identifiers.
+    ///
+    /// # Errors
+    /// Returns the registry error if the gauge cannot be registered.
+    pub fn publish_control_box_health(
+        &self,
+    ) -> anyhow::Result<Option<ems_service::metrics::RegisteredGauge>> {
+        let (Some(asset), Some(trust)) =
+            (self.commissioning.control_box.clone(), self.trust.clone())
+        else {
+            return Ok(None);
+        };
+        let status = Arc::clone(&self.status);
+        let gauge = ems_service::metrics::publish_gauge(
+            "hems_control_box_needs_attention",
+            "1 when the configured control box is unpaired, silent or in failsafe, 0 when heard",
+            Box::new(move || {
+                let Ok(status) = status.try_lock() else {
+                    return f64::NAN;
+                };
+                let state = control_box_state(Some(&asset), Some(&trust), &status);
+                f64::from(state.state != "heard")
+            }),
+        )?;
+        Ok(Some(gauge))
+    }
+
+    /// Enable reviewed installation changes on a supervised, file-backed gateway.
+    #[must_use]
+    pub fn with_installer(
+        mut self,
+        installer: Arc<super::installation::Installer>,
+        restart: ems_service::shutdown::ShutdownTrigger,
+    ) -> Self {
+        self.installer = Some((installer, restart));
         self
     }
 
@@ -134,10 +207,10 @@ impl Local {
         let status = self.status.lock().await;
         let plan = self.home.plan.read().await;
         let prices = self.home.prices.read().await;
-        let goals = self.home.goal.get().await;
+        let goals = self.home.goal.get();
         let car = *self.home.car.lock().await;
         let tank = *self.home.tank.lock().await;
-        Some(crate::home::live(
+        let mut document = crate::home::live(
             &crate::home::Live {
                 site,
                 status: &status,
@@ -151,7 +224,23 @@ impl Local {
                 https_fingerprint: self.home.https_fingerprint.clone(),
             },
             OffsetDateTime::now_utc(),
-        ))
+        );
+        if self
+            .home
+            .health
+            .readiness()
+            .probes
+            .get("planner")
+            .is_some_and(|probe| !probe.ready)
+        {
+            document.previous_plan_at = plan.as_ref().map(|p| rfc3339(p.created_at));
+        }
+        #[cfg(feature = "matter")]
+        if let Some(meter) = &self.matter {
+            document.matter = Some(meter.view());
+        }
+        document.charging_now = self.home.goal.boosting(OffsetDateTime::now_utc());
+        Some(document)
     }
 
     /// Answer `/v1/days` from the closed days `store` keeps.
@@ -180,8 +269,14 @@ impl Local {
             trust,
             access,
             series,
+            history_reader: Arc::new(tokio::sync::Semaphore::new(1)),
+            #[cfg(feature = "matter")]
+            matter: None,
             home: HomeSources::default(),
             commissioning: crate::runtime::handover::Commissioning::default(),
+            settings: None,
+            installer: None,
+            registry: None,
             days: None,
             push: None,
             webhooks: None,
@@ -329,16 +424,30 @@ pub fn router(local: Local) -> axum::Router {
             put(set_override).delete(clear_override),
         )
         .route("/v1/home", get(home))
+        .route("/v1/tariff", get(tariff_status).put(activate_tariff))
+        .route("/v1/tariff/preview", axum::routing::post(preview_tariff))
         .route("/v1/qr/{what}", get(qr))
         .route("/v1/handover", get(handover))
         .route("/v1/commissioning", get(commissioning))
+        .route(
+            "/v1/commissioning/transfer",
+            get(control_transfer).put(review_transfer),
+        )
         .route("/v1/discover", axum::routing::post(discover))
+        .route(
+            "/v1/commissioning/change",
+            get(installation_outcome).post(apply_installation),
+        )
         .route("/v1/trust", get(trust_check))
         .route("/v1/token", axum::routing::post(replace_token))
         .route("/v1/days", get(days))
         .route("/v1/days.csv", get(days_csv))
         .route("/v1/goals/{asset}", put(set_goal).delete(clear_goal))
         .route("/v1/goals/{asset}/quote", axum::routing::post(quote_goal))
+        .route(
+            "/v1/goals/{asset}/boost",
+            put(start_boost).delete(cancel_boost),
+        )
         .route(
             "/v1/push",
             get(push_overview).post(push_subscribe).delete(push_forget),
@@ -360,6 +469,100 @@ pub fn router(local: Local) -> axum::Router {
         .with_state(local)
 }
 
+type SheetError = (axum::http::StatusCode, String);
+
+async fn tariff_status(
+    State(local): State<Local>,
+) -> Result<Json<crate::price_sheet::Status>, SheetError> {
+    use crate::price_sheet::{Schedule, Status, Terms};
+    let slot = ems_core::prelude::Slot::containing(time::OffsetDateTime::now_utc());
+    let schedule = match &local.days {
+        Some(store) => Schedule::load(&*store.lock().await).map_err(|_| {
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "cannot read signed tariff schedule".into(),
+            )
+        })?,
+        None => Schedule::default(),
+    };
+    let next = schedule.next(slot);
+    let prices = local.home.prices.read().await;
+    let price = prices.as_ref().and_then(|p| p.at(slot));
+    Ok(Json(Status {
+        can_import: local.days.is_some(),
+        active: schedule.applicable(slot).map(Terms::from),
+        expired: schedule
+            .previous(slot)
+            .filter(|item| !item.sheet.covers(slot.local_date()))
+            .map(Terms::from),
+        next: next.map(|(_, item)| Terms::from(item)),
+        next_at: next.map(|(start, _)| start),
+        price_ct: price.map(|p| p.import_ct.normalize().to_string()),
+        estimated: price.is_some_and(|p| !p.price_known),
+    }))
+}
+
+async fn preview_tariff(
+    State(local): State<Local>,
+    Json(request): Json<crate::price_sheet::Import>,
+) -> Result<Json<crate::price_sheet::Review>, SheetError> {
+    review_tariff(local, request, false).await
+}
+
+async fn activate_tariff(
+    State(local): State<Local>,
+    Json(request): Json<crate::price_sheet::Import>,
+) -> Result<Json<crate::price_sheet::Review>, SheetError> {
+    review_tariff(local, request, true).await
+}
+
+async fn review_tariff(
+    local: Local,
+    request: crate::price_sheet::Import,
+    activate: bool,
+) -> Result<Json<crate::price_sheet::Review>, SheetError> {
+    use axum::http::StatusCode;
+    let store = local.days.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "tariff approval requires durable storage".into(),
+    ))?;
+    let signed = crate::price_sheet::verify(request.signed.as_bytes())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let now = ems_core::prelude::Slot::containing(time::OffsetDateTime::now_utc());
+    let prices = local.home.prices.read().await.clone();
+    let store = store.lock().await;
+    let schedule = crate::price_sheet::Schedule::load(&store).map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "cannot read signed tariff schedule".into(),
+        )
+    })?;
+    let review = signed
+        .review(&schedule, now, prices.as_ref())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    if activate {
+        if request.confirmation.as_ref() != Some(&review) {
+            return Err((
+                StatusCode::CONFLICT,
+                "review the current signer, price and contract before accepting".into(),
+            ));
+        }
+        store
+            .put_price_sheet(
+                now.start().unix_timestamp(),
+                review.effective_at,
+                &request.signed,
+            )
+            .map_err(|_| {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "could not save signed tariff".into(),
+                )
+            })?;
+        local.home.tariff_changed.notify_one();
+    }
+    Ok(Json(review))
+}
 async fn no_such_route() -> (axum::http::StatusCode, &'static str) {
     (
         axum::http::StatusCode::NOT_FOUND,
@@ -455,6 +658,16 @@ pub struct Asked {
     /// The instant after the last, RFC 3339. Absent means now.
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub to: Option<time::OffsetDateTime>,
+    /// Request summaries for a short window. Omission selects the available tier.
+    pub resolution: Option<HistoryResolution>,
+}
+
+/// The tier that clients can explicitly request.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryResolution {
+    /// Whole quarter-hour buckets.
+    QuarterHours,
 }
 
 /// One point of measurement over a window — `grid`, `netzwirksam`, or an asset.
@@ -472,23 +685,70 @@ async fn series(
     State(local): State<Local>,
     Path(point): Path<String>,
     Query(window): Query<Asked>,
-) -> Result<axum::Json<crate::series::Window>, StatusCode> {
-    let Some(series) = local.series.as_ref() else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    let now = time::OffsetDateTime::now_utc();
-    let to = window.to.unwrap_or(now);
-    let from = window.from.unwrap_or(to - time::Duration::hours(1));
-    if to <= from {
+) -> Result<axum::response::Response, StatusCode> {
+    use axum::response::IntoResponse as _;
+    let store = local.series.ok_or(StatusCode::NOT_FOUND)?;
+    let to = window.to.unwrap_or_else(|| {
+        let now = time::OffsetDateTime::now_utc();
+        if window.resolution.is_some() {
+            ems_core::prelude::Slot::containing(now).start()
+        } else {
+            now
+        }
+    });
+    let from = window
+        .from
+        .or_else(|| to.checked_sub(time::Duration::HOUR))
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let span = to - from;
+    if !span.is_positive()
+        || span > time::Duration::days(1096)
+        || [from, to]
+            .iter()
+            .any(|t| i64::try_from(t.unix_timestamp_nanos()).is_err())
+    {
         return Err(StatusCode::BAD_REQUEST);
     }
-    series
-        .window(&point, from, to)
-        .map(axum::Json)
-        .map_err(|error| {
-            tracing::warn!(%error, %point, "the measurement series could not be read");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })
+    let resolution = window
+        .resolution
+        .map(|_| crate::series::Resolution::QuarterHours);
+    if resolution.is_some()
+        && [from, to]
+            .iter()
+            .any(|t| t.unix_timestamp() % 900 != 0 || t.nanosecond() != 0)
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    read_history(local.history_reader, move || {
+        store
+            .window_at_resolution(&point, from, to, resolution)
+            .map(|window| Json(window).into_response())
+            .map_err(|error| {
+                tracing::warn!(%error, %point, "could not read measurement history");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })
+    })
+    .await
+}
+
+/// Keep both query execution and JSON encoding within the single reader budget.
+async fn read_history<T: Send + 'static>(
+    reader: Arc<tokio::sync::Semaphore>,
+    read: impl FnOnce() -> Result<T, StatusCode> + Send + 'static,
+) -> Result<T, StatusCode> {
+    let permit = reader
+        .try_acquire_owned()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    tokio::task::spawn_blocking(move || {
+        // The worker can outlive a disconnected HTTP client.
+        let _permit = permit;
+        read()
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "measurement history worker failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
 }
 
 /// What the household is asking for, and until when.
@@ -523,8 +783,20 @@ async fn set_override(
     axum::extract::Path(asset): axum::extract::Path<String>,
     Json(body): Json<OverrideBody>,
 ) -> Result<Json<OverrideView>, axum::http::StatusCode> {
+    if local.status.lock().await.shadow {
+        return Err(StatusCode::CONFLICT);
+    }
     let asset =
         ems_core::prelude::AssetId::new(&asset).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    if body.what == ems_core::setpoint::UserOverride::Boost
+        && local
+            .home
+            .site
+            .as_ref()
+            .is_some_and(|s| matches!(s.asset(&asset), Some(ems_core::prelude::Asset::Evse(_))))
+    {
+        return Err(StatusCode::CONFLICT);
+    }
     let now = time::OffsetDateTime::now_utc();
     let held = local
         .overrides
@@ -603,7 +875,7 @@ async fn list_overrides(State(local): State<Local>) -> Json<Vec<OverrideView>> {
 }
 
 /// Who made a request, for the audit line (SR-007): `cem:<name>` or the site.
-fn subject(who: Option<&ems_service::auth::Authority>) -> String {
+pub(super) fn subject(who: Option<&ems_service::auth::Authority>) -> String {
     who.map_or_else(|| "unknown".into(), |a| a.subject().to_string())
 }
 
@@ -897,19 +1169,153 @@ fn not_kept(error: &crate::store::StoreError) -> (StatusCode, String) {
     )
 }
 
-/// Set a goal for a charge point or a hot-water tank, and answer at once
-/// whether it can be met.
-///
-/// The body follows the asset: `target_soc` and `by_minute` for a car,
-/// `target_c` and `by_minute` for a tank. The answer is the verdict, or `null`
-/// where the planner has not seen the device yet.
-/// What a goal would cost before it is set: the same plan solved with it.
-///
-/// Changes nothing. The verdict is the one `PUT` would answer, and the price
-/// the difference between the plan with the goal in force now and with this
-/// one.
+#[derive(Default, serde::Deserialize)]
+struct QuoteMode {
+    #[serde(default)]
+    charge_now: bool,
+}
+
+/// A price and saved goal the household has reviewed.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BoostConfirmation {
+    /// The exact stored goal, including the tariff cap.
+    pub goal: crate::home::CarGoal,
+    /// The difference from waiting, in whole cents.
+    pub extra_eur: f64,
+    /// The absolute deadline shown in the preview, Unix seconds.
+    pub until: i64,
+}
+
+impl BoostConfirmation {
+    fn matches(&self, quote: &crate::runtime::quote::Quote, now: OffsetDateTime) -> bool {
+        quote.extra_eur == Some(self.extra_eur)
+            && quote.boost_until == Some(self.until)
+            && self.until > now.unix_timestamp()
+    }
+}
+
+async fn boost_price(
+    local: &Local,
+    asset: &str,
+    goal: crate::home::CarGoal,
+) -> Result<crate::runtime::quote::Quote, (StatusCode, String)> {
+    use crate::runtime::quote;
+    let site = local
+        .home
+        .site
+        .as_ref()
+        .ok_or_else(|| refused(crate::home::GoalRefused::UnknownAsset))?;
+    if crate::home::goal_kind(site, asset).map_err(refused)? != "car"
+        || local.home.goal.get().car != Some(goal)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            "Review the saved car goal again".into(),
+        ));
+    }
+    let unavailable = || {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "A priced, connected car is required".into(),
+        )
+    };
+    let now = OffsetDateTime::now_utc();
+    if local.status.lock().await.shadow
+        || local
+            .settings
+            .as_ref()
+            .is_some_and(|s| s.mode == crate::config::OperatingMode::Shadow)
+    {
+        return Err((StatusCode::CONFLICT, "This site is observing only".into()));
+    }
+    let registry = local.registry.as_ref().ok_or_else(unavailable)?;
+    let id = ems_core::prelude::AssetId::new(asset).map_err(|_| unavailable())?;
+    let seen = registry.lock().await.observe(None, now);
+    let vehicle = seen
+        .vehicles
+        .get(&id)
+        .filter(|_| !seen.silent.contains(&id))
+        .ok_or_else(unavailable)?;
+    let mut car = (*local.home.car.lock().await).ok_or_else(unavailable)?;
+    let soc = vehicle
+        .current_soc(now)
+        .filter(|soc| *soc < goal.target_soc)
+        .ok_or_else(unavailable)?;
+    let capacity = vehicle
+        .capacity_wh
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .ok_or_else(unavailable)?;
+    car.capacity = ems_core::prelude::Energy::new(capacity);
+    car.energy_now = car.capacity * soc;
+    let mut held = quote::slot().ok_or((
+        StatusCode::TOO_MANY_REQUESTS,
+        "A quote is already running".into(),
+    ))?;
+    let last = local.home.last.clone();
+    let mut price = tokio::spawn(async move {
+        let result = quote::charge_now(&last, car, goal, now).await;
+        *held = Some(std::time::Instant::now());
+        result
+    })
+    .await
+    .ok()
+    .flatten()
+    .ok_or_else(unavailable)?;
+    price.boost_until = Some(crate::home::next_wall_clock(goal.by_minute, now).unix_timestamp());
+    Ok(price)
+}
+
+async fn start_boost(
+    State(local): State<Local>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
+    Path(asset): Path<String>,
+    Json(review): Json<BoostConfirmation>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let revision = local.home.goal.boost_revision();
+    let quote = boost_price(&local, &asset, review.goal).await?;
+    if !review.matches(&quote, OffsetDateTime::now_utc()) {
+        return Err((
+            StatusCode::CONFLICT,
+            "The estimate changed. Review it again".into(),
+        ));
+    }
+    let until = OffsetDateTime::from_unix_timestamp(review.until)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid deadline".into()))?;
+    if !local
+        .home
+        .goal
+        .start_boost(review.goal, until, revision)
+        .await
+    {
+        return Err((StatusCode::CONFLICT, "The saved goal changed".into()));
+    }
+    tracing::info!(%asset, %until, subject = %subject(who.as_deref()), "household confirmed immediate charging");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn cancel_boost(
+    State(local): State<Local>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
+    Path(asset): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let site = local
+        .home
+        .site
+        .as_ref()
+        .ok_or_else(|| refused(crate::home::GoalRefused::UnknownAsset))?;
+    if crate::home::goal_kind(site, &asset).map_err(refused)? != "car" {
+        return Err(refused(crate::home::GoalRefused::NoGoalForThisKind));
+    }
+    local.home.goal.cancel_boost();
+    tracing::info!(%asset, subject = %subject(who.as_deref()), "household cancelled immediate charging");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What a proposed goal costs, using two solves of the same household.
 async fn quote_goal(
     State(local): State<Local>,
+    Query(mode): Query<QuoteMode>,
     Path(asset): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<crate::runtime::quote::Quote>, (StatusCode, String)> {
@@ -920,6 +1326,12 @@ async fn quote_goal(
         .as_ref()
         .ok_or_else(|| refused(crate::home::GoalRefused::UnknownAsset))?;
     let goal = crate::home::parse_goal(site, &asset, body).map_err(refused)?;
+    if mode.charge_now {
+        return match goal {
+            NewGoal::Car(g) => boost_price(&local, &asset, g).await.map(Json),
+            NewGoal::Tank(_) => Err(refused(crate::home::GoalRefused::NoGoalForThisKind)),
+        };
+    }
     let Some(mut held) = crate::runtime::quote::slot() else {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
@@ -985,12 +1397,17 @@ async fn set_goal(
     tracing::info!(%asset, ?goal, subject = %subject(who.as_deref()), "a goal");
     let now = OffsetDateTime::now_utc();
     let answer = match goal {
-        NewGoal::Car(g) => local.home.car.lock().await.map(|facts| {
-            serde_json::json!(crate::home::judge_goal(
-                &crate::home::session_for(&facts, g, now),
-                ems_core::prelude::Slot::containing(now),
-            ))
-        }),
+        NewGoal::Car(g) => {
+            let prices = local.home.prices.read().await;
+            local.home.car.lock().await.map(|facts| {
+                serde_json::json!(crate::home::judge_car_price(
+                    &crate::home::session_for(&facts, g, now),
+                    ems_core::prelude::Slot::containing(now),
+                    g.price_cap_ct,
+                    prices.as_ref(),
+                ))
+            })
+        }
         NewGoal::Tank(g) => {
             let tank = site.assets.iter().find_map(|a| match a {
                 ems_core::prelude::Asset::Dhw(tank) => Some(tank),
@@ -1008,6 +1425,7 @@ async fn set_goal(
 /// Withdraw a goal; for the car, the configured departure applies again.
 async fn clear_goal(
     State(local): State<Local>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
     Path(asset): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let site = local
@@ -1029,6 +1447,7 @@ async fn clear_goal(
         .await
         .map_err(|e| not_kept(&e))?;
     Ok(if changed {
+        tracing::info!(%asset, subject = %subject(who.as_deref()), "a household goal was withdrawn");
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -1542,16 +1961,155 @@ async fn discover(
             .collect(),
         silent: local.status.lock().await.silent.iter().cloned().collect(),
     };
-    Ok(Json(
-        handover::discover(
-            &local.commissioning,
-            &known,
-            &hosts,
-            ask.unit.unwrap_or(1),
-            ask.port.unwrap_or(handover::MODBUS_PORTS[0]),
-        )
-        .await,
-    ))
+    let unit = ask.unit.unwrap_or(1);
+    let port = ask.port.unwrap_or(handover::MODBUS_PORTS[0]);
+    let mut found = handover::discover(&local.commissioning, &known, &hosts, unit, port).await;
+    if let Some(settings) = local.settings.as_ref() {
+        for device in &mut found.modbus {
+            if let Some(identity) = device
+                .identity
+                .as_ref()
+                .filter(|id| id.supports_pv_driver())
+                && let Ok(ip) = device.host.parse()
+            {
+                let mut review = handover::InverterReview::new(
+                    settings,
+                    std::net::SocketAddr::new(ip, port),
+                    unit,
+                );
+                if let Some((installer, _)) = &local.installer {
+                    review.proposal = installer.offer(&mut review, identity);
+                }
+                device.review = Some(review);
+            }
+        }
+    }
+    Ok(Json(found))
+}
+
+/// Only the server-issued id is accepted. The TOML is held by the gateway.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyInstallation {
+    /// The id shown with the reviewed proposal.
+    pub id: String,
+}
+
+async fn handover_evidence(local: &Local) -> Result<super::authority::Readiness, StatusCode> {
+    let registry = local.registry.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let site = local.home.site.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let meter = site.assets.iter().find(|a| matches!(a, ems_core::prelude::Asset::Meter(m) if m.role == ems_core::asset::MeterRole::GridConnection)).map(ems_core::prelude::Asset::id);
+    let observed = registry
+        .lock()
+        .await
+        .observe(meter, OffsetDateTime::now_utc());
+    Ok(super::authority::readiness(site, &observed))
+}
+
+async fn control_transfer(
+    State(local): State<Local>,
+) -> Result<Json<super::authority::Review>, StatusCode> {
+    let store = local.days.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let transfer = store
+        .lock()
+        .await
+        .transfer()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(super::authority::Review {
+        transfer,
+        readiness: handover_evidence(&local).await?,
+    }))
+}
+
+async fn review_transfer(
+    State(local): State<Local>,
+    Json(request): Json<super::authority::Approval>,
+) -> Result<Json<super::authority::Review>, StatusCode> {
+    if local
+        .settings
+        .as_ref()
+        .is_none_or(|s| s.mode != crate::config::OperatingMode::Shadow)
+    {
+        return Err(StatusCode::CONFLICT);
+    }
+    let readiness = handover_evidence(&local).await?;
+    if request.approve && readiness != super::authority::Readiness::Ready {
+        return Err(StatusCode::CONFLICT);
+    }
+    let store = local
+        .days
+        .as_ref()
+        .ok_or(StatusCode::NOT_FOUND)?
+        .lock()
+        .await;
+    let mut transfer = store
+        .transfer()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !transfer.review(&request, time::OffsetDateTime::now_utc().unix_timestamp()) {
+        return Err(StatusCode::CONFLICT);
+    }
+    store
+        .put_transfer(Some(&transfer))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(super::authority::Review {
+        transfer,
+        readiness,
+    }))
+}
+
+async fn installation_outcome(
+    State(local): State<Local>,
+) -> Result<Json<Option<super::installation::Receipt>>, StatusCode> {
+    let Some((installer, _)) = &local.installer else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    installer
+        .receipt()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn apply_installation(
+    State(local): State<Local>,
+    who: Option<axum::Extension<ems_service::auth::Authority>>,
+    Json(request): Json<ApplyInstallation>,
+) -> Result<Json<super::installation::Receipt>, (StatusCode, String)> {
+    let (installer, stop) = local.installer.ok_or((
+        StatusCode::NOT_FOUND,
+        "Installation changes are unavailable".to_owned(),
+    ))?;
+    commit_installation(installer, stop, who.as_deref(), request).await
+}
+
+pub(super) async fn commit_installation(
+    installer: std::sync::Arc<super::installation::Installer>,
+    stop: ems_service::shutdown::ShutdownTrigger,
+    actor: Option<&ems_service::auth::Authority>,
+    request: ApplyInstallation,
+) -> Result<Json<super::installation::Receipt>, (StatusCode, String)> {
+    use super::installation::ApplyError;
+    let (receipt, restart) = tokio::task::spawn_blocking(move || installer.apply(&request.id))
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Installation task stopped".to_owned(),
+            )
+        })?
+        .map_err(|error| {
+            let status = match error {
+                ApplyError::Stale => StatusCode::CONFLICT,
+                ApplyError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, error.to_string())
+        })?;
+    if restart {
+        tracing::info!(subject = %subject(actor), change = %receipt.id, role = ?receipt.role, "household confirmed installation");
+        stop.trigger();
+    }
+    Ok(Json(receipt))
 }
 
 /// The household's new token, once.
@@ -1596,8 +2154,43 @@ async fn replace_token(
 }
 
 /// Whether the box is who it was, and whether its control box is still there.
-async fn trust_check(State(local): State<Local>) -> Json<crate::runtime::handover::TrustCheck> {
-    Json(trust_of(&local).await)
+async fn trust_check(State(local): State<Local>) -> Json<crate::doctor::Diagnostics> {
+    use crate::doctor::HistoryState;
+    let history = if let Some(store) = local.series.clone() {
+        match read_history(local.history_reader.clone(), move || {
+            store.repair_pending().map_err(|error| {
+                tracing::warn!(%error, "could not inspect quarter-hour repair status");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })
+        })
+        .await
+        {
+            Ok(true) => HistoryState::RepairPending,
+            Ok(false) => HistoryState::Current,
+            Err(StatusCode::SERVICE_UNAVAILABLE) => HistoryState::Busy,
+            Err(_) => HistoryState::Unavailable,
+        }
+    } else {
+        HistoryState::Disabled
+    };
+    Json(crate::doctor::Diagnostics {
+        trust: trust_of(&local).await,
+        history,
+    })
+}
+
+fn control_box_state(
+    asset: Option<&ems_core::prelude::AssetId>,
+    trust: Option<&super::ship::Trust>,
+    status: &Status,
+) -> super::handover::ControlBox {
+    super::handover::control_box(super::handover::ControlBoxFacts {
+        configured: asset.is_some() && trust.is_some(),
+        trusted: trust.map_or(0, |t| t.peers().len()),
+        waiting: trust.map_or(0, |t| t.waiting().len()),
+        silent: status.at.is_none() || asset.is_some_and(|id| status.silent.contains(id)),
+        in_failsafe: status.in_failsafe,
+    })
 }
 
 /// The trust check, for the route and for the commissioning record.
@@ -1608,34 +2201,72 @@ async fn trust_of(local: &Local) -> crate::runtime::handover::TrustCheck {
         Some(trust) if trust.identity_is_kept().await => "kept",
         Some(_) => "ephemeral",
     };
-    let (ticked, silent, in_failsafe) = {
+    let (tick_at, devices, control_box) = {
         let status = local.status.lock().await;
-        let silent = local
-            .commissioning
-            .control_box
-            .as_ref()
-            .is_some_and(|asset| status.silent.contains(asset));
-        (status.at.is_some(), silent, status.in_failsafe)
+        (
+            status.at,
+            crate::doctor::devices(&local.commissioning, &status),
+            control_box_state(
+                local.commissioning.control_box.as_ref(),
+                local.trust.as_ref(),
+                &status,
+            ),
+        )
+    };
+    let last_heartbeat = match (&local.registry, &local.commissioning.control_box) {
+        (Some(registry), Some(asset)) => registry.lock().await.last_lpc_heartbeat(asset),
+        _ => None,
     };
     handover::TrustCheck {
+        support_contact: local
+            .settings
+            .as_ref()
+            .and_then(|s| s.support_contact.clone()),
+        heartbeat_age_s: last_heartbeat.and_then(|at| {
+            u64::try_from((time::OffsetDateTime::now_utc() - at).whole_seconds()).ok()
+        }),
+        tick_at: tick_at.map(rfc3339),
+        devices,
         identity,
         ski: local.ski.clone(),
         fingerprint: local.home.fingerprint.clone(),
         https_fingerprint: local.home.https_fingerprint.clone(),
-        control_box: handover::control_box(handover::ControlBoxFacts {
-            configured: local.trust.is_some() && local.commissioning.control_box.is_some(),
-            trusted: local.trust.as_ref().map_or(0, |t| t.peers().len()),
-            waiting: local.trust.as_ref().map_or(0, |t| t.waiting().len()),
-            // Before the first tick nothing has been heard *or* missed.
-            silent: !ticked || silent,
-            in_failsafe,
-        }),
+        control_box,
     }
 }
 
 #[cfg(test)]
 mod series_tests {
     use super::*;
+
+    #[test]
+    fn boost_confirmation_requires_the_current_price_and_deadline() {
+        let now = time::macros::datetime!(2026-01-16 10:00 UTC);
+        let until = (now + time::Duration::HOUR).unix_timestamp();
+        let mut review = BoostConfirmation {
+            goal: crate::home::CarGoal {
+                target_soc: 0.8,
+                by_minute: 720,
+                price_cap_ct: None,
+            },
+            extra_eur: 0.45,
+            until,
+        };
+        let quote = crate::runtime::quote::Quote {
+            verdict: crate::home::Verdict::Feasible,
+            reachable: None,
+            extra_eur: Some(0.45),
+            eligible_quarters: None,
+            boost_until: Some(until),
+        };
+        assert!(review.matches(&quote, now));
+        assert!(!review.matches(&quote, now + time::Duration::HOUR));
+        review.extra_eur = 0.44;
+        assert!(!review.matches(&quote, now));
+        review.extra_eur = 0.45;
+        review.until += 1;
+        assert!(!review.matches(&quote, now));
+    }
 
     #[tokio::test]
     async fn a_box_that_keeps_no_series_says_so_rather_than_answering_nothing() {
@@ -1651,10 +2282,15 @@ mod series_tests {
             crate::runtime::access::LocalAccess::for_testing("haus", "t"),
             None,
         );
+        assert_eq!(
+            trust_check(State(local.clone())).await.history,
+            crate::doctor::HistoryState::Disabled
+        );
         let outcome = series(
             State(local),
             Path("grid".to_owned()),
             Query(Asked {
+                resolution: None,
                 from: None,
                 to: None,
             }),
@@ -1687,27 +2323,119 @@ mod series_tests {
             crate::runtime::access::LocalAccess::for_testing("haus", "t"),
             Some(Arc::new(store)),
         );
+        {
+            let _permit = local.history_reader.acquire().await.unwrap();
+            assert_eq!(
+                trust_check(State(local.clone())).await.history,
+                crate::doctor::HistoryState::Busy
+            );
+        }
+        assert_eq!(
+            trust_check(State(local.clone())).await.history,
+            crate::doctor::HistoryState::Current
+        );
         // No window: the default hour back is what a screen asks for, and it has
         // to be wide enough to contain a reading five minutes old.
-        let Json(window) = series(
+        let start = ems_core::prelude::Slot::containing(at).start();
+        let quarter = time::Duration::minutes(15);
+        for (from, to) in [
+            (start, start),
+            (start, start + quarter + time::Duration::NANOSECOND),
+            (start, start + time::Duration::days(1097)),
+            (
+                time::macros::datetime!(1400-01-01 00:00 UTC),
+                time::macros::datetime!(1400-01-02 00:00 UTC),
+            ),
+        ] {
+            let asked = Asked {
+                from: Some(from),
+                to: Some(to),
+                resolution: Some(HistoryResolution::QuarterHours),
+            };
+            assert_eq!(
+                series(State(local.clone()), Path("grid".into()), Query(asked))
+                    .await
+                    .err(),
+                Some(StatusCode::BAD_REQUEST)
+            );
+        }
+        let asked = Asked {
+            from: Some(start),
+            to: Some(start + quarter),
+            resolution: Some(HistoryResolution::QuarterHours),
+        };
+        let response = series(State(local.clone()), Path("grid".into()), Query(asked))
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let summary: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(summary["resolution"], "quarter_hours");
+        assert_eq!(summary["readings"][0]["samples"], 1);
+
+        let latest_closed = Asked {
+            from: None,
+            to: None,
+            resolution: Some(HistoryResolution::QuarterHours),
+        };
+        assert!(
+            series(
+                State(local.clone()),
+                Path("grid".into()),
+                Query(latest_closed)
+            )
+            .await
+            .is_ok()
+        );
+        let response = series(
             State(local),
             Path(crate::series::GRID.to_owned()),
             Query(Asked {
+                resolution: None,
                 from: None,
                 to: None,
             }),
         )
         .await
         .expect("a box with a series answers");
-        assert_eq!(
-            window.resolution,
-            crate::series::Resolution::Seconds,
-            "an hour back is the box's own trace, not a rollup of it"
-        );
-        assert_eq!(window.readings.len(), 1, "{window:?}");
-        assert!((window.readings[0].watts - 2_500.0).abs() < 1e-6);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let window: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(window["resolution"], "seconds");
+        assert_eq!(window["readings"].as_array().unwrap().len(), 1);
+        assert_eq!(window["readings"][0]["watts"], 2500.0);
         let _ = std::fs::remove_dir_all(&dir);
     }
+    #[tokio::test]
+    async fn cancelling_a_history_request_keeps_the_worker_bounded_until_it_finishes() {
+        let reader = Arc::new(tokio::sync::Semaphore::new(1));
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let pending = tokio::spawn(read_history(reader.clone(), move || {
+            started.send(()).unwrap();
+            blocked
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            Ok(())
+        }));
+        ready.await.unwrap();
+        pending.abort();
+        assert!(pending.await.unwrap_err().is_cancelled());
+        assert_eq!(
+            read_history(reader.clone(), || Ok(())).await,
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        );
+        release.send(()).unwrap();
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(5), reader.acquire())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(permit);
+        assert!(read_history(reader, || Ok(())).await.is_ok());
+    }
+
     /// A box that knows the reference household, for the goal routes.
     fn with_the_reference_house() -> (Local, String, String) {
         let site = crate::site::Household::build(&crate::HouseholdConfig::default())
@@ -1735,6 +2463,23 @@ mod series_tests {
             ..HomeSources::default()
         });
         (local, car, tank)
+    }
+
+    #[tokio::test]
+    async fn a_failed_replan_identifies_the_retained_plan_until_recovery() {
+        use ems_core::prelude::{Horizon, Plan};
+
+        let (local, _, _) = with_the_reference_house();
+        let at = OffsetDateTime::now_utc();
+        local.home.health.bad("planner", "no prices");
+        assert!(local.document().await.unwrap().previous_plan_at.is_none());
+        *local.home.plan.write().await = Some(Plan::empty(Horizon::new(at, 1), at));
+        assert_eq!(
+            local.document().await.unwrap().previous_plan_at,
+            Some(rfc3339(at))
+        );
+        local.home.health.good("planner", at);
+        assert!(local.document().await.unwrap().previous_plan_at.is_none());
     }
 
     #[tokio::test]
@@ -1802,7 +2547,7 @@ mod series_tests {
             Some(StatusCode::NOT_FOUND)
         );
         assert_eq!(
-            local.home.goal.get().await,
+            local.home.goal.get(),
             crate::home::GoalSet::default(),
             "a refused goal changes nothing"
         );
@@ -1835,19 +2580,24 @@ mod series_tests {
         )
         .await
         .expect("a car takes a state of charge");
-        let set = local.home.goal.get().await;
+        let set = local.home.goal.get();
         assert_eq!(set.tank, Some(water));
         assert!(set.car.is_some());
+        let Json(document) = home(State(local.clone()))
+            .await
+            .expect("read back saved goals");
+        assert_eq!(document.tank_goal, Some((water, None)));
+        assert_eq!(document.goal, set.car.map(|goal| (goal, None)));
 
         assert_eq!(
-            clear_goal(State(local.clone()), Path(car.clone())).await,
+            clear_goal(State(local.clone()), None, Path(car.clone())).await,
             Ok(StatusCode::NO_CONTENT)
         );
         assert_eq!(
-            clear_goal(State(local.clone()), Path(car)).await,
+            clear_goal(State(local.clone()), None, Path(car)).await,
             Ok(StatusCode::NOT_FOUND),
             "there is no car goal left to withdraw"
         );
-        assert_eq!(local.home.goal.get().await.tank, Some(water));
+        assert_eq!(local.home.goal.get().tank, Some(water));
     }
 }

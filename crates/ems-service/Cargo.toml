@@ -1,6 +1,6 @@
 [package]
 name        = "ems-service"
-description = "The shell every hems daemon shares — configuration from a file and the environment, structured logging, a health and readiness surface, HTTPS for a daemon on a network nobody else secures, and a shutdown that finishes what it started"
+description = "Shared configuration, health checks, HTTP serving and shutdown for EMS daemons"
 keywords    = ["energy", "daemon", "hems", "service"]
 categories  = ["network-programming"]
 readme      = "README.md"
@@ -28,6 +28,7 @@ testkit  = ["postgres"]
 tls = ["dep:tokio-rustls", "dep:hyper-util", "dep:rustls", "tokio-util/rt"]
 
 [dependencies]
+anyhow = { workspace = true }
 tokio-postgres         = { workspace = true, optional = true }
 tokio-postgres-rustls  = { workspace = true, optional = true }
 deadpool-postgres      = { workspace = true, optional = true }

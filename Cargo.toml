@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/ems-core", "crates/ems-device", "crates/ems-drv", "crates/ems-flex", "crates/ems-grid", "crates/ems-realtime", "crates/ems-tariff", "crates/ems-forecast", "crates/ems-optimizer", "crates/ems-events", "crates/ems-service", "crates/ems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/histd", "services/obsd", "services/tariffd", "xtask"]
+members = ["crates/ems-core", "crates/ems-device", "crates/ems-drv", "crates/ems-flex", "crates/ems-grid", "crates/ems-realtime", "crates/ems-tariff", "crates/ems-forecast", "crates/ems-optimizer", "crates/ems-events", "crates/ems-service", "crates/ems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/bemsd", "services/cemsd", "services/histd", "services/obsd", "services/tariffd", "tools/ems-wasm", "xtask"]
 
 [workspace.package]
-version      = "0.7.0"
+version      = "0.8.0"
 authors      = ["hupe1980"]
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
@@ -12,284 +12,112 @@ homepage     = "https://hupe1980.github.io/ems"
 rust-version = "1.99"
 
 [workspace.dependencies]
+openadr = { version = "=0.6.0", default-features = false }
+matter-kit = { version = "0.4", default-features = false }
+ocpp-kit = { version = "0.8", default-features = false, features = ["v1_6"] }
 # ── External ────────────────────────────────────────────────────────────────
 thiserror    = "2"
 serde        = { version = "1", features = ["derive"] }
-# `float_roundtrip` is **not** a default feature and this workspace needs it.
-#
-# Without it `serde_json`'s float parser is a fast approximation, so an `f64`
-# written to JSON and read back is not always the same `f64` — a battery's S2
-# fill rate of 0,001 319 444 444 444 444 3 kWh/s came back
-# …444 5, which is where this was found. Money is safe by construction (P3 keeps
-# every settled quantity in `rust_decimal`, and `cargo xtask check-wire` says so
-# for each one), but everything the control stack works in is `f64`: prices the
-# box fetches, the sky `forecastd` sends, the residual model the box saves and
-# reloads on every restart, the day it reports to `obsd`. A learned correction
-# that drifts a bit each time it is persisted is not a bug anybody would ever see
-# and is exactly the kind of arithmetic this workspace has agreed to audit rather
-# than assume. The cost is about twice the parse time on floats, on documents of
-# a few hundred numbers.
+# Preserve f64 values across serialized forecasts and persisted controller state.
 serde_json   = { version = "1", features = ["float_roundtrip"] }
 time         = { version = "0.3", features = ["std", "macros", "parsing", "formatting", "serde-well-known"] }
-# `db-tokio-postgres` gives `Decimal` its `ToSql`/`FromSql` for PostgreSQL's
-# `NUMERIC`, which is what lets a settlement quantity be a number in the database
-# rather than a decimal written into a `TEXT` column. Additive and inert for
-# every crate that does not touch a database — unlike a `serde` feature, it
-# changes no existing impl (D144's lesson, applied to the other kind of global
-# feature).
+# Use PostgreSQL NUMERIC for exact settlement quantities.
 rust_decimal = { version = "1", features = ["macros", "db-tokio-postgres"] }
 uuid         = { version = "1", features = ["v4", "v7", "serde"] }
 tracing      = "0.1"
-# The advisory runtime `agentd` is built on: durable, replayable, and the
-# journal is the plan of record. `redb` is the embedded store one instance uses.
-#
-# **`manifest` is off**: it is the YAML-defined-agent surface, and `agentd`
-# defines its specialists in Rust — `SPECIALISTS` is a table of functions, which
-# is what makes a review a computation rather than a prompt. Enabling it costs
-# the fleet binary `serde_yaml_ng`, `jsonschema` and their trees, 21 packages,
-# for documents that do not exist (D177).
+# Rust-defined fleet specialists use the embedded redb journal.
 agentplane   = { version = "0.61", default-features = false, features = ["redb"] }
 anyhow       = "1"
 toml         = { version = "1", default-features = false, features = ["parse", "serde"] }
 
-# Reading somebody else's price list. Both are pure parsers — a `&str` in, a
-# structure out — so `ems-tariff` stays a domain crate that does no I/O: the
-# fetching lives in `tariffd`, and every source is tested against a captured
-# response rather than against the internet.
-# ≥ 0.41: RUSTSEC-2026-… caps the namespace resolver's per-element
-# allocation. hems uses the plain `Reader` rather than `NsReader` and is not
-# affected, but a workspace that pins a version an advisory names has to argue
-# the point on every audit run, and upgrading is cheaper than arguing.
+# Parse market feeds in ems-tariff. Fetching belongs to tariffd.
 quick-xml    = { version = "0.42", default-features = false }
 
-# The German metering domain: DST-correct Europe/Berlin calendar, OBIS codes,
-# quality flags, §14a Modul 3 Zählzeit registers, virtual meters (§42b), §42c
-# eligibility. hems computes *control*; `metering` owns *quantities*, and the
-# two must never disagree about what a quarter-hour is.
+# Berlin settlement calendar, OBIS identifiers and metering rules.
 metering     = { version = "0.26", features = ["serde"] }
 
-# EEBUS: SHIP + SPINE + the certifiable use cases. Taken with `default-features
-# = false` so the domain side gets the sans-I/O cores and nothing else — no
-# tokio, no TLS, no mDNS. `hemsd` is where a socket is allowed to exist.
+# Keep transport and TLS in the edge daemon.
 eebus        = { version = "0.13.1", default-features = false, features = ["std"] }
 
-# S2 / EN 50491-12-2: the JSON data model, the rule-numbered semantic validator,
-# and the sans-I/O Resource Manager and Customer Energy Manager session engines.
-#
-# `default-features = false` twice over. It keeps the transport out of the domain
-# side, the same line `eebus` is taken on — but it is also **load-bearing for the
-# build**: the default set includes `tls-ring`, and `deny.toml` bans `ring`
-# because two `rustls` providers in one binary is a runtime panic. A careless
-# `s2-kit = "0.3"` is a `cargo deny` failure rather than a silent second
-# provider, which is the way round this workspace wants it.
-#
-# `time` rather than `chrono`: the crate carries its own `Timestamp` and
-# `Duration` and converts to whichever calendar a consumer already has, so `time`
-# stays the one calendar in the product (D201).
+# Use the sans-I/O session engines and the workspace time types. Default TLS features pull in ring.
 s2-kit       = { version = "0.4", default-features = false, features = ["std", "time", "uuid"] }
-# Already in the tree under `mdns-sd`; a direct edge so the daemon can name the
-# interfaces it announces itself on rather than guessing.
+# Select local interfaces for mDNS announcements.
 if-addrs     = { version = "0.15" }
 
-# SunSpec's generated model definitions. Taken with `default-features = false`
-# so the tokio-modbus client stays out: what hems wants is `Model::parse`, which
-# is a pure function from a register block to a typed struct, and the register
-# maps are a thousand pages of specification nobody should retype.
+# Decode the supported SunSpec register models without a networking client.
 sunspec      = { version = "0.9", default-features = false, features = [
     "model1", "model101", "model102", "model103", "model123",
     "model201", "model202", "model203", "model204",
     "model701", "model702", "model802",
 ] }
 
-# The far end of the virtual house (`hemsd house`): a Modbus TCP *server* nobody
-# here wrote, so the box's own frame codec meets a stranger. Server only — the
-# box's client stays `ems-drv`'s — and only behind `hemsd`'s `house` feature.
+# Server for the virtual household behind the hemsd house feature.
 tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-server"] }
 
-# Linear/mixed-integer programming façade. `microlp` is the pure-Rust default so
-# a plain `cargo test` needs no C++ toolchain; production boxes enable `highs`.
+# microlp is the default pure-Rust solver.
 good_lp      = { version = "1.15", default-features = false }
 
 # ── Internal (path + version so the domain crates can be published) ─────────
-ems-core      = { path = "crates/ems-core",      version = "0.7" }
-ems-device    = { path = "crates/ems-device",    version = "0.7" }
-ems-drv       = { path = "crates/ems-drv",       version = "0.7" }
-ems-flex      = { path = "crates/ems-flex",      version = "0.7" }
-ems-grid      = { path = "crates/ems-grid",      version = "0.7" }
-ems-tariff    = { path = "crates/ems-tariff",    version = "0.7" }
-ems-forecast  = { path = "crates/ems-forecast",  version = "0.7" }
-ems-optimizer = { path = "crates/ems-optimizer", version = "0.7" }
-ems-realtime  = { path = "crates/ems-realtime",  version = "0.7" }
-ems-events    = { path = "crates/ems-events",    version = "0.7" }
-ems-service   = { path = "crates/ems-service",   version = "0.7" }
-ems-sim       = { path = "crates/ems-sim",       version = "0.7" }
+ems-core      = { path = "crates/ems-core",      version = "0.8" }
+ems-device    = { path = "crates/ems-device",    version = "0.8" }
+ems-drv       = { path = "crates/ems-drv",       version = "0.8" }
+ems-flex      = { path = "crates/ems-flex",      version = "0.8" }
+ems-grid      = { path = "crates/ems-grid",      version = "0.8" }
+ems-tariff    = { path = "crates/ems-tariff",    version = "0.8" }
+ems-forecast  = { path = "crates/ems-forecast",  version = "0.8" }
+ems-optimizer = { path = "crates/ems-optimizer", version = "0.8" }
+ems-realtime  = { path = "crates/ems-realtime",  version = "0.8" }
+ems-events    = { path = "crates/ems-events",    version = "0.8" }
+ems-service   = { path = "crates/ems-service",   version = "0.8" }
+ems-sim       = { path = "crates/ems-sim",       version = "0.8" }
 
-# ── The fleet's own dependencies ────────────────────────────────────────────
-#
-# None of these may be reached by a crate in the `purity` list: a domain crate
-# that opens a socket or reads a clock stops being a winter day that runs as a
-# unit test. They live here so the six daemons agree about which versions they
-# are, and nowhere else.
+# Shared runtime dependencies
 
-# The runtime. `ems-service` takes the narrow feature set a daemon shell needs;
-# a daemon that wants more asks for more.
+# Each daemon enables its required runtime features.
 tokio        = { version = "1", default-features = false }
-# The HTTP surface. Axum rather than a framework with a router of its own,
-# because the three shared endpoints are the whole of what this workspace needs
-# from one and `Router::merge` is how a daemon adds its own without being able to
-# shadow them.
-# `matched-path` is what lets a metrics label be the *route* rather than the
-# path: a hems site is called `reference-household`, which no heuristic
-# normaliser recognises as an identifier, so without it every household would get
-# a Prometheus label of its own (D163).
+# matched-path labels metrics by route template.
 axum         = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "matched-path"] }
-# The client half, on rustls rather than OpenSSL: a gateway box image with no
-# system OpenSSL is the point of a distroless build.
-#
-# The crypto provider underneath is **aws-lc-rs**, which is `rustls` 0.23's own
-# default and is taken deliberately rather than inherited: it is the provider
-# with post-quantum key exchange, which matters for a device whose service life
-# is measured in decades and whose traffic can be recorded today. `deny.toml`
-# bans `ring` so the choice is a build failure to change rather than a
-# resolution to notice — two providers in one binary is a runtime panic.
-#
-# **No root-store feature here, deliberately.** `reqwest` 0.13 verifies with
-# `rustls-platform-verifier` and exposes no way to install a compiled-in list, so
-# where a client's trust anchors come from is a deployment's decision and
-# `ems_service::http::TlsRoots` is where it is written down (D171).
+# Use rustls with the workspace crypto provider. Deployment-specific trust roots live in TlsRoots.
 reqwest      = { version = "0.13", default-features = false, features = ["rustls", "http2", "json", "charset"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "json", "std", "ansi"] }
-# The Model Context Protocol. Every fleet daemon mounts a **read-only** tool
-# surface at `/mcp` on the socket it already binds, so an agent reads the same
-# numbers an operator does — and is told what they mean, which is the part a
-# REST route does not carry.
-#
-# Server side only. A daemon that could *call* a model is a daemon whose answers
-# depend on one, and none of these answers may.
+# Fleet daemons expose read-only MCP tools.
 rmcp         = { version = "3", default-features = false, features = ["server", "macros", "schemars", "transport-streamable-http-server"] }
 schemars     = { version = "1", default-features = false, features = ["derive"] }
 tokio-util   = { version = "0.7", default-features = false }
-# ── The two stores, and why there are two ───────────────────────────────────
-#
-# **The box's own**, `redb`: a pure-Rust embedded key-value store with ordered
-# ranges and ACID transactions across tables, which is the shape that record has
-# — no joins, no aggregate but the backlog's counts, every ordering on the
-# natural key (D169). The major tracks `agentplane`'s deliberately: two majors of
-# a storage library would compile two of them into one fleet. `cargo tree -i redb`
-# is the check, and it answers with one version.
+# Household evidence and its outbox entry share one transaction.
 redb         = { version = "4" }
-# The box's **measurement series**, and only that. An embedded TSDB that
-# maintains itself — flush, compaction, rollups, retention — so a gateway needs
-# nothing started.
-#
-# The settlement registers stay in `redb` for a *transactional* reason rather than
-# a typing one — `FieldValue::Decimal` is exact — because a register and the
-# outbox marker saying the fleet still owes it are one write, and two stores have
-# no shared transaction (D168).
-#
-# `default-features = false` drops all three defaults, and each is a choice
-# rather than an inheritance: `sql` and with it DataFusion (52 MiB of object code
-# for a query API this box does not have), `field-encryption`, and `analytics`
-# (32 310 lines this workspace does not call, because `ems-forecast` owns the
-# forecasting). Measured: 178 packages against 290.
-#
-# What it does **not** drop is `rayon`, as `chronix`'s own release notes say: the
-# facade reads segments in parallel past four per bucket, so a thread pool sized
-# to the core count spins up inside the process that owes a sixty-second § 14a
-# heartbeat. Unavoidable for any consumer today, and the reason is not this gate
-# (R33).
-chronix      = { version = "0.9", default-features = false }
-# The `arrow` major `chronix` returns query results in, named so the two cannot
-# drift. Needed to read the time column as the `Int64` it is: through an `f64`
-# every instant rounds to the nearest 256 ns, because nanoseconds since the
-# epoch needs 61 bits and a mantissa carries 53.
+# Local measurement series and rollups. SQL and analytics are optional upstream features.
+chronix      = { version = "0.10", default-features = false }
+# Match the Arrow major returned by chronix and read timestamps as integers.
 arrow        = { version = "59", default-features = false }
-# **The fleet's**, PostgreSQL. The daemons behind it hold the § 14a evidence of
-# every household, and each thing that makes an embedded store right on the box is
-# wrong here: one writer serialises a fleet's worth of forwards behind a mutex,
-# a file on one node cannot be replicated, and a daemon that cannot run two
-# replicas cannot be deployed without downtime (D156).
-#
-# Two consequences worth naming, because both are correctness rather than scale.
-# A settlement quantity is a **`NUMERIC`** rather than a decimal written into a
-# `TEXT` column — `rust_decimal` round-trips through PostgreSQL's own exact type,
-# so `SUM(grid_draw_kwh)` is arithmetic the database does rather than 35 040
-# strings this workspace parses (P3, in the store as well as in the code). And an
-# instant is a **`TIMESTAMPTZ`** rather than Unix seconds, so a range query is a
-# range query.
-#
-# `tokio-postgres` rather than `sqlx`. What `sqlx` would add over it is a
-# compile-time `query!` these daemons do not use and a `migrate!` macro
-# `ems_service::db` already replaces with an advisory lock, a checksum and a
-# refusal to run backwards. D158 has the history. Of the three ways out —
-# move the box to `sqlx/sqlite` too, keep the fleet on SQLite, or use a
-# PostgreSQL driver that links no native library — only the last leaves the
-# safety-critical edge daemon alone. `tokio-postgres` is pure Rust, is what
-# `sqlx-postgres` is built on, and pairs with `deadpool` for the pool and
-# `rustls` for the TLS a managed instance requires.
+# Fleet persistence uses PostgreSQL NUMERIC and TIMESTAMPTZ.
 tokio-postgres        = { version = "0.7", features = ["with-time-0_3", "with-serde_json-1"] }
 tokio-postgres-rustls = { version = "0.14" }
 deadpool-postgres     = { version = "0.14", default-features = false, features = ["rt_tokio_1"] }
-# The same **aws-lc-rs** provider `reqwest` is on, not `ring`: `deny.toml` bans
-# `ring` precisely so this is a build failure rather than a resolution to
-# notice, and two providers in one binary is a runtime panic.
+# Keep aws-lc-rs as the single TLS provider.
 rustls                = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12", "logging"] }
-# Mozilla's CA list, used **directly** by `ems_service::db` for the
-# `rustls::RootCertStore` a managed PostgreSQL instance is verified against — the
-# fleet's database link, and not the HTTP client, whose anchors are `TlsRoots`.
+# CA roots for managed PostgreSQL connections.
 webpki-roots          = { version = "1" }
-# The box's own HTTPS (specs/006): the acceptor and the connection driver axum
-# itself runs on, and a self-signed certificate made with the provider the rest
-# of the box already names — `rcgen`'s default would bring `ring`, which
-# deny.toml bans because two rustls providers panic at the first connection.
+# TLS server for the household API.
 tokio-rustls          = { version = "0.26", default-features = false, features = ["tls12", "aws_lc_rs"] }
 hyper-util            = { version = "0.1", default-features = false, features = ["server-auto", "service", "tokio"] }
-# Web Push from the box (`hemsd::runtime::webpush`): P-256 agreement, HMAC,
-# AES-128-GCM and ES256 from the provider `rustls` already links, named because
-# the box now calls it directly. No second cryptography crate.
+# Web Push encryption uses the same provider as rustls.
 aws-lc-rs             = { version = "1", default-features = false, features = ["aws-lc-sys"] }
 rcgen                 = { version = "0.14", default-features = false, features = ["pem", "aws_lc_rs"] }
-# The handover sheet's QR codes, drawn by the box as SVG so the page stays
-# without a script that could. `default-features = false` keeps `image` and its
-# codecs out: an SVG is text.
+# Render handover codes as SVG without raster codecs.
 qrcode                = { version = "0.15", default-features = false, features = ["std", "svg"] }
-# A real PostgreSQL for the tests, in a container the test starts. It is the
-# price of the paragraph above: SQLite was what made `just ci` a clone-and-run,
-# and a fleet service tested against a database it does not deploy on is a
-# service whose queries are checked by nothing (D156).
-# There is deliberately **no** container library here. `ems_service::testdb`
-# runs `docker run --rm` itself: one command and a readiness poll, which is less
-# code than the library call it replaced, one fewer dependency (and with it the
-# `ring` provider that `deny.toml` bans), and it fails in ways that name their
-# own fix. What decided it was a container left in Docker's `dead` state — the
-# library's reuse-by-name attached to the corpse and the whole suite failed with
-# `PortNotExposed`.
-# Signed updates. The CRA (Regulation (EU) 2024/2847, Annex I Part I § 2(c))
-# requires a product to ship security updates and to protect their integrity;
-# an unsigned firmware image on a device that controls a grid connection is the
-# whole of what that is about. Ed25519 because the signature is 64 bytes, the
-# public key is 32, and a gateway box verifies one in microseconds.
+# Verify signatures on configuration and release manifests.
 ed25519-dalek = { version = "3", default-features = false, features = ["alloc", "fast", "zeroize"] }
 sha2          = { version = "0.11", default-features = false, features = ["alloc"] }
 http         = "1"
 hex           = { version = "0.4", default-features = false, features = ["std"] }
-# The box→fleet link, signed. `hmac` over the `sha2` above rather than a
-# hand-rolled construction: HMAC is fifteen lines and every one of them is a
-# place to be wrong, and `Mac::verify_slice` is the constant-time comparison a
-# signature check has to have. `base64` because Standard Webhooks says base64.
+# Authenticate box-to-fleet messages with Standard Webhooks.
 hmac          = { version = "0.13", default-features = false }
 base64        = { version = "0.23", default-features = false, features = ["std"] }
-# The operating system's own entropy, and nothing else. A credential derived from
-# a site name, a secret or a clock is a credential somebody can compute.
+# Generate credentials from operating-system entropy.
 getrandom     = { version = "0.4", default-features = false, features = ["std"] }
 
-# Dependencies are optimised even in a debug build.
-#
-# `cargo test` builds unoptimised, and the numerical libraries in this workspace
-# are the kind of code that is thirty times slower that way: the interior-point
-# solver behind the shadow prices took a simulated day from four seconds to
-# sixty, which is not a statement about the algorithm. Our own crates stay
-# unoptimised so a panic still points at a line.
+# Optimize solver dependencies in debug builds.
 [profile.dev.package."*"]
 opt-level = 3
 

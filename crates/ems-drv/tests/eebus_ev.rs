@@ -347,8 +347,15 @@ fn a_car_filling_up_is_reported_and_a_car_holding_still_is_not() {
         wire.sessions()
     );
 
-    wire.wallbox.reports_soc(41.0, 50);
-    wire.settle(50);
+    wire.tick(62);
+    assert_eq!(
+        wire.sessions().last().unwrap().at,
+        at(62),
+        "a fresh poll confirms an unchanged SoC once per interval"
+    );
+
+    wire.wallbox.reports_soc(41.0, 70);
+    wire.settle(70);
     assert_eq!(
         wire.sessions().last().expect("a session").soc,
         Some(0.41),

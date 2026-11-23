@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block styles %}<link rel="stylesheet" href="{{ get_url(path='solar/charging.css') }}">{% endblock %}
+{% block content %}
+<article class="solar-lab">
+  <header><p class="context">Household simulation</p>
+    <h1>Can the car charge on sunshine?</h1>
+    <p>The house has taken its share of the rooftop solar. Move the surplus to see how much an 11 kW wallbox can offer the car on one phase or three.</p>
+  </header>
+  <div id="solar-controls" class="solar-panel" hidden>
+    <label for="solar-surplus">Surplus solar power</label>
+    <output id="solar-available" for="solar-surplus"></output>
+    <input type="range" id="solar-surplus" min="0" max="12000" step="10" value="2000" aria-describedby="solar-unit">
+    <div class="solar-scale" aria-hidden="true"><span>0 kW</span><span>12 kW</span></div>
+    <p id="solar-unit">Power available after household use, with no grid import for charging.</p>
+    <div class="solar-modes" aria-live="polite" aria-atomic="true">
+      {% for label in ["One phase", "Three phases"] %}
+      <section><h2>{{ label }}</h2>
+        <p class="solar-reading"></p>
+        <meter aria-hidden="true" min="0" max="11000" value="0"></meter>
+        <p class="solar-reason"></p>
+      </section>
+      {% endfor %}
+    </div>
+  </div>
+  <details id="solar-example"><summary>View the worked example</summary>
+    <p id="solar-failed" hidden>The interactive model couldn’t load. Compare the four solar levels below.</p>
+    {{ page.content | safe }}
+  </details>
+  <p>Each active phase needs at least 6 A at 230 V. The model allows up to 16 A per phase and caps the whole wallbox at 11 kW. The figures show steady-state charging setpoints with the car ready to charge. A real phase change also takes time.</p>
+  <a href="{{ get_url(path='@/docs/household.md') }}">Explore the household gateway →</a>
+</article>
+<script type="module" src="{{ get_url(path='solar/charging.js') }}"></script>
+{% endblock %}

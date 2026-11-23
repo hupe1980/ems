@@ -1,6 +1,6 @@
 [package]
 name        = "agentd"
-description = "The advisory plane for hems: specialists that correlate across many exact answers, on a runtime whose journal is the plan of record — and which cannot move a household's energy, by construction"
+description = "Advisory fleet service for correlating measurements and operational findings"
 publish     = false
 version.workspace      = true
 authors.workspace      = true

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use aws_lc_rs::hmac;
 use base64::Engine as _;
-use hemsd::runtime::push::Event;
+use hemsd::runtime::push::{Event, Lang, Occurrence, message};
 use hemsd::runtime::webhooks::{Asked, Webhooks};
 use tokio::sync::Mutex;
 
@@ -99,16 +99,29 @@ async fn a_reduction_reaches_a_receiver_signed_and_nothing_else_does() {
         .expect("subscribed");
     assert!(created.secret.starts_with("whsec_"));
 
+    let reduction = Occurrence::from(Event::ReductionBegan);
+    hooks.emit(&[(reduction, None)], &reduced_home(), now).await;
     hooks
-        .emit(&[Event::ReductionBegan], &reduced_home(), now)
-        .await;
-    hooks.emit(&[Event::GoalTight], &reduced_home(), now).await; // not asked for
+        .emit(&[(Event::GoalTight.into(), None)], &reduced_home(), now)
+        .await; // not asked for
     hooks
-        .emit(&[Event::ReductionEnded], &serde_json::json!({}), now)
+        .emit(
+            &[(Event::ReductionEnded.into(), None)],
+            &serde_json::json!({}),
+            now,
+        )
         .await;
     hooks.deliver_due(now).await;
 
     let received = seen.lock().await;
+    let push = message(reduction, Lang::En, "https://hems.local");
+    let (headers, body) = &received.bodies[0];
+    let cloud: serde_json::Value = serde_json::from_slice(body).unwrap();
+    assert_eq!(push["notification"]["data"]["event_id"], cloud["id"]);
+    assert_eq!(
+        headers["webhook-id"].to_str().unwrap(),
+        reduction.id.to_string()
+    );
     let types: Vec<String> = received
         .bodies
         .iter()
@@ -158,7 +171,11 @@ async fn a_receiver_that_fails_gets_the_same_event_again_later() {
         .await
         .unwrap();
     hooks
-        .emit(&[Event::ReductionBegan], &reduced_home(), now)
+        .emit(
+            &[(Event::ReductionBegan.into(), None)],
+            &reduced_home(),
+            now,
+        )
         .await;
     hooks.deliver_due(now).await;
     // Not yet due again: the first gap is thirty seconds.
@@ -322,7 +339,11 @@ async fn a_revoke_during_a_slow_delivery_holds() {
         .await
         .unwrap();
     hooks
-        .emit(&[Event::ReductionBegan], &reduced_home(), now)
+        .emit(
+            &[(Event::ReductionBegan.into(), None)],
+            &reduced_home(),
+            now,
+        )
         .await;
     let pass = {
         let hooks = hooks.clone();
@@ -335,4 +356,241 @@ async fn a_revoke_during_a_slow_delivery_holds() {
         hooks.list().await.unwrap().is_empty(),
         "the pass wrote back a subscription the household had revoked"
     );
+}
+
+#[tokio::test]
+async fn export_limit_lost_device_and_failsafe_exit_each_arrive_once() {
+    let (url, received) = receiver().await;
+    let hooks = Webhooks::new("home", None).allowing_loopback_for_testing();
+    let now = time::OffsetDateTime::now_utc();
+    hooks
+        .subscribe(
+            Asked {
+                name: "Recorder".into(),
+                url,
+                types: vec!["de.ems.*".into()],
+                subjects: vec![],
+                public: false,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    let last = "2026-10-25T01:15:00Z";
+    let baseline = serde_json::json!({"reduction":{"failsafe":true}, "devices":[]});
+    let observed = serde_json::json!({"devices":[{"id":"ev","notice":"silent","last_seen":last}], "feed_in_limit_w":0.0});
+    for snapshot in [&baseline, &observed, &observed] {
+        hooks.emit(&[], snapshot, now).await;
+    }
+    hooks.deliver_due(now).await;
+    let events: Vec<serde_json::Value> = received
+        .lock()
+        .await
+        .bodies
+        .iter()
+        .map(|(_, body)| serde_json::from_slice(body).unwrap())
+        .collect();
+    assert_eq!(events.len(), 3);
+    let event = |kind: &str| events.iter().find(|e| e["type"] == kind).unwrap();
+    assert_eq!(event(ems_events::DEVICE_LOST)["subject"], "ev");
+    assert_eq!(event(ems_events::DEVICE_LOST)["data"]["last_seen"], last);
+    assert_eq!(
+        event(ems_events::GRID_LPP_LIMIT_RECEIVED)["data"]["limit_w"],
+        0.0
+    );
+    assert_eq!(
+        event(ems_events::GRID_LPC_FAILSAFE_LEFT)["data"]["reduced"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn a_restart_drops_expired_deliveries_and_a_reset_erases_the_subscription() {
+    let (url, seen) = receiver().await;
+    let store = Arc::new(Mutex::new(hemsd::store::Store::in_memory().unwrap()));
+    let restart = || Webhooks::new("home", Some(store.clone())).allowing_loopback_for_testing();
+    let hooks = restart();
+    let now = time::OffsetDateTime::now_utc();
+    let created = hooks
+        .subscribe(
+            Asked {
+                name: "Recorder".into(),
+                url,
+                types: vec!["de.ems.*".into()],
+                subjects: vec![],
+                public: false,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    let mut day = hemsd::month::ClosedDay {
+        day: "2026-11-20".into(),
+        money: None,
+
+        forecast: None,
+        metered_bill: None,
+        comparison: None,
+        arbitrage: None,
+        imported_wh: 19,
+        produced_wh: 0,
+        reduced_minutes: None,
+        reductions: 0,
+        reduction_respected: true,
+        feed_in_respected: true,
+    };
+    hooks.day_closed(&day, now).await;
+    day.day = "2026-11-21".into();
+    hooks.day_closed(&day, now).await;
+    hooks.day_closed(&day, now).await;
+    hooks.deliver_due(now).await;
+    let restarted = restart();
+    restarted.day_closed(&day, now).await;
+    restarted
+        .emit(
+            &[(Event::ReductionBegan.into(), None)],
+            &reduced_home(),
+            now,
+        )
+        .await;
+    let later = now + time::Duration::hours(25);
+    restarted.deliver_due(later).await;
+    let received = seen.lock().await;
+    assert_eq!(received.bodies.len(), 1);
+    let closed: serde_json::Value = serde_json::from_slice(&received.bodies[0].1).unwrap();
+    assert_eq!(closed["type"], ems_events::SITE_DAY_CLOSED);
+    assert_eq!(closed["data"]["day"], day.day);
+    drop(received);
+    let log = restarted.deliveries(later).await.unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[0].outcome, "dropped");
+    assert_eq!(log[0].attempt, 0);
+    let views = restarted.list().await.unwrap();
+    assert_eq!(views[0].owed, 0);
+    for value in [
+        serde_json::to_string(&views).unwrap(),
+        serde_json::to_string(&log).unwrap(),
+    ] {
+        assert!(!value.contains(created.secret.trim_start_matches("whsec_")));
+    }
+    assert!(
+        restarted
+            .deliveries(later + time::Duration::days(8))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    restarted
+        .emit(
+            &[(Event::ReductionEnded.into(), None)],
+            &serde_json::json!({}),
+            later,
+        )
+        .await;
+    assert_eq!(restarted.list().await.unwrap()[0].owed, 1);
+    store.lock().await.factory_reset().unwrap();
+    assert!(restart().list().await.unwrap().is_empty());
+    assert!(restart().deliveries(later).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_redirect_and_a_stalled_receiver_have_bounded_outcomes() {
+    let (target, seen) = receiver().await;
+    let app = axum::Router::new()
+        .route(
+            "/redirect",
+            axum::routing::post(
+                move || async move { axum::response::Redirect::temporary(&target) },
+            ),
+        )
+        .route(
+            "/stalled",
+            axum::routing::post(|| async {
+                std::future::pending::<axum::http::StatusCode>().await
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let hooks = Webhooks::new("house", None).allowing_loopback_for_testing();
+    let now = time::OffsetDateTime::now_utc();
+    for path in ["redirect", "stalled"] {
+        let added = hooks
+            .subscribe(
+                Asked {
+                    name: path.into(),
+                    url: format!("http://{addr}/{path}"),
+                    types: vec![ems_events::TEST_PING.into()],
+                    subjects: vec![],
+                    public: false,
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        let ping = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            hooks.test(&added.view.id, now),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        assert!(!ping.delivered);
+        if path == "redirect" {
+            assert_eq!(ping.status, Some(307));
+        } else {
+            assert_eq!(ping.status, None);
+        }
+    }
+    assert!(seen.lock().await.bodies.is_empty());
+}
+
+#[tokio::test]
+async fn only_the_affected_asset_gets_its_goal_or_deviation() {
+    use hemsd::runtime::push::{Detector, Signals};
+    let (url, seen) = receiver().await;
+    let hooks = Webhooks::new("home", None).allowing_loopback_for_testing();
+    let mut detector = Detector::default();
+    let now = time::OffsetDateTime::now_utc();
+    hooks
+        .subscribe(
+            Asked {
+                name: "EV monitor".into(),
+                url,
+                types: vec!["de.ems.*".into()],
+                subjects: vec!["wallbox".into()],
+                public: false,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    let mut home = serde_json::json!({
+        "devices":[{"id":"wallbox","kind":"car","commanded_w":3400,"measured_w":0}],
+        "goal":[{"target_soc":0.8,"by_minute":420},{"verdict":"feasible"}]
+    });
+    let _ = detector.changes(&Signals::of(&home), now);
+    home["goal"][1] = serde_json::json!({"verdict":"impossible","reachable_soc":0.61});
+    home["devices"][0]["notice"] = serde_json::json!("disobedient");
+    for minutes in [1, 12, 13] {
+        let time = now + time::Duration::minutes(minutes);
+        hooks
+            .emit(&detector.changes(&Signals::of(&home), time), &home, time)
+            .await;
+    }
+    hooks.deliver_due(now + time::Duration::minutes(13)).await;
+    let seen = seen.lock().await;
+    assert_eq!(seen.bodies.len(), 2);
+    let decode = |i: usize| serde_json::from_slice::<serde_json::Value>(&seen.bodies[i].1).unwrap();
+    let goal = decode(0);
+    assert_eq!(goal["subject"], "wallbox");
+    assert_eq!(goal["data"]["goal"], home["goal"][0]);
+    assert_eq!(goal["data"]["reachable"], 0.61);
+    let deviation = decode(1);
+    assert_eq!(deviation["subject"], "wallbox");
+    assert_eq!(deviation["data"]["commanded_w"], 3400.0);
+    assert_eq!(deviation["data"]["measured_w"], 0.0);
 }

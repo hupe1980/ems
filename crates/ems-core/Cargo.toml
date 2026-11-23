@@ -1,6 +1,6 @@
 [package]
 name        = "ems-core"
-description = "Domain model of a home energy system — sign-consistent power/energy units, three-phase vectors, the 15-minute Europe/Berlin slot grid, assets, circuits, measurements, and setpoints that must name their reason"
+description = "Energy units, assets, circuits, measurements and quarter-hour time slots for energy management"
 keywords    = ["energy", "hems", "photovoltaic", "smart-grid", "battery"]
 categories  = ["science", "simulation"]
 readme      = "README.md"

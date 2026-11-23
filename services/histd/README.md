@@ -1,111 +1,49 @@
 # histd
 
-The fleet's record of what every box did, for
-[hems](https://github.com/hupe1980/ems).
+The fleet historian stores 15-minute meter registers and § 14a control events in PostgreSQL. A network operator can retrieve evidence of the limit it sent and how the site responded. A household can also export its data and settle its declared MiSpeL storage option.
 
-Two records with two different owners and two different reasons to exist, and
-keeping them apart is most of the design.
+All routes below start with `/v1/sites/{site}` and require a bearer credential authorized for that site.
 
-| Record | Whose question | What it is |
-|---|---|---|
-| **Evidence** | the network operator's | `[A1 7.2]` says what a § 14a control event is documented with — the ceiling, when it arrived, what was done about it, a trace of what the connection point drew — and `[A1 7.3]` says it is kept for **two years** |
-| **Settlement** | the household's invoice | the quarter-hour meter registers MiSpeL's Abgrenzung and § 42c's allocation are computed from |
-
-Four things fall out of that split:
-
-- **Retention is a column**, so “what will you still have in eighteen months” is a
-  query rather than an argument.
-- **Quantities are exact `NUMERIC`**, never floats. A settlement that went
-  through a `double` is a settlement nobody can reproduce — and because the
-  database has an exact type, `SUM(grid_draw_kwh)` over a settlement year is a
-  query rather than a loop over 35 040 strings.
-- **A correction is a version, not an overwrite.** A register is restated after
-  the month has been settled and the Nachweis sent, so `quarter_hour` is
-  append-only and keyed by the instant a value was learned: an ordinary read
-  returns the current answer, and `?as_of=` returns the one the document was
-  computed from.
-- **A fleet's writes do not queue behind one lock.** A box's evidence write is
-  on the path a network operator's Nachweis is built from, and it does not wait
-  behind eight household exports.
-
-## Three exports, authorised differently
-
-| | |
+| Route | Use |
 |---|---|
-| `POST /v1/sites/{site}/quarter-hours` | a box writes its own registers |
-| `POST /v1/sites/{site}/events` | a box writes its own control events |
-| `GET /v1/sites/{site}/nachweis` | the **network operator's** Nachweis |
-| `GET /v1/sites/{site}/mispel?year=&month=&as_of=` | the MiSpeL settlement, `[MiSpeL A1 4.2]` / `[A2 4.2]` — `as_of` settles from the registers as they stood at an instant, which is how a document already handed over is reproduced |
-| `GET /v1/sites/{site}/export` | the **household's** Data Act Article 4 export |
+| `POST /quarter-hours`, `GET /quarter-hours` | Submit a batch of meter registers or read a time window. |
+| `POST /events`, `GET /nachweis` | Submit a control event or retrieve § 14a evidence for a time window. |
+| `GET /export` | Download the household’s Data Act export. |
+| `GET /mispel` | Settle the declared option for a year or, for the Abgrenzungsoption, a year and month. |
 
-A box's credential reaches its own site and no other. An operator's reaches every
-household's § 14a evidence and **none** of their Data Act exports: a Nachweis is
-the record of what the operator itself commanded and what the connection point
-drew, and it is theirs to check — while Article 4 is a right of the *user*, and a
-fleet token is not a household.
+Time windows include `from` and exclude `to`. Every HTTP settlement returns its effective RFC 3339 `as_of` cutoff. Save it with the result and pass it back to select the same register versions. An omitted or future cutoff uses the historian’s current time. For a financial comparison, use the same site declaration and rule set. Missing prices preserve measured energy. Settlement returns HTTP 422 and the affected slot if an exported interval needs an unavailable price.
 
-The **MiSpeL settlement** sits with the export rather than with the Nachweis. It
-is the household's own levy privilege (§ 21 EnFG, under the MiSpeL Festlegung in
-effect since 21.10.2026) and the flows
-behind it — how full the store was, when it was charged from the grid, what the
-roof earned — and the Festlegung has the *Anlagenbetreiber* produce and submit
-it. So the same credential that cannot read one cannot read the other, and it is
-off the `/mcp` surface for the same reason.
+### Submit or correct a register
 
-Three things about it are the design rather than the plumbing. The **option is
-declared per site** (`[mispel.haus-1]`) and an undeclared site is refused, because
-Ausschließlichkeit, Abgrenzung and Pauschal each produce a *different* Nachweis
-from the same registers and a guessed one is arithmetically perfect and about
-somebody else's installation. Ausschließlichkeit settles nothing and is still
-**checked** against those registers: it is a claim that no quarter hour shows
-grid draw and storage charging at once, `(1)¼` is what measures that, and the
-export reports the figure and names any quarter hour that breaks it. The
-**period comes from the calendar and the rules**, not from the caller: a year
-and a month are narrowed to what the Festlegung governs for *this* site — not
-before 21.10.2026, not before the site's `assigned_from` (the first of a month
-for an existing plant, which `histd` checks at start-up), not before October
-2027 without the operators' consent, and for the Pauschaloption not before the
-month after EU state-aid approval (`mispel_state_aid_approved_on`). What starts
-mid-period settles as a Rumpfmonat or Rumpfjahr, and the document prints the
-`window` and the `conditions` it rests on; a refused period answers `400` with
-the clause in the body. Boundaries come from the Berlin calendar, so March and
-October have the hours they really have. And the **denominator is on the document** —
-`quarter_hours_expected`, `quarter_hours_present`, `complete` — because a quarter
-hour the box could not price gets no register, so a month legitimately has gaps
-and a settlement over part of one under-reports every quantity in it while
-looking whole.
+Send a JSON array to `POST /v1/sites/{site}/quarter-hours`. Each item carries the source revision time and the complete register set. Energy is in kWh. Use decimal strings for quantities and `null` for an unavailable optional reading or price.
 
-All four **Basisfälle** settle. A4 is the installation whose storage system has a
-meter of its own — `(17)A4` charges the round-trip loss to the store rather than
-to the household — and it needs `Z3V¼`/`Z3E¼`, which are nullable here. The null
-means *not separately metered* rather than zero: a household declared A4 whose
-store went unread is refused rather than handed a settlement claiming its battery
-stood still.
+```json
+[{
+  "recorded_at": "2026-11-01T00:15:01.123456Z",
+  "registers": {
+    "slot": "2026-11-01T00:00:00Z",
+    "grid_draw": "0.125",
+    "grid_feed_in": "0",
+    "device_consumption": "0.125",
+    "device_generation": "0"
+  }
+}]
+```
 
-## Where this runs, and why it is not on the box
+After a lost response, resend the same assertion with its original `recorded_at`. An identical retry returns HTTP 204. Reusing that revision with different values returns HTTP 409 and rolls back the batch. For a correction, issue a later source revision at microsecond precision. Historical settlement uses the historian’s own receipt time, so a late delivery cannot backdate its effect.
 
-The edge is a **single** daemon, so a gateway runs `hemsd` and nothing else, and
-the box's own copy of these records lives in *its* embedded stores behind a
-store-and-forward outbox. This daemon is the **fleet** side: everybody's two
-years, queryable, which is what a Nachweis and a Data Act export are asked for at
-scale.
+Configure PostgreSQL, credentials and the site’s declaration before starting the service. [Configuration example](histd.example.toml) · [Fleet services guide](https://hupe1980.github.io/ems/docs/services/)
 
-## PostgreSQL
+### MeterStore registers
 
-Size is not why a fleet service needs a server. **One writer** would put every
-household's forwarded evidence behind one mutex; **one node** could not be
-replicated, deployed without downtime, or outlive its machine; and **no exact
-decimal** would make every settlement quantity a string to parse back.
+Commission a site before its first register submission. Use the site's actual market location and the responsible operator's market-participant identifier.
 
-The box is the other case, and an embedded store is right there: one process,
-one writer, no network, offline-first, and a file an installer can copy off a
-failed unit.
+```toml
+[register_meters.haus-1]
+malo = "12345678905"
+operator = "9900000000003"
+```
 
-The tests run against PostgreSQL because the daemon does — a query checked on a
-different engine is checked by nothing. A container runtime is a prerequisite;
-`HEMS_TEST_POSTGRES` points the suite at a server that is already running
-instead. There is deliberately no way to skip.
+These identifiers are examples. The existing HTTP and MCP interfaces read the same register history. MeterStore writes the site's assertions to its PostgreSQL hot tier in the historian database. Grid import supports seven decimal places in kWh. Other quantities and prices retain their exact decimal values. The two-year sweep includes both register stores. Sites without a market binding use the historian's ordinary PostgreSQL register table.
 
-## License
-
-MIT OR Apache-2.0
+MeterStore uses a separate connection pool and PostgreSQL’s `btree_gist` extension. Provision the extension if the historian role cannot create it. Both pools use `[database].tls`. MeterStore verifies the server certificate and hostname when TLS is enabled. For a disposable local database, use `tls = false`. Budget up to `pool_size` connections per pool. Keep the site binding stable across replicas and restarts. Run `just histd-registers` to verify the storage path.

@@ -118,6 +118,7 @@ pub enum RegistryError {
 
 /// A set of drivers, and what they have told us.
 pub struct Registry {
+    shadow: bool,
     entries: Vec<Entry>,
     /// The limits the grid drivers have reported, as the guard wants them.
     limits: GridLimits,
@@ -239,6 +240,7 @@ impl Entry {
 impl std::fmt::Debug for Registry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Registry")
+            .field("shadow", &self.shadow)
             .field("drivers", &self.entries.len())
             .field("limits", &self.limits)
             .field("failsafe", &self.failsafe)
@@ -255,16 +257,36 @@ impl Default for Registry {
 }
 
 impl Registry {
+    /// Read the protocol actor on demand, independently of transport traffic.
+    pub fn last_lpc_heartbeat(&self, asset: &AssetId) -> Option<OffsetDateTime> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.asset == *asset)
+            .find_map(|entry| entry.driver.last_lpc_heartbeat())
+    }
+
     /// An empty registry.
     #[must_use]
     pub fn new() -> Self {
         Self {
+            shadow: false,
             entries: Vec::new(),
             limits: GridLimits::default(),
             failsafe: BTreeMap::new(),
             refused: BTreeSet::new(),
             taken: BTreeSet::new(),
         }
+    }
+
+    /// Disable commands for the entire lifetime of this registry.
+    pub(crate) fn observe_only(mut self) -> Self {
+        self.shadow = true;
+        self
+    }
+
+    /// Whether an installed driver can measure this asset.
+    pub(crate) fn measures(&self, asset: &AssetId) -> bool {
+        self.role(asset, "measure").is_some()
     }
 
     /// How many drivers are registered.
@@ -358,6 +380,9 @@ impl Registry {
     pub fn validate(&self, site: &Site, now: OffsetDateTime) -> Result<(), RegistryError> {
         if self.entries.is_empty() {
             return Err(RegistryError::Uncommissioned);
+        }
+        if self.shadow {
+            return Ok(());
         }
         // Asked here rather than at registration, because the commanding driver
         // may be the second one registered: a wallbox read over EEBUS and
@@ -527,6 +552,9 @@ impl Registry {
     /// command that would otherwise be dropped in silence, and the difference
     /// between a device that is idle and one that is unreachable.
     pub fn command(&mut self, setpoint: &Setpoint, now: OffsetDateTime) -> Result<(), DriverError> {
+        if self.shadow {
+            return Err(DriverError::Refused("gateway is observing".into()));
+        }
         // The **commanding** driver, which may not be the only one that speaks
         // for this asset: a wallbox read over EEBUS and commanded over Modbus
         // has two, and sending a setpoint to whichever was registered first
@@ -771,10 +799,14 @@ pub const SILENCE: Duration = Duration::seconds(10);
 /// Everything the drivers said, in the shape the control planes read.
 #[derive(Debug, Clone, Default)]
 pub struct Observed {
+    /// Connected devices whose discovered model can accept a production ceiling.
+    pub curtailable: BTreeSet<AssetId>,
     /// What the house is doing.
     pub state: SiteState,
     /// What the network operator is asking for.
     pub limits: GridLimits,
+    /// Last observed measurement time for each metered asset.
+    pub last_measured: BTreeMap<AssetId, OffsetDateTime>,
     /// What could not be heard from.
     pub silent: BTreeSet<AssetId>,
     /// Devices whose available power is a nameplate rather than a reading.
@@ -805,9 +837,20 @@ impl Registry {
         self.absorb();
         Observed {
             state: self.state(grid_meter, now),
+            last_measured: self
+                .entries
+                .iter()
+                .filter_map(|entry| entry.latest.map(|m| (entry.asset.clone(), m.at)))
+                .collect(),
             limits: self.limits(),
             silent: self.silent(now).cloned().collect(),
             assumed_available: self.assumed_available_power().cloned().collect(),
+            curtailable: self
+                .entries
+                .iter()
+                .filter(|e| e.link.is_usable() && e.driver.can_limit_production())
+                .map(|e| e.asset.clone())
+                .collect(),
             vehicles: self
                 .entries
                 .iter()

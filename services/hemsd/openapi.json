@@ -25,6 +25,66 @@
         ],
         "type": "object"
       },
+      "AppliancePower": {
+        "description": "One appliance power point observed through the local Matter commissioner.",
+        "properties": {
+          "endpoint": {
+            "description": "Commissioned endpoint.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "description": "Installer-assigned label.",
+            "type": "string"
+          },
+          "node": {
+            "description": "Fabric-local node ID (hexadecimal).",
+            "type": "string"
+          },
+          "received_at": {
+            "description": "Time the last successful device read arrived, as RFC 3339.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "description": "waiting, unavailable, current, unknown, or stale.",
+            "type": "string"
+          },
+          "watts": {
+            "description": "Last response value in W. A null measurement clears a previous value.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "node",
+          "endpoint",
+          "state"
+        ],
+        "type": "object"
+      },
+      "ApplyInstallation": {
+        "additionalProperties": false,
+        "description": "Only the server-issued id is accepted. The TOML is held by the gateway.",
+        "properties": {
+          "id": {
+            "description": "The id shown with the reviewed proposal.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
       "Approval": {
         "description": "A SKI an installer has read off a Steuerbox.",
         "properties": {
@@ -35,6 +95,77 @@
         },
         "required": [
           "ski"
+        ],
+        "type": "object"
+      },
+      "Approval2": {
+        "additionalProperties": false,
+        "description": "Household decision on the current handover review.",
+        "properties": {
+          "approve": {
+            "description": "Whether the household authorizes the installer to proceed.",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "Review id shown to the household.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "approve"
+        ],
+        "type": "object"
+      },
+      "Arbitrage": {
+        "description": "AC-side electricity costs for completed measured charge/discharge blocks.",
+        "properties": {
+          "avoided_ct": {
+            "description": "Cost of the grid import the battery displaced when discharging.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "blocks": {
+            "description": "Count of closed blocks contributing to this margin.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bought_ct": {
+            "description": "Grid charge cost at the actual gross import prices.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "bought_wh": {
+            "description": "Grid electricity that entered the battery, Wh.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "buy_rate_mct_per_kwh": {
+            "description": "Energy-weighted grid charging rate, thousandths of a cent per kWh.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "served_wh": {
+            "description": "Electricity returned to household loads, Wh.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "use_rate_mct_per_kwh": {
+            "description": "Energy-weighted avoided import rate, thousandths of a cent per kWh.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "blocks",
+          "bought_wh",
+          "served_wh",
+          "bought_ct",
+          "buy_rate_mct_per_kwh",
+          "use_rate_mct_per_kwh",
+          "avoided_ct"
         ],
         "type": "object"
       },
@@ -77,6 +208,32 @@
         ],
         "type": "object"
       },
+      "BoostConfirmation": {
+        "additionalProperties": false,
+        "description": "A price and saved goal the household has reviewed.",
+        "properties": {
+          "extra_eur": {
+            "description": "The difference from waiting, in whole cents.",
+            "format": "double",
+            "type": "number"
+          },
+          "goal": {
+            "$ref": "#/components/schemas/CarGoal",
+            "description": "The exact stored goal, including the tariff cap."
+          },
+          "until": {
+            "description": "The absolute deadline shown in the preview, Unix seconds.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "goal",
+          "extra_eur",
+          "until"
+        ],
+        "type": "object"
+      },
       "CarGoal": {
         "additionalProperties": false,
         "description": "A car goal as the household set it.",
@@ -87,6 +244,14 @@
             "maximum": 65535,
             "minimum": 0,
             "type": "integer"
+          },
+          "price_cap_ct": {
+            "description": "Highest gross import price allowed, in whole ct/kWh.",
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "target_soc": {
             "description": "The state of charge wanted, in `[0, 1]`.",
@@ -151,7 +316,7 @@
             "type": "array"
           },
           "instructing": {
-            "description": "Assets a manager currently has an unexpired instruction on.",
+            "description": "Assets with an unexpired manager instruction still in force.",
             "items": {
               "type": "string"
             },
@@ -161,7 +326,7 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Assets where the guard is overriding what the manager asked for, and the\nrule doing it.\n\nOn the household's own screen as well as on the wire, because it is the\nsentence that explains a bill: *your manager asked for this and your\nnetwork operator would not allow it.*",
+            "description": "Reason an instruction was aborted. Kept until replacement, expiry or disconnect.",
             "type": "object"
           },
           "refused": {
@@ -189,6 +354,28 @@
       "ClosedDay": {
         "description": "One closed day, as the box keeps it.",
         "properties": {
+          "arbitrage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Arbitrage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Grid-charge margin on measured closed battery blocks."
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Comparison"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Equal-service comparison where both matched energy traces cover the day."
+          },
           "day": {
             "description": "The local day, `YYYY-MM-DD`.",
             "type": "string"
@@ -197,10 +384,32 @@
             "description": "Whether the feed-in ceiling was respected.",
             "type": "boolean"
           },
+          "forecast": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ForecastCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Measured forecast coverage, where the closed day had enough scored observations."
+          },
           "imported_wh": {
             "description": "Bought from the grid, Wh.",
             "format": "int64",
             "type": "integer"
+          },
+          "metered_bill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MeteredBill"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Charges computed from the connection-meter record."
           },
           "money": {
             "anyOf": [
@@ -244,6 +453,32 @@
           "reductions",
           "reduction_respected",
           "feed_in_respected"
+        ],
+        "type": "object"
+      },
+      "Comparison": {
+        "description": "Day-level grid-energy comparison, including fixed charges in both arms.",
+        "properties": {
+          "error_ct": {
+            "description": "Sum of absolute interval cost errors in the arm the meter observed, rounded up.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "with_plan_ct": {
+            "description": "What the guarded plan cost, or would have cost on a shadow gateway.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "without_plan_ct": {
+            "description": "What the same service cost on autonomous self-consumption.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "with_plan_ct",
+          "without_plan_ct",
+          "error_ct"
         ],
         "type": "object"
       },
@@ -434,22 +669,44 @@
       "DeviationDetected": {
         "description": "`de.ems.device.deviation.detected`: a device has not done what it was\nasked for ten minutes.",
         "properties": {
-          "assets": {
-            "description": "The devices not following.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
+          "commanded_w": {
+            "description": "Requested power, W, when available.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "measured_w": {
+            "description": "Observed power, W, when available.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           }
         },
-        "required": [
-          "assets"
-        ],
         "type": "object"
       },
       "Device": {
         "description": "One device, as the page shows it.",
         "properties": {
+          "commanded_w": {
+            "description": "Latest command in watts.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "goal_eur_per_unit": {
+            "description": "Approximate euros per extra percentage point (car) or degree (tank),\nfrom this slot’s store marginal and the installed device model.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "id": {
             "description": "The asset.",
             "type": "string"
@@ -460,6 +717,21 @@
           },
           "kw": {
             "description": "What it draws (positive) or delivers (negative), kW, where measured or\ncommanded.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "last_seen": {
+            "description": "Most recent device measurement, including the last one before silence.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "measured_w": {
+            "description": "Latest measurement in watts, absent for a silent device.",
             "format": "double",
             "type": [
               "number",
@@ -497,6 +769,162 @@
           "id",
           "kind",
           "why"
+        ],
+        "type": "object"
+      },
+      "DeviceCheck": {
+        "description": "A check returned to both Setup and the terminal.",
+        "properties": {
+          "asset": {
+            "description": "Configured asset identifier.",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DeviceState",
+            "description": "What the live driver registry observed."
+          }
+        },
+        "required": [
+          "asset",
+          "state"
+        ],
+        "type": "object"
+      },
+      "DeviceLost": {
+        "description": "The last observation made by this device. None when it never reported.",
+        "properties": {
+          "last_seen": {
+            "description": "Time of the last sample, if the device has reported.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "DeviceRole": {
+        "description": "Supported installation roles. Each has a specific model check and runtime readback.",
+        "oneOf": [
+          {
+            "const": "pv",
+            "description": "Roof inverter with active-power limiting.",
+            "type": "string"
+          },
+          {
+            "const": "connection-meter",
+            "description": "Three-phase meter at the site boundary.",
+            "type": "string"
+          },
+          {
+            "const": "observed-pv",
+            "description": "Read-only inverter in shadow mode.",
+            "type": "string"
+          },
+          {
+            "const": "observed-battery",
+            "description": "Read-only battery in shadow mode.",
+            "type": "string"
+          }
+        ]
+      },
+      "DeviceState": {
+        "description": "One device diagnosis. A missing first observation stays unknown.",
+        "oneOf": [
+          {
+            "const": "responding",
+            "description": "The registry has run and the configured driver is responding.",
+            "type": "string"
+          },
+          {
+            "const": "waiting",
+            "description": "Startup has not produced a control tick yet.",
+            "type": "string"
+          },
+          {
+            "const": "silent",
+            "description": "The driver is silent.",
+            "type": "string"
+          },
+          {
+            "const": "disobedient",
+            "description": "The device refused a command.",
+            "type": "string"
+          }
+        ]
+      },
+      "Diagnostics": {
+        "description": "Authenticated installer diagnostics.",
+        "properties": {
+          "control_box": {
+            "$ref": "#/components/schemas/ControlBox",
+            "description": "The network operator's control box."
+          },
+          "devices": {
+            "description": "Registry observations for configured Modbus and EEBUS assets.",
+            "items": {
+              "$ref": "#/components/schemas/DeviceCheck"
+            },
+            "type": "array"
+          },
+          "fingerprint": {
+            "description": "The SHA-256 fingerprint of its SHIP certificate.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "heartbeat_age_s": {
+            "description": "Seconds since the Energy Guard's last accepted LPC heartbeat, if observed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "history": {
+            "$ref": "#/components/schemas/HistoryState",
+            "description": "State of quarter-hour summary maintenance."
+          },
+          "https_fingerprint": {
+            "description": "The SHA-256 fingerprint of the certificate the page is served with.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identity": {
+            "description": "`kept`: the store holds the certificate the box is presenting, so the\nSKI and fingerprint are the ones a restart restores. `ephemeral`: the box\nhas no store, or the store holds another, and the next start presents a\nnew identity. `none`: the box has no EEBUS identity.",
+            "type": "string"
+          },
+          "ski": {
+            "description": "The box's SKI.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "support_contact": {
+            "description": "Optional installer contact for the household.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tick_at": {
+            "description": "Last control tick observed by the gateway.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "devices",
+          "identity",
+          "control_box",
+          "history"
         ],
         "type": "object"
       },
@@ -649,9 +1077,159 @@
         },
         "type": "object"
       },
+      "FailsafeLeft": {
+        "description": "Whether a reduction remains after the failsafe ended.",
+        "properties": {
+          "reduced": {
+            "description": "True when a reduction still applies.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reduced"
+        ],
+        "type": "object"
+      },
+      "FeedInLimit": {
+        "description": "The operator's feed-in limit in watts.",
+        "properties": {
+          "limit_w": {
+            "description": "New export ceiling, W.",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "limit_w"
+        ],
+        "type": "object"
+      },
+      "FirstMeter": {
+        "additionalProperties": false,
+        "description": "Installer-entered facts for the first three-phase meter.",
+        "properties": {
+          "address": {
+            "description": "Literal private IPv4 or IPv6 address and one supported Modbus port.",
+            "type": "string"
+          },
+          "energy_ct": {
+            "description": "Contracted net energy rate.",
+            "format": "double",
+            "type": "number"
+          },
+          "external_limit_controller": {
+            "description": "Independently commissioned controller retaining authority over observed assets.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fuse_a": {
+            "description": "Household main fuse per phase.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "network_ct": {
+            "description": "Net variable network charge.",
+            "format": "double",
+            "type": "number"
+          },
+          "phases": {
+            "description": "Number of phases at this connection.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "roof": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservedAsset"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional verified inverter observed in shadow mode."
+          },
+          "standing_eur": {
+            "description": "Total fixed standing charge in euros per year.",
+            "format": "double",
+            "type": "number"
+          },
+          "storage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservedAsset"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional verified battery observed in shadow mode."
+          },
+          "support": {
+            "description": "Optional name and telephone number.",
+            "type": "string"
+          },
+          "unit": {
+            "description": "Modbus unit selected by the installer.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "unit",
+          "fuse_a",
+          "phases",
+          "energy_ct",
+          "network_ct",
+          "standing_eur",
+          "support"
+        ],
+        "type": "object"
+      },
+      "ForecastCoverage": {
+        "description": "Share of observed quarter hours inside the published forecast band, in percent.",
+        "properties": {
+          "load_pct": {
+            "description": "Household load observations inside the forecast band.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pv_pct": {
+            "description": "Solar production observations inside the forecast band.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pv_pct",
+          "load_pct"
+        ],
+        "type": "object"
+      },
       "GoalAnswer": {
         "description": "The answer a household gets the moment it sets a goal.",
         "properties": {
+          "eligible_quarters": {
+            "description": "Priced quarter hours available under the requested cap before departure.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "needed_kwh": {
             "description": "What still has to go in, kWh.",
             "format": "double",
@@ -666,9 +1244,12 @@
             ]
           },
           "tightness": {
-            "description": "The share of the time left the goal would use: `0` nothing, `1` all of it.",
+            "description": "The share of the time left the goal would use: `0` nothing, `1` all of it.\nAbsent when no deliverable time remains for a positive target.",
             "format": "double",
-            "type": "number"
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "verdict": {
             "$ref": "#/components/schemas/Verdict",
@@ -677,20 +1258,24 @@
         },
         "required": [
           "verdict",
-          "needed_kwh",
-          "tightness"
+          "needed_kwh"
         ],
         "type": "object"
       },
       "GoalAtRisk": {
         "description": "`de.ems.site.goal.at-risk`: a goal turned tight or impossible.",
         "properties": {
-          "assets": {
-            "description": "The devices whose goal it is.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
+          "goal": {
+            "$ref": "#/components/schemas/HouseholdGoal",
+            "description": "Target and local deadline set by the household."
+          },
+          "reachable": {
+            "description": "Reachable state of charge (fraction) or water temperature (°C).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "verdict": {
             "description": "`tight` or `impossible`.",
@@ -699,7 +1284,7 @@
         },
         "required": [
           "verdict",
-          "assets"
+          "goal"
         ],
         "type": "object"
       },
@@ -775,6 +1360,36 @@
         ],
         "type": "object"
       },
+      "HistoryState": {
+        "description": "Read-only status of stored household quarter-hour summaries.",
+        "oneOf": [
+          {
+            "const": "disabled",
+            "description": "The gateway has no configured time-series store.",
+            "type": "string"
+          },
+          {
+            "const": "current",
+            "description": "No stored ranges await repair, including when the store is new.",
+            "type": "string"
+          },
+          {
+            "const": "repair_pending",
+            "description": "At least one materialised range needs recomputing.",
+            "type": "string"
+          },
+          {
+            "const": "busy",
+            "description": "Another history request holds the reader.",
+            "type": "string"
+          },
+          {
+            "const": "unavailable",
+            "description": "The gateway could not inspect the store.",
+            "type": "string"
+          }
+        ]
+      },
       "Home": {
         "description": "Everything the household page shows, in one document.",
         "properties": {
@@ -806,6 +1421,10 @@
               "null"
             ]
           },
+          "charging_now": {
+            "description": "The household confirmed immediate charging to its saved goal.",
+            "type": "boolean"
+          },
           "demo": {
             "description": "`true` when this is `hemsd demo` replaying a reference day.",
             "type": "boolean"
@@ -816,6 +1435,14 @@
               "$ref": "#/components/schemas/Device"
             },
             "type": "array"
+          },
+          "feed_in_limit_w": {
+            "description": "Feed-in ceiling received from the operator, in watts.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "fingerprint": {
             "description": "The SHA-256 fingerprint of the box's SHIP certificate.",
@@ -833,7 +1460,14 @@
                 "$ref": "#/components/schemas/CarGoal"
               },
               {
-                "$ref": "#/components/schemas/GoalAnswer"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/GoalAnswer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             ],
             "type": [
@@ -864,12 +1498,30 @@
               "null"
             ]
           },
+          "matter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AppliancePower"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Appliance telemetry shown in Setup when configured."
+          },
           "plan": {
             "description": "The plan, from now to the end of its horizon.",
             "items": {
               "$ref": "#/components/schemas/PlanSlot"
             },
             "type": "array"
+          },
+          "previous_plan_at": {
+            "description": "Creation time of the retained plan when the latest planning attempt failed.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "price_ct": {
             "description": "The all-in import price right now, ct/kWh.",
@@ -882,7 +1534,7 @@
           "receipt": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Receipt"
+                "$ref": "#/components/schemas/ClosedDay"
               },
               {
                 "type": "null"
@@ -908,6 +1560,10 @@
               "null"
             ]
           },
+          "shadow": {
+            "description": "The gateway is observing the site without sending device commands.",
+            "type": "boolean"
+          },
           "site": {
             "description": "Which household.",
             "type": "string"
@@ -928,7 +1584,14 @@
                 "$ref": "#/components/schemas/TankGoal"
               },
               {
-                "$ref": "#/components/schemas/TankAnswer"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TankAnswer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             ],
             "type": [
@@ -949,10 +1612,89 @@
           }
         },
         "required": [
+          "shadow",
           "site",
           "demo",
+          "charging_now",
           "devices",
           "plan"
+        ],
+        "type": "object"
+      },
+      "HouseholdGoal": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/CarGoal",
+            "description": "Departure charge and time."
+          },
+          {
+            "$ref": "#/components/schemas/TankGoal",
+            "description": "Water temperature and time."
+          }
+        ],
+        "description": "Household goal in the units of the subject device."
+      },
+      "Import": {
+        "description": "A signed file from the household, optionally paired with its exact reviewed facts.",
+        "properties": {
+          "confirmation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Review"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Required for activation."
+          },
+          "signed": {
+            "description": "Compact JWS carrying the original price sheet.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signed"
+        ],
+        "type": "object"
+      },
+      "InverterReview": {
+        "description": "A proposed PV driver block checked against the effective configuration.",
+        "properties": {
+          "address": {
+            "description": "Literal socket address of the device.",
+            "type": "string"
+          },
+          "proposal": {
+            "description": "Server-issued confirmation id when this file can be activated.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refusal": {
+            "description": "Refusal from the gateway's validator, if any.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "toml": {
+            "description": "Proposed addition, containing only the selected device.",
+            "type": "string"
+          },
+          "unit": {
+            "description": "Modbus unit and endpoint used for the model walk.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "toml",
+          "unit",
+          "address"
         ],
         "type": "object"
       },
@@ -1005,6 +1747,85 @@
         ],
         "type": "object"
       },
+      "MeterReview": {
+        "description": "A validated initial site with verified device identities.",
+        "properties": {
+          "device": {
+            "description": "Device-reported name shown separately from the candidate.",
+            "type": "string"
+          },
+          "proposal": {
+            "description": "Server-issued id for confirmation.",
+            "type": "string"
+          },
+          "toml": {
+            "description": "Exact, validated configuration addition.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "toml",
+          "device",
+          "proposal"
+        ],
+        "type": "object"
+      },
+      "MeteredBill": {
+        "description": "Metered charges for one Berlin calendar day.",
+        "properties": {
+          "contracts": {
+            "default": [],
+            "description": "Seller contract references in first-use order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "energy_ct": {
+            "description": "Variable import charges less export revenue, rounded at day close.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "expected_intervals": {
+            "description": "Calendar intervals, including the shorter or longer clock-change day.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fixed_ct": {
+            "description": "Daily share of annual fixed charges, when the whole day was priced.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "priced_intervals": {
+            "description": "Intervals with a full grid measurement and a known tariff.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "watched_intervals": {
+            "description": "Recorded intervals for which another controller retained responsibility.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_intervals",
+          "watched_intervals",
+          "priced_intervals"
+        ],
+        "type": "object"
+      },
       "ModbusDevice": {
         "description": "One Modbus address.",
         "properties": {
@@ -1025,6 +1846,18 @@
               "base": {
                 "type": "integer"
               },
+              "connection_meter": {
+                "type": "boolean"
+              },
+              "has_immediate_controls": {
+                "type": "boolean"
+              },
+              "inverter_model": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
               "manufacturer": {
                 "type": "string"
               },
@@ -1034,12 +1867,19 @@
               "serial": {
                 "type": "string"
               },
+              "storage_meter": {
+                "type": "boolean"
+              },
               "version": {
                 "type": "string"
               }
             },
             "required": [
               "base",
+              "inverter_model",
+              "has_immediate_controls",
+              "connection_meter",
+              "storage_meter",
               "manufacturer",
               "model",
               "version",
@@ -1049,6 +1889,17 @@
               "object",
               "null"
             ]
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InverterReview"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Preview of one read-only driver addition for this site."
           },
           "state": {
             "description": "`configured`: the box manages it and hears it. `missing`: the box is\nconfigured for it and does not hear it. `found`: a SunSpec device\nanswered and nothing is configured for it. `silent`: nothing SunSpec\nanswered there.",
@@ -1124,6 +1975,70 @@
           "token"
         ],
         "type": "object"
+      },
+      "ObservedAsset": {
+        "additionalProperties": false,
+        "description": "One observed asset, identified by its endpoint and installation sheet.",
+        "properties": {
+          "address": {
+            "description": "Private Modbus endpoint.",
+            "type": "string"
+          },
+          "commissioned": {
+            "description": "Date on the installer's commissioning sheet.",
+            "type": "string"
+          },
+          "power_kw": {
+            "description": "AC nameplate power in kW.",
+            "format": "double",
+            "type": "number"
+          },
+          "size": {
+            "description": "PV array kWp or usable battery capacity in kWh, as labeled in Setup.",
+            "format": "double",
+            "type": "number"
+          },
+          "unit": {
+            "description": "Unit at the endpoint.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "unit",
+          "power_kw",
+          "size",
+          "commissioned"
+        ],
+        "type": "object"
+      },
+      "Outcome": {
+        "description": "Lifecycle of a single reviewed installation.",
+        "oneOf": [
+          {
+            "const": "restarting",
+            "description": "The candidate is on disk or being started.",
+            "type": "string"
+          },
+          {
+            "const": "applied",
+            "description": "Every selected device supplied its expected measurement.",
+            "type": "string"
+          },
+          {
+            "const": "restored",
+            "description": "The previous file is back in force.",
+            "type": "string"
+          },
+          {
+            "const": "superseded",
+            "description": "A manual edit superseded the transaction.",
+            "type": "string"
+          }
+        ]
       },
       "OverrideBody": {
         "description": "What the household is asking for, and until when.",
@@ -1500,6 +2415,23 @@
       "Quote": {
         "description": "What a proposed goal comes to.",
         "properties": {
+          "boost_until": {
+            "description": "Absolute expiry of a priced immediate-charge request.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "eligible_quarters": {
+            "description": "Confirmed quarter hours within a proposed car price cap.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "extra_eur": {
             "description": "What the plan with this goal costs beyond the plan with the goal in\nforce now, € — energy, battery wear and what is borrowed from the\nstores. Negative where it is cheaper. `None` where no plan could be made.",
             "format": "double",
@@ -1526,6 +2458,26 @@
         ],
         "type": "object"
       },
+      "Readiness": {
+        "description": "Evidence visible from the observing gateway at review time.",
+        "oneOf": [
+          {
+            "const": "ready",
+            "description": "Connection meter and every required actuator can be checked.",
+            "type": "string"
+          },
+          {
+            "const": "meter_missing",
+            "description": "The connection meter has no current measurement.",
+            "type": "string"
+          },
+          {
+            "const": "actuator_missing",
+            "description": "An actuator lacks a verified command path.",
+            "type": "string"
+          }
+        ]
+      },
       "Reading": {
         "description": "One reading, as it comes back out.",
         "properties": {
@@ -1533,8 +2485,33 @@
             "description": "When it was taken.",
             "type": "string"
           },
+          "max_watts": {
+            "description": "Highest observed power in the quarter, watts.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "min_watts": {
+            "description": "Lowest observed power in the quarter, watts.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "samples": {
+            "description": "Number of observations contributing to the quarter.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "watts": {
-            "description": "What was measured, watts, load convention.",
+            "description": "Signed watts. At quarter-hour resolution this is the arithmetic sample mean.",
             "format": "double",
             "type": "number"
           }
@@ -1546,99 +2523,25 @@
         "type": "object"
       },
       "Receipt": {
-        "description": "The day so far, as a receipt.",
+        "description": "The most recent change survives a restart and an interrupted browser request.",
         "properties": {
-          "bill_eur": {
-            "description": "What the household paid for electricity, €.",
-            "format": "double",
-            "type": "number"
-          },
-          "comfort_eur": {
-            "description": "Comfort given up, priced, €.",
-            "format": "double",
-            "type": "number"
-          },
-          "cost_eur": {
-            "description": "Bill + wear + comfort, €.",
-            "format": "double",
-            "type": "number"
-          },
-          "day": {
-            "description": "The local day, `YYYY-MM-DD`.",
+          "id": {
+            "description": "Opaque id issued with the reviewed change.",
             "type": "string"
           },
-          "feed_in_respected": {
-            "description": "Whether the feed-in ceiling was respected.",
-            "type": "boolean"
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome",
+            "description": "Result visible in Setup after the gateway returns."
           },
-          "imported_kwh": {
-            "description": "Bought from the grid, kWh.",
-            "format": "double",
-            "type": "number"
-          },
-          "on_bill_eur": {
-            "description": "The part of the saving that reached the bill, €.",
-            "format": "double",
-            "type": "number"
-          },
-          "priced": {
-            "description": "Whether the day was priced. A running box measures energy but has no\nsecond house to compare with; the page then prints no euros rather\nthan zeros.",
-            "type": "boolean"
-          },
-          "produced_kwh": {
-            "description": "Made by the roof, kWh.",
-            "format": "double",
-            "type": "number"
-          },
-          "reduced_minutes": {
-            "description": "Minutes under a § 14a reduction, where the day measured them.",
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "reduction_respected": {
-            "description": "Whether every reduction was respected.",
-            "type": "boolean"
-          },
-          "reductions": {
-            "description": "How many reductions the network operator sent.",
-            "format": "uint",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "saved_eur": {
-            "description": "`without − cost`, €.",
-            "format": "double",
-            "type": "number"
-          },
-          "wear_eur": {
-            "description": "Battery wear priced, €.",
-            "format": "double",
-            "type": "number"
-          },
-          "without_eur": {
-            "description": "The same house with the same hardware and no energy manager, €.",
-            "format": "double",
-            "type": "number"
+          "role": {
+            "$ref": "#/components/schemas/DeviceRole",
+            "description": "Equipment selected by the household."
           }
         },
         "required": [
-          "day",
-          "priced",
-          "bill_eur",
-          "wear_eur",
-          "comfort_eur",
-          "cost_eur",
-          "without_eur",
-          "saved_eur",
-          "on_bill_eur",
-          "imported_kwh",
-          "produced_kwh",
-          "reductions",
-          "reduction_respected",
-          "feed_in_respected"
+          "role",
+          "id",
+          "outcome"
         ],
         "type": "object"
       },
@@ -1850,7 +2753,7 @@
         "oneOf": [
           {
             "const": "seconds",
-            "description": "Every control tick, as the box measured it.",
+            "description": "Individual timestamped observations.",
             "type": "string"
           },
           {
@@ -1859,6 +2762,77 @@
             "type": "string"
           }
         ]
+      },
+      "Review": {
+        "description": "Facts to display before committing; any change requires a fresh review.",
+        "properties": {
+          "digest": {
+            "description": "SHA-256 of the submitted signed envelope.",
+            "type": "string"
+          },
+          "effective_at": {
+            "description": "First eligible quarter as Unix seconds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "price_ct": {
+            "description": "Gross ct/kWh in the first eligible quarter, where the index is known.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "description": "Schedule as it stood at preview.",
+            "type": "string"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/Terms",
+            "description": "Contract and signer to confirm."
+          }
+        },
+        "required": [
+          "terms",
+          "digest",
+          "revision",
+          "effective_at"
+        ],
+        "type": "object"
+      },
+      "Review2": {
+        "description": "The household's authorization and current commissioning evidence.",
+        "properties": {
+          "approved_until": {
+            "description": "Latest time the installer can use the household's authorization, Unix seconds.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "controller": {
+            "description": "Controller responsible until the installer completes the transfer.",
+            "type": "string"
+          },
+          "id": {
+            "description": "A new review is issued when the site or independent controller changes.",
+            "type": "string"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/Readiness",
+            "description": "Whether the observer has verified the site's control surfaces."
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "controller",
+          "scope",
+          "readiness"
+        ],
+        "type": "object"
       },
       "SeriesWindow": {
         "description": "A window of history, and the grain it is in.",
@@ -2015,6 +2989,72 @@
         },
         "required": [
           "token"
+        ],
+        "type": "object"
+      },
+      "Status": {
+        "description": "State read back after a household decision.",
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Terms"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Contract in force now, if any."
+          },
+          "can_import": {
+            "description": "The box has durable storage for household approvals.",
+            "type": "boolean"
+          },
+          "estimated": {
+            "description": "A current price uses an estimated wholesale index.",
+            "type": "boolean"
+          },
+          "expired": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Terms"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Last approved sheet when its period or priced year has ended."
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Terms"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Next scheduled contract, if any."
+          },
+          "next_at": {
+            "description": "Actual first quarter of the next contract, as Unix seconds.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "price_ct": {
+            "description": "Gross import price in the current published plan.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "can_import",
+          "estimated"
         ],
         "type": "object"
       },
@@ -2214,9 +3254,12 @@
             ]
           },
           "tightness": {
-            "description": "The share of the time left the goal would use: `0` nothing, `1` all of it.",
+            "description": "The share of the time left the goal would use: `0` nothing, `1` all of it.\nAbsent when no deliverable time remains for a positive target.",
             "format": "double",
-            "type": "number"
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "verdict": {
             "$ref": "#/components/schemas/Verdict",
@@ -2225,8 +3268,7 @@
         },
         "required": [
           "verdict",
-          "needed_kwh",
-          "tightness"
+          "needed_kwh"
         ],
         "type": "object"
       },
@@ -2250,6 +3292,47 @@
         "required": [
           "target_c",
           "by_minute"
+        ],
+        "type": "object"
+      },
+      "Terms": {
+        "description": "Identity and priced period the household can compare with its order.",
+        "properties": {
+          "contract": {
+            "description": "Supplier's contract reference.",
+            "type": "string"
+          },
+          "fingerprint": {
+            "description": "RFC 7638 SHA-256 public-key thumbprint.",
+            "type": "string"
+          },
+          "key_id": {
+            "description": "Protected signing key ID.",
+            "type": "string"
+          },
+          "priced_for_year": {
+            "description": "Calendar year for which charges were priced.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "valid_from": {
+            "description": "First day stated on the signed sheet.",
+            "type": "string"
+          },
+          "valid_until": {
+            "description": "Last signed day, inclusive.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "contract",
+          "key_id",
+          "fingerprint",
+          "valid_from",
+          "priced_for_year"
         ],
         "type": "object"
       },
@@ -2306,15 +3389,53 @@
       "Total": {
         "description": "What a run of closed days adds up to.",
         "properties": {
+          "compared_delta_ct": {
+            "description": "Signed difference on those days. A loss reduces the sum.",
+            "format": "int128",
+            "type": "integer"
+          },
+          "compared_error_ct": {
+            "description": "Total observed replay error of the same conclusive days.",
+            "format": "int128",
+            "type": "integer"
+          },
+          "conclusive_days": {
+            "description": "Days whose matched comparison exceeds its observed model error.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "days": {
             "description": "How many closed days are in the sum.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
           },
+          "grid_charge_blocks": {
+            "description": "Number of measured, closed grid-charge blocks.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "grid_charge_margin_ct": {
+            "description": "Avoided import costs less grid-charge costs on those blocks, in cents.",
+            "format": "int128",
+            "type": "integer"
+          },
           "imported_wh": {
             "description": "Bought from the grid, Wh.",
             "format": "int64",
+            "type": "integer"
+          },
+          "metered_cost_ct": {
+            "description": "Variable and fixed charges of those complete bills, in cents.",
+            "format": "int128",
+            "type": "integer"
+          },
+          "metered_days": {
+            "description": "Number of complete bills contributing to the measured cost.",
+            "format": "uint32",
+            "minimum": 0,
             "type": "integer"
           },
           "money": {
@@ -2346,50 +3467,18 @@
         "required": [
           "days",
           "priced_days",
+          "metered_days",
+          "metered_cost_ct",
+          "conclusive_days",
+          "compared_delta_ct",
+          "compared_error_ct",
+          "grid_charge_blocks",
+          "grid_charge_margin_ct",
           "money",
           "imported_wh",
           "produced_wh",
           "reductions",
           "reduction_respected"
-        ],
-        "type": "object"
-      },
-      "TrustCheck": {
-        "description": "Whether the box is who it was, and whether its control box is still there.",
-        "properties": {
-          "control_box": {
-            "$ref": "#/components/schemas/ControlBox",
-            "description": "The network operator's control box."
-          },
-          "fingerprint": {
-            "description": "The SHA-256 fingerprint of its SHIP certificate.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "https_fingerprint": {
-            "description": "The SHA-256 fingerprint of the certificate the page is served with.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "identity": {
-            "description": "`kept`: the store holds the certificate the box is presenting, so the\nSKI and fingerprint are the ones a restart restores. `ephemeral`: the box\nhas no store, or the store holds another, and the next start presents a\nnew identity. `none`: the box has no EEBUS identity.",
-            "type": "string"
-          },
-          "ski": {
-            "description": "The box's SKI.",
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "identity",
-          "control_box"
         ],
         "type": "object"
       },
@@ -2535,7 +3624,7 @@
   "info": {
     "description": "The local API of a hems box. A request authenticated by the session cookie that changes anything must carry `Content-Type: application/json`.",
     "title": "hemsd",
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -2781,6 +3870,344 @@
           }
         ],
         "summary": "The commissioning record, signed by the box: its identity, its control box, its § 14a devices"
+      }
+    },
+    "/v1/commissioning/change": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Receipt"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Latest installation or null"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Configuration writes unavailable"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Read the latest installation outcome"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyInstallation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            },
+            "description": "Installation outcome"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Configuration writes unavailable"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Stale or unknown proposal"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Activate the reviewed driver addition"
+      }
+    },
+    "/v1/commissioning/first-meter": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstMeter"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeterReview"
+                }
+              }
+            },
+            "description": "Verified devices and validated initial configuration"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid site inputs"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Site is already commissioned"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported or silent device"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Preview a connection meter and optional observed assets on an empty site"
+      }
+    },
+    "/v1/commissioning/transfer": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review2"
+                }
+              }
+            },
+            "description": "Current review"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No handover pending"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Read the controller handover review"
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Approval2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review2"
+                }
+              }
+            },
+            "description": "Updated review"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Review expired or superseded"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Authorize or revoke an installer handover"
       }
     },
     "/v1/days": {
@@ -3280,6 +4707,160 @@
         "summary": "Ask for a charge or a temperature by a time; answered with a verdict"
       }
     },
+    "/v1/goals/{asset}/boost": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Cancelled"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unknown asset"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Requires a car"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Return the car to its plan"
+      },
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoostConfirmation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Requested"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Goal or price changed"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Quote busy"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Price or vehicle facts unavailable"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Confirm immediate charging to the saved car goal"
+      }
+    },
     "/v1/goals/{asset}/quote": {
       "post": {
         "parameters": [
@@ -3287,6 +4868,14 @@
             "in": "path",
             "name": "asset",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "true compares the saved goal with immediate charging",
+            "in": "query",
+            "name": "charge_now",
             "schema": {
               "type": "string"
             }
@@ -3399,7 +4988,7 @@
             "session": []
           }
         ],
-        "summary": "What a goal would cost, before it is set: the same plan solved with it"
+        "summary": "Price a goal or preview charging now against the saved departure"
       }
     },
     "/v1/handover": {
@@ -3902,6 +5491,16 @@
               }
             },
             "description": "No credential, or not one this box issued"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Use the household’s priced boost for this charge point"
           }
         },
         "security": [
@@ -4632,9 +6231,17 @@
             }
           },
           {
-            "description": "end, RFC 3339; now by default",
+            "description": "exclusive end, RFC 3339; defaults to now or the most recent quarter boundary for explicit summaries",
             "in": "query",
             "name": "to",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "quarter_hours for aligned 15-minute buckets; omit for automatic resolution",
+            "in": "query",
+            "name": "resolution",
             "schema": {
               "type": "string"
             }
@@ -4659,7 +6266,7 @@
                 }
               }
             },
-            "description": "The window ends before it starts"
+            "description": "Invalid window, resolution or quarter boundary (maximum 1096 days)"
           },
           "401": {
             "content": {
@@ -4700,6 +6307,16 @@
               }
             },
             "description": "It could not be read"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Another history read is running; retry shortly"
           }
         },
         "security": [
@@ -5045,6 +6662,219 @@
         "summary": "Send it a de.ems.test.ping now"
       }
     },
+    "/v1/tariff": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            },
+            "description": "Supply schedule"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Stored schedule unreadable"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Current and next signed supply contract"
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Import"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review"
+                }
+              }
+            },
+            "description": "Accepted terms"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid file or period"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Review changed or missing"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Accept the exact reviewed seller terms"
+      }
+    },
+    "/v1/tariff/preview": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Import"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Review"
+                }
+              }
+            },
+            "description": "Verified terms"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid file or period"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No credential, or not one this box issued"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "A manager's credential, on a route that is the household's"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Storage unavailable"
+          }
+        },
+        "security": [
+          {
+            "household": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Verify the seller file and review its signer, period and price"
+      }
+    },
     "/v1/token": {
       "post": {
         "responses": {
@@ -5114,7 +6944,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TrustCheck"
+                  "$ref": "#/components/schemas/Diagnostics"
                 }
               }
             },
@@ -5149,7 +6979,7 @@
             "session": []
           }
         ],
-        "summary": "Whether the box kept its identity, and whether its control box is heard"
+        "summary": "Installer diagnostics for identity, devices and quarter-hour history"
       }
     },
     "/version": {
@@ -5240,6 +7070,62 @@
         "summary": "A device has not done what it was asked for ten minutes"
       }
     },
+    "de.ems.device.lost": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/DeviceLost"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.ems.device.lost"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "A configured asset stopped reporting"
+      }
+    },
     "de.ems.grid.lpc.failsafe.entered": {
       "post": {
         "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
@@ -5294,6 +7180,62 @@
           }
         },
         "summary": "The control box fell silent; the failsafe value applies"
+      }
+    },
+    "de.ems.grid.lpc.failsafe.left": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/FailsafeLeft"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.ems.grid.lpc.failsafe.left"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "Control-box contact restored or failsafe expired"
       }
     },
     "de.ems.grid.lpc.limit.received": {
@@ -5406,6 +7348,62 @@
           }
         },
         "summary": "The reduction ended"
+      }
+    },
+    "de.ems.grid.lpp.limit.received": {
+      "post": {
+        "description": "A CloudEvent 1.0 in structured mode. Headers `webhook-id` (the event's `id`), `webhook-timestamp` and `webhook-signature` per Standard Webhooks, keyed with the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/FeedInLimit"
+                  },
+                  "datacontenttype": {
+                    "const": "application/json"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "specversion": {
+                    "const": "1.0"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "de.ems.grid.lpp.limit.received"
+                  }
+                },
+                "required": [
+                  "specversion",
+                  "id",
+                  "source",
+                  "type",
+                  "time",
+                  "data"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Received"
+          }
+        },
+        "summary": "Operator feed-in ceiling received"
       }
     },
     "de.ems.site.day.closed": {

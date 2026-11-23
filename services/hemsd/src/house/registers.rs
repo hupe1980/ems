@@ -11,6 +11,7 @@ use sunspec::models::model1::Model1;
 use sunspec::models::model103::Model103;
 use sunspec::models::model123::Model123;
 use sunspec::models::model203::Model203;
+use sunspec::models::model701::Model701;
 use sunspec::models::model802::Model802;
 
 /// Where every unit's chain starts — the common SunSpec base.
@@ -66,12 +67,16 @@ impl Unit {
         unit
     }
 
-    /// A three-phase inverter with immediate controls: models 103 and 123.
+    /// A three-phase inverter with immediate controls and DER telemetry.
     #[must_use]
     pub fn inverter() -> Self {
         let mut unit = Self::new(
             "virtual inverter",
-            &[(103, Model103::LEN), (123, Model123::LEN)],
+            &[
+                (103, Model103::LEN),
+                (123, Model123::LEN),
+                (701, Model701::LEN),
+            ],
         );
         let controls = unit.body_mut(123);
         set(controls, Model123::CONN.offset, 1);
@@ -168,8 +173,8 @@ impl Unit {
             .then(|| f64::from(at(Model123::W_MAX_LIM_PCT.offset)) / 100.0)
     }
 
-    /// What the inverter feeds in (W, non-negative) and has fed in (Wh).
-    pub fn set_inverter(&mut self, watts: f64, watt_hours: f64) {
+    /// Actual output (W), delivered energy (Wh) and throttling as a percentage of maximum active power.
+    pub fn set_inverter(&mut self, watts: f64, watt_hours: f64, throttle_pct: f64) {
         let body = self.body_mut(103);
         set(body, Model103::W.offset, signed(watts));
         set(body, Model103::HZ.offset, 5_000);
@@ -179,6 +184,13 @@ impl Unit {
         set(body, Model103::TMP_SF.offset, signed(-1.0));
         // `MPPT`.
         set(body, Model103::ST.offset, 4);
+        let der = self.body_mut(701);
+        set(der, Model701::W.offset, signed(watts));
+        set(
+            der,
+            Model701::THROT_PCT.offset,
+            signed(throttle_pct.clamp(0.0, 100.0)),
+        );
     }
 
     /// What crosses the connection point (W, import positive) and the two
@@ -246,7 +258,11 @@ mod tests {
     #[test]
     fn every_image_parses_as_the_model_it_claims_to_be() {
         let mut inverter = Unit::inverter();
-        inverter.set_inverter(4_321.0, 70_000.0);
+        inverter.set_inverter(4_321.0, 70_000.0, 50.0);
+        assert_eq!(
+            Model701::parse(inverter.body(701)).unwrap().throt_pct,
+            Some(50)
+        );
         let read = Model103::parse(inverter.body(103)).expect("model 103");
         assert_eq!((read.w, read.w_sf, read.wh), (4_321, 0, 70_000));
         let controls = Model123::parse(inverter.body(123)).expect("model 123");
@@ -282,7 +298,7 @@ mod tests {
             seen.push(header[0]);
             address += 2 + header[1];
         }
-        assert_eq!(seen, [1, 103, 123]);
+        assert_eq!(seen, [1, 103, 123, 701]);
     }
 
     #[test]

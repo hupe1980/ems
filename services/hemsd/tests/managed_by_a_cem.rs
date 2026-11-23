@@ -1,47 +1,11 @@
-//! A Customer Energy Manager drives this household, over a real socket.
-//!
-//! `ems-flex` had the whole of S2 (EN 50491-12-2) — the descriptions, the
-//! session, the instruction arithmetic — and until `hemsd::runtime::s2` existed
-//! **nothing called any of it**. That is the failure mode this workspace keeps
-//! finding in itself and the one its README puts first: a module that is
-//! implemented, cited, tested and reached by nothing, which no property test
-//! catches because a property is a statement about code that runs.
-//!
-//! So the defence is this file. A real WebSocket, a CEM on the other end of it,
-//! the handshake S2 specifies, and an instruction that has to come out the far
-//! side as something the arbiter would act on. A regression anywhere in that
-//! chain — the route, the JSON binding, the session, the decode, the shared map
-//! — fails here rather than on somebody's bench.
-//!
-//! # What this proves, and what it still does not (R32)
-//!
-//! The CEM is `s2-kit`'s own [`CemSession`] and so is the surface it dials, so
-//! both ends of this socket are the same crate. That much is unchanged.
-//!
-//! What **did** change when the crate did is that the manager on the other end is
-//! now a session engine with a **rule-numbered semantic validator** in front of
-//! it, on by default. Every message this box sends is checked against the rule
-//! catalogue before the CEM accepts it, and a violation arrives as
-//! `CemEvent::Refused { report }` or `CemEvent::Warnings { report }` with the
-//! rule that was broken named. `assert_clean` below fails the test on either.
-//!
-//! That is a third artefact rather than a second opinion: the catalogue is
-//! written from the standard's text and is independent of the session logic on
-//! *either* side, so "hems sends a description `s2-python` would refuse" is a
-//! test failure here rather than a discovery at a test event. A peer that merely
-//! decoded would only ever prove the far end did not crash.
-//!
-//! What is still open is the same shape as D119's EEBUS blind spot: a validator
-//! and a session written by the same hand can be wrong together, and no
-//! implementation that is not ours has yet read a byte of this.
-//! `flexiblepower/s2-analyzer` and `s2-python` are the answers, and the ElaadNL
-//! event (28–29 October 2026) is the multi-vendor version.
+//! A certificate-pinned S2 manager exercises the household gateway over WSS.
 
 use std::sync::Arc;
 
 use ems_core::prelude::{AssetId, Power};
 use hemsd::drivers::Registry;
 use hemsd::runtime::s2::{Cem, S2Settings, Surface};
+use s2_kit::connect::tls::{Fingerprint, TlsClient, TlsPolicy};
 use s2_kit::io::{Dialled, Driver, WebSocket, WebSocketOptions};
 use s2_kit::message::Message;
 use s2_kit::session::{CemConfig, CemEvent, CemSession};
@@ -52,6 +16,28 @@ use tokio::sync::Mutex;
 /// The token this box answers to.
 const TOKEN: &str = "a-token-only-this-household-has";
 
+struct Endpoint {
+    addr: std::net::SocketAddr,
+    policy: TlsPolicy,
+    _stop: ems_service::shutdown::ShutdownTrigger,
+}
+
+impl std::fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.addr.fmt(f)
+    }
+}
+
+impl Endpoint {
+    fn client(&self) -> reqwest::Client {
+        let tls = TlsClient::new(&self.policy).expect("pinned TLS");
+        reqwest::Client::builder()
+            .tls_backend_preconfigured((*tls.config()).clone())
+            .build()
+            .unwrap()
+    }
+}
+
 /// The box, serving **the surfaces `main` serves**, on a loopback port.
 ///
 /// Through `runtime::surfaces` rather than by assembling a router of its own,
@@ -59,14 +45,14 @@ const TOKEN: &str = "a-token-only-this-household-has";
 /// assembly, so a test that built its own arrangement of the same parts would
 /// pass while the product shipped an open port. `ems_service::Server` adds only
 /// the health surface on top, which is deliberately outside the gate.
-async fn a_box_that_can_be_managed() -> (String, Cem, ems_core::prelude::Site) {
+async fn a_box_that_can_be_managed() -> (Endpoint, Cem, ems_core::prelude::Site) {
     let (address, cem, site, _) = a_box_with_its_access().await;
     (address, cem, site)
 }
 
 /// The same box, with the credential set it answers to.
 async fn a_box_with_its_access() -> (
-    String,
+    Endpoint,
     Cem,
     ems_core::prelude::Site,
     hemsd::runtime::access::LocalAccess,
@@ -100,15 +86,31 @@ async fn a_box_with_its_access() -> (
         .remembering(Some(std::sync::Arc::new(Mutex::new(
             hemsd::store::Store::in_memory().expect("a store"),
         ))));
-    let router = hemsd::runtime::surfaces(local, Some(surface), access.clone());
+    let router = hemsd::runtime::surfaces_over(local, Some(surface), access.clone(), true);
+    (serve_pinned(router).await, cem, site, access)
+}
+
+async fn serve_pinned(router: axum::Router) -> Endpoint {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("a port");
-    let address = listener.local_addr().expect("its address").to_string();
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, router).await;
-    });
-    (address, cem, site, access)
+    let addr = listener.local_addr().unwrap();
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let (tls, fingerprint) = hemsd::runtime::tls::server_config(None).unwrap();
+    let server = ems_service::Server::new(
+        ems_service::identity!(),
+        ems_service::Settings::default(),
+        ems_service::Health::new(),
+        router,
+    )
+    .with_tls(tls);
+    let (signal, stop) = ems_service::Shutdown::channel();
+    tokio::spawn(server.serve_on(listener, signal));
+    Endpoint {
+        addr,
+        policy: TlsPolicy::Pinned(Fingerprint::parse(&fingerprint).unwrap()),
+        _stop: stop,
+    }
 }
 
 /// A short name for an event, for a failure message.
@@ -146,7 +148,7 @@ struct Manager {
 
 impl Manager {
     /// Dial the box with the household's own credential.
-    async fn as_the_household(address: &str, asset: &AssetId) -> Manager {
+    async fn as_the_household(address: &Endpoint, asset: &AssetId) -> Manager {
         Self::connect(address, asset, Some(TOKEN))
             .await
             .expect("the box to accept a manager")
@@ -154,17 +156,13 @@ impl Manager {
 
     /// Dial with whatever credential — or none.
     async fn connect(
-        address: &str,
+        address: &Endpoint,
         asset: &AssetId,
         token: Option<&str>,
     ) -> Result<Manager, String> {
-        // Over loopback, and only there: s2-kit refuses a bearer on plaintext
-        // `ws://` (S2 Connect: S2 must not be sent over unencrypted channels),
-        // and the box serves no TLS yet — which is exactly why a manager on
-        // another host cannot reach it.
-        let mut options = WebSocketOptions::default().allow_insecure_bearer();
+        let mut options = WebSocketOptions::default().policy(&address.policy);
         options.bearer = token;
-        let socket = WebSocket::open(&format!("ws://{address}/s2/{asset}"), &options)
+        let socket = WebSocket::open(&format!("wss://{address}/s2/{asset}"), &options)
             .await
             .map_err(|e| e.to_string())?;
         let mut session = CemSession::new(CemConfig::default());
@@ -182,7 +180,7 @@ impl Manager {
     /// rather than four copies because the handshake is the **engine's** now: a
     /// test that spelled it out would be asserting the library's behaviour in
     /// seven places instead of hems's in one.
-    async fn ready(address: &str, asset: &AssetId, control: ControlType) -> Manager {
+    async fn ready(address: &Endpoint, asset: &AssetId, control: ControlType) -> Manager {
         let mut manager = Self::as_the_household(address, asset).await;
         manager
             .until("describe itself", |e| {
@@ -556,12 +554,7 @@ async fn a_manager_is_told_when_the_grid_overrides_its_instruction() {
     .await
     .expect("the instruction to be taken");
 
-    cem.note_overrides(
-        [(battery.clone(), "§ 14a LPC".to_string())]
-            .into_iter()
-            .collect(),
-    )
-    .await;
+    cem.abort(&battery, instruction, "§ 14a LPC").await;
 
     // And it arrives on the wire as an `InstructionStatusUpdate`, not as silence.
     let update = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -584,6 +577,13 @@ async fn a_manager_is_told_when_the_grid_overrides_its_instruction() {
         "S2's `ABORTED` is *started and could not be completed*, which is exactly \
          what a network operator's reduction does to an accepted instruction — and \
          the update names the instruction it aborted, not merely a status"
+    );
+
+    assert!(
+        !cem.active(time::OffsetDateTime::now_utc())
+            .await
+            .contains_key(&battery),
+        "an aborted instruction cannot resume when the restriction ends"
     );
 
     // Once, not once a second: a reduction lasts minutes and a status update on
@@ -614,10 +614,10 @@ async fn a_manager_is_told_when_the_grid_overrides_its_instruction() {
 async fn the_box_answers_nothing_about_a_household_without_its_credential() {
     let (address, _cem, site) = a_box_that_can_be_managed().await;
     let battery = battery(&site);
-    let client = reqwest::Client::new();
+    let client = address.client();
 
     for path in ["/v1/status", "/v1/overrides", "/v1/pairing"] {
-        let url = format!("http://{address}{path}");
+        let url = format!("https://{address}{path}");
 
         let open = client.get(&url).send().await.expect("the box to answer");
         assert_eq!(
@@ -652,7 +652,7 @@ async fn the_box_answers_nothing_about_a_household_without_its_credential() {
     }
 
     // The write, which is the one that changes what the arbiter wants.
-    let override_url = format!("http://{address}/v1/overrides/{battery}");
+    let override_url = format!("https://{address}/v1/overrides/{battery}");
     assert_eq!(
         client
             .put(&override_url)
@@ -820,8 +820,8 @@ async fn a_manager_may_drive_the_house_and_not_read_its_life() {
         "a manager must not be able to take the household's Data Act export"
     );
 
-    let client = reqwest::Client::new();
-    let series = format!("http://{address}/v1/series/grid");
+    let client = address.client();
+    let series = format!("https://{address}/v1/series/grid");
     assert_eq!(
         client
             .get(&series)
@@ -834,10 +834,25 @@ async fn a_manager_may_drive_the_house_and_not_read_its_life() {
         "a manager reached the one-second series, which says when this household \
          showered, cooked and went away"
     );
+    let quarter = format!(
+        "{series}?from=2026-11-23T10:00:00Z&to=2026-11-23T10:15:00Z&resolution=quarter_hours"
+    );
+    for (token, expected) in [
+        (None, reqwest::StatusCode::UNAUTHORIZED),
+        (Some(manager.as_str()), reqwest::StatusCode::FORBIDDEN),
+        // This fixture grants the household access, but has no local history store.
+        (Some(TOKEN), reqwest::StatusCode::NOT_FOUND),
+    ] {
+        let mut request = client.get(&quarter);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        assert_eq!(request.send().await.unwrap().status(), expected);
+    }
     // …and it can still do the thing it is for.
     assert!(
         client
-            .get(format!("http://{address}/v1/status"))
+            .get(format!("https://{address}/v1/status"))
             .bearer_auth(&manager)
             .send()
             .await
@@ -861,54 +876,82 @@ async fn a_manager_cannot_decide_who_else_may_act_on_the_box() {
         .connect_manager("aggregator-nord")
         .await
         .expect("a manager can be connected");
-    let client = reqwest::Client::new();
+    let client = address.client();
     let ski = "7b10e3d2a4c95f8812d0b6e3c1a47f90d25ec94f";
     for (what, request) in [
         (
             "approve a control box",
             client
-                .post(format!("http://{address}/v1/pairing"))
+                .post(format!("https://{address}/v1/pairing"))
                 .json(&serde_json::json!({ "ski": ski })),
         ),
         (
             "forget a control box",
-            client.delete(format!("http://{address}/v1/pairing/{ski}")),
+            client.delete(format!("https://{address}/v1/pairing/{ski}")),
         ),
         (
             "list the control boxes",
-            client.get(format!("http://{address}/v1/pairing")),
+            client.get(format!("https://{address}/v1/pairing")),
         ),
         (
             "connect a manager",
-            client.put(format!("http://{address}/v1/managers/somebody-else")),
+            client.put(format!("https://{address}/v1/managers/somebody-else")),
         ),
         (
             "withdraw a manager",
-            client.delete(format!("http://{address}/v1/managers/aggregator-nord")),
+            client.delete(format!("https://{address}/v1/managers/aggregator-nord")),
+        ),
+        (
+            "read webhook subscriptions",
+            client.get(format!("https://{address}/v1/subscriptions")),
+        ),
+        (
+            "read webhook deliveries",
+            client.get(format!("https://{address}/v1/deliveries")),
+        ),
+        (
+            "create a webhook",
+            client
+                .post(format!("https://{address}/v1/subscriptions"))
+                .json(&serde_json::json!({})),
+        ),
+        (
+            "test a webhook",
+            client.post(format!("https://{address}/v1/subscriptions/one/test")),
+        ),
+        (
+            "revoke a webhook",
+            client.post(format!("https://{address}/v1/subscriptions/one/revoke")),
         ),
         (
             "set the car's goal",
             client
-                .put(format!("http://{address}/v1/goals/car"))
+                .put(format!("https://{address}/v1/goals/car"))
                 .json(&serde_json::json!({ "target_soc": 1.0, "by_minute": 420 })),
         ),
         (
             "set the tank's goal",
             client
-                .put(format!("http://{address}/v1/goals/warmwasser"))
+                .put(format!("https://{address}/v1/goals/warmwasser"))
                 .json(&serde_json::json!({ "target_c": 50.0, "by_minute": 1080 })),
         ),
         (
             "read the household's page, its goals and its receipt",
-            client.get(format!("http://{address}/v1/home")),
+            client.get(format!("https://{address}/v1/home")),
         ),
         (
             "read the household's closed days",
-            client.get(format!("http://{address}/v1/days")),
+            client.get(format!("https://{address}/v1/days")),
+        ),
+        (
+            "authorize installer handover",
+            client
+                .put(format!("https://{address}/v1/commissioning/transfer"))
+                .json(&serde_json::json!({"id":"stale","approve":true})),
         ),
         (
             "take the household's closed days away as CSV",
-            client.get(format!("http://{address}/v1/days.csv")),
+            client.get(format!("https://{address}/v1/days.csv")),
         ),
     ] {
         let status = request
@@ -926,7 +969,7 @@ async fn a_manager_cannot_decide_who_else_may_act_on_the_box() {
     // The household's own credential still can.
     assert!(
         client
-            .get(format!("http://{address}/v1/managers"))
+            .get(format!("https://{address}/v1/managers"))
             .bearer_auth(TOKEN)
             .send()
             .await
@@ -1189,4 +1232,97 @@ async fn a_managers_instruction_is_logged_under_its_own_name() {
     .await
     .expect("the instruction to be logged under the manager's name");
     assert!(line.contains(&format!("asset={battery}")), "{line}");
+}
+
+/// Exercise the live control loop and its real Modbus readings under the WSS session.
+#[cfg(feature = "house")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_manager_reads_the_virtual_house_battery_over_wss() {
+    use hemsd::{HouseholdConfig, Scenario, house};
+    let scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
+    let local = "127.0.0.1:0".parse().unwrap();
+    let ship = std::net::TcpListener::bind(local)
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let house = house::start(house::Options {
+        scenario: scenario.clone(),
+        listen: local,
+        household: Some(ship),
+        at: Some(time::Duration::hours(17)),
+        identity: None,
+        exposed: false,
+    })
+    .await
+    .unwrap();
+    let config = house::configuration(&house, &scenario, Some(ship), local).unwrap();
+    let mut settings: hemsd::Settings = toml::from_str(&config).unwrap();
+    settings.s2.enabled = true;
+    settings.s2.report_every_secs = 1;
+    let (signal, stop) = ems_service::Shutdown::channel();
+    let running = hemsd::runtime::run(&settings, &ems_service::Health::new(), &signal)
+        .await
+        .unwrap();
+    let battery = running.household.battery.clone().expect("virtual battery");
+    let site = running.household.site;
+    let Some(ems_core::prelude::Asset::Battery(pack)) = site.asset(&battery) else {
+        panic!("missing virtual battery")
+    };
+    let capacity = pack.capacity.kwh();
+    let surface = Surface::new(
+        Arc::new(site.clone()),
+        running.registry,
+        running.cem,
+        settings.s2,
+    );
+    let access = running.access;
+    let local = hemsd::runtime::api::Local::new(
+        running.status,
+        site.id.to_string(),
+        running.ski,
+        running.overrides,
+        running.trust,
+        access.clone(),
+        None,
+    );
+    let token = access.connect_manager("rehearsal").await.unwrap();
+    let address = serve_pinned(hemsd::runtime::surfaces_over(
+        local,
+        Some(surface),
+        access,
+        true,
+    ))
+    .await;
+    let mut manager = Manager::connect(&address, &battery, Some(&token))
+        .await
+        .unwrap();
+    manager
+        .until("describe the battery", |event| {
+            matches!(event, CemEvent::ResourceDescribed(_)).then_some(())
+        })
+        .await;
+    manager
+        .session
+        .select_control_type(ControlType::FillRateBasedControl, Timestamp::now())
+        .unwrap();
+    manager
+        .until("activate the manager", |event| {
+            matches!(event, CemEvent::Ready { .. }).then_some(())
+        })
+        .await;
+    manager
+        .until("report the battery reading", |event| {
+            if let CemEvent::Status {
+                message: Message::FrbcStorageStatus(status),
+                ..
+            } = event
+            {
+                return ((status.present_fill_level / capacity - house.reading().soc).abs()
+                    < 0.011)
+                    .then_some(());
+            }
+            None
+        })
+        .await;
+    stop.trigger();
 }

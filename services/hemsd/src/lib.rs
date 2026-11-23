@@ -3,10 +3,7 @@
 //! One process per household. It holds the three control planes — guard,
 //! arbiter, planner — and the drivers that talk to the hardware, and it is
 //! designed so that the house stays safe and lawful when everything above it
-//! is unreachable.
-//!
-//! This build ships the control stack and a simulated house to run it against;
-//! the protocol drivers are the next milestone.
+//! is unreachable. The local page can also replay a reference day.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::pedantic)]
@@ -23,6 +20,7 @@
 pub mod backtest;
 pub mod config;
 pub mod demo;
+pub mod doctor;
 pub mod drivers;
 pub mod forecasting;
 pub mod home;
@@ -30,6 +28,7 @@ pub mod home;
 pub mod house;
 pub mod month;
 pub mod openapi;
+pub mod price_sheet;
 pub mod render;
 pub mod report;
 pub mod runtime;

@@ -1,6 +1,6 @@
 [package]
 name        = "ems-device"
-description = "How a decision becomes a command a device will actually accept — amperes for a charge point, an SG Ready contact pair for a heat pump, a ceiling for an inverter — plus the capability model the arbiter dispatches on"
+description = "Convert energy setpoints into feasible commands for EV chargers, heat pumps and inverters"
 keywords    = ["energy", "hems", "sg-ready", "device", "control"]
 categories  = ["science", "hardware-support"]
 readme      = "README.md"

@@ -545,6 +545,15 @@ pub fn qr_svg_dense(record: &str) -> Result<String, TooDense> {
 /// Whether the box is who it was, and whether its control box is still there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct TrustCheck {
+    /// Optional installer contact for the household.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub support_contact: Option<String>,
+    /// Seconds since the Energy Guard's last accepted LPC heartbeat, if observed.
+    pub heartbeat_age_s: Option<u64>,
+    /// Last control tick observed by the gateway.
+    pub tick_at: Option<String>,
+    /// Registry observations for configured Modbus and EEBUS assets.
+    pub devices: Vec<crate::doctor::DeviceCheck>,
     /// `kept`: the store holds the certificate the box is presenting, so the
     /// SKI and fingerprint are the ones a restart restores. `ephemeral`: the box
     /// has no store, or the store holds another, and the next start presents a
@@ -713,6 +722,54 @@ pub struct ModbusDevice {
     /// What it says it is — a claim from the device, shown and not acted on.
     #[schemars(schema_with = "crate::openapi::sunspec_identity")]
     pub identity: Option<Identity>,
+    /// Preview of one read-only driver addition for this site.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<InverterReview>,
+}
+
+/// A proposed PV driver block checked against the effective configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct InverterReview {
+    /// Server-issued confirmation id when this file can be activated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
+    /// Proposed addition, containing only the selected device.
+    pub toml: String,
+    /// Refusal from the gateway's validator, if any.
+    pub refusal: Option<String>,
+    /// Modbus unit and endpoint used for the model walk.
+    pub unit: u8,
+    /// Literal socket address of the device.
+    pub address: std::net::SocketAddr,
+}
+
+impl InverterReview {
+    /// Review the exact TOML addition against a copy of the running settings.
+    pub fn new(settings: &crate::Settings, address: std::net::SocketAddr, unit: u8) -> Self {
+        let rating = settings.site.pv_ac_kw;
+        let block = format!(
+            "[[drivers]]\nkind = \"sunspec\"\nasset = \"pv\"\naddress = \"{address}\"\nunit = {unit}\nrating_kw = {rating:?}\n"
+        );
+        let mut candidate = settings.clone();
+        let addition = toml::from_str::<crate::Settings>(&block);
+        let refusal = match addition {
+            Ok(addition) => {
+                candidate.drivers.extend(addition.drivers);
+                super::assemble(&candidate, None, OffsetDateTime::now_utc()).err().map(|error| match error {
+                    super::StartError::Drivers(reason) => reason.to_string(),
+                    _ => "The gateway refused the site configuration. Check it with hemsd run --check.".into(),
+                })
+            }
+            Err(_) => Some("The proposed driver block could not be read.".into()),
+        };
+        Self {
+            proposal: None,
+            toml: block,
+            refusal,
+            unit,
+            address,
+        }
+    }
 }
 
 /// One SHIP node.
@@ -774,34 +831,31 @@ pub async fn discover(
             },
             asset: Some(asset.to_string()),
             identity: None,
+            review: None,
         })
         .collect();
 
     // A configured device is never probed — see the module note. Matched by the
     // host as it is written in the configuration: a device configured by name
     // and asked for by address is not recognised as the same one.
-    let configured_hosts: BTreeSet<&str> = commissioning
+    let configured_hosts: BTreeSet<IpAddr> = commissioning
         .modbus
         .iter()
-        .map(|(_, address)| {
+        .filter_map(|(_, address)| {
             address
-                .rsplit_once(':')
-                .map_or(address.as_str(), |(h, _)| h)
+                .parse::<std::net::SocketAddr>()
+                .ok()
+                .map(|socket| socket.ip())
         })
         .collect();
     let to_probe: Vec<IpAddr> = asked
         .iter()
         .copied()
-        .filter(|ip| !configured_hosts.contains(ip.to_string().as_str()))
+        .filter(|ip| !configured_hosts.contains(ip))
         .collect();
     let probes = to_probe.iter().map(|ip| {
         let address = std::net::SocketAddr::new(*ip, port);
-        async move {
-            tokio::time::timeout(PROBE_TIMEOUT, probe(address, unit))
-                .await
-                .ok()
-                .flatten()
-        }
+        inspect(address, unit)
     });
     let mut running = tokio::task::JoinSet::new();
     for (index, probing) in probes.enumerate() {
@@ -826,6 +880,7 @@ pub async fn discover(
                 },
                 asset: None,
                 identity,
+                review: None,
             }),
     );
 
@@ -838,6 +893,17 @@ pub async fn discover(
     }
 }
 
+/// Inspect a previously selected local endpoint under the discovery deadline.
+pub(super) async fn inspect(address: std::net::SocketAddr, unit: u8) -> Option<Identity> {
+    if !is_private(address.ip()) || !MODBUS_PORTS.contains(&address.port()) {
+        return None;
+    }
+    tokio::time::timeout(PROBE_TIMEOUT, probe(address, unit))
+        .await
+        .ok()
+        .flatten()
+}
+
 /// Ask one address whether a SunSpec device lives there. Reads only.
 async fn probe(address: std::net::SocketAddr, unit: u8) -> Option<Identity> {
     let mut stream = tokio::net::TcpStream::connect(address).await.ok()?;
@@ -847,6 +913,11 @@ async fn probe(address: std::net::SocketAddr, unit: u8) -> Option<Identity> {
         stream.write_all(&request.encode()).await.ok()?;
         buffer.clear();
         let response = loop {
+            if buffer.len() >= 7
+                && (buffer[6] != unit || buffer[..2] != request.transaction.to_be_bytes())
+            {
+                return None;
+            }
             match frame::decode(&buffer) {
                 Ok(Some((response, _))) => break response,
                 Ok(None) => {}
@@ -1285,6 +1356,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn review_validates_only_the_proposed_addition_and_keeps_the_source_settings() {
+        let mut settings: crate::Settings =
+            toml::from_str(include_str!("../../hemsd.example.toml")).unwrap();
+        let address = "127.0.0.1:1502".parse().unwrap();
+        let duplicate = InverterReview::new(&settings, address, 7);
+        assert!(duplicate.refusal.unwrap().contains("two drivers"));
+        settings.drivers.retain(|driver| driver.asset() != "pv");
+        let before = settings.clone();
+        let review = InverterReview::new(&settings, address, 7);
+        assert_eq!(review.refusal, None);
+        assert_eq!(settings, before);
+        assert_eq!(review.unit, 7);
+        assert_eq!(review.address, address);
+        assert!(review.toml.contains("unit = 7"));
+        assert!(!review.toml.contains("[api]"));
+    }
+
     /// A SunSpec device on loopback: the marker at 40 000 and a common model.
     async fn sunspec_device() -> std::net::SocketAddr {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1324,6 +1413,8 @@ mod tests {
         let identity = probe(address, 1).await.expect("it answers");
         assert_eq!(identity.manufacturer, "SMA");
         assert_eq!(identity.base, 40_000);
+        assert_eq!(identity.inverter_model, None);
+        assert!(!identity.has_immediate_controls);
     }
 
     #[tokio::test]

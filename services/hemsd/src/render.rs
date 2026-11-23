@@ -1,10 +1,4 @@
-//! What a simulated day prints.
-//!
-//! A `String` rather than a series of `println!`s, because the report is a
-//! **product surface**: it is what `hemsd simulate` shows, what the landing page
-//! reproduces, and what a reader compares against the money. A surface that
-//! exists only inside `main` is one no test can reach, and a transcript copied
-//! anywhere else then goes stale in silence.
+//! Text output for `hemsd simulate` and the published winter report.
 
 use crate::{DayResult, Scenario};
 
@@ -12,7 +6,7 @@ use crate::{DayResult, Scenario};
 ///
 /// Every line is a label and a value, two spaces or more apart, which is what
 /// lets a reader line the money up against the energies and what lets a test
-/// hold the landing page to it.
+/// check the simulation guide against it.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn day(scenario: &Scenario, r: &DayResult) -> String {
@@ -305,22 +299,19 @@ pub fn day(scenario: &Scenario, r: &DayResult) -> String {
     if car.abs() > 0.005 {
         row(&mut out, "left in the car", format!("{car:+.2} €"));
     }
-    row(
-        &mut out,
-        "cost of the day",
-        format!("{:.2} €", r.cost.total()),
-    );
-    row(
-        &mut out,
-        "without optimisation",
-        format!("{:.2} €", r.baseline.total()),
-    );
-    row(&mut out, "saved", format!("{:.2} €", r.saving_eur()));
-    row(
-        &mut out,
-        "…of it on the bill",
-        format!("{:.2} €", r.bill_saving_eur()),
-    );
+    let money = crate::month::Money::from(&crate::demo::receipt_of_day(r, scenario.date));
+    for (label, cents) in [
+        ("cost of the day", money.cost_ct),
+        ("without optimisation", money.without_ct),
+        ("saved", money.saved_ct),
+        ("…of it on the bill", money.on_bill_ct),
+    ] {
+        row(
+            &mut out,
+            label,
+            format!("{} €", crate::month::decimal(cents, 2)),
+        );
+    }
     let _ = writeln!(out);
     row(
         &mut out,

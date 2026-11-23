@@ -32,7 +32,7 @@ const DEMO_FINGERPRINT: &str = "8e41c3a90b7d2f6614e8a0c5d2b97f31a4e6c0d58b2f19e7
 #[derive(Clone)]
 pub struct Demo {
     recording: Arc<Recording>,
-    receipt: home::Receipt,
+    receipt: ClosedDay,
     goal: Arc<tokio::sync::Mutex<home::GoalSet>>,
     /// The closed days before the replayed one, oldest first.
     history: Arc<Vec<ClosedDay>>,
@@ -46,7 +46,7 @@ impl Demo {
     pub fn record(scenario: &Scenario) -> anyhow::Result<Self> {
         let (day, recording) = crate::scenario::run_recorded(scenario)?;
         Ok(Self {
-            receipt: receipt_of_day(&day, scenario.date),
+            receipt: closed_day(&day, scenario.date),
             recording: Arc::new(recording),
             goal: Arc::default(),
             history: Arc::default(),
@@ -78,7 +78,7 @@ impl Demo {
                     .map(|day| {
                         scope.spawn(move || {
                             let result = crate::scenario::run(day)?;
-                            Ok(ClosedDay::of(&receipt_of_day(&result, day.date), true))
+                            Ok(closed_day(&result, day.date))
                         })
                     })
                     .collect();
@@ -162,6 +162,17 @@ fn earlier(scenario: &Scenario, ago: usize) -> Scenario {
         day.grid_event = None;
     }
     day
+}
+
+fn closed_day(day: &DayResult, date: time::Date) -> ClosedDay {
+    let mut receipt = ClosedDay::of(&receipt_of_day(day, date), true);
+    if day.pv_forecast.samples > 0 && day.load_forecast.samples > 0 {
+        receipt.forecast = crate::month::ForecastCoverage::of(
+            day.pv_forecast.coverage,
+            day.load_forecast.coverage,
+        );
+    }
+    receipt
 }
 
 /// A finished simulated day, as the receipt the page prints.
@@ -294,8 +305,12 @@ mod tests {
             .home_at(0, home::GoalSet::default())
             .receipt
             .expect("a receipt");
-        assert!((r.cost_eur - day.cost.total()).abs() < 1e-9);
-        assert!((r.saved_eur - day.saving_eur()).abs() < 1e-9);
+        let money = r.money.expect("priced replay");
+        assert_eq!(
+            money.cost_ct.to_string(),
+            format!("{:.0}", day.cost.total() * 100.0)
+        );
+        assert_eq!(money.saved_ct, money.without_ct - money.cost_ct);
         assert_eq!(r.reduced_minutes, Some(day.limited_minutes));
     }
 
@@ -352,24 +367,38 @@ mod tests {
 
     #[test]
     fn every_minute_of_the_demo_explains_every_device() {
-        let scenario = Scenario::winter_with_grid_event(crate::HouseholdConfig::default());
-        let demo = Demo::record(&scenario).expect("the winter day");
-        for minute in (0..1440).step_by(15) {
-            let view = demo.home_at(minute, home::GoalSet::default());
-            assert_ne!(view.devices, []);
-            for d in &view.devices {
-                assert!(
-                    home::ALL_KEYS.contains(&d.why.key),
-                    "{minute}: {}",
-                    d.why.key
-                );
+        let config = crate::HouseholdConfig::default();
+        for (name, scenario) in [
+            ("winter", Scenario::winter_with_grid_event(config.clone())),
+            ("summer", Scenario::summer_surplus(config.clone())),
+            (
+                "deadline",
+                Scenario::winter_evening_deadline(config.clone()),
+            ),
+            ("shared", Scenario::winter_evening_no_store(&config)),
+            (
+                "offline",
+                Scenario::summer_without_a_planner(config.clone()),
+            ),
+            ("autumn", Scenario::autumn_without_a_planner(config.clone())),
+            ("capped", Scenario::summer_capped(&config)),
+        ] {
+            let demo = Demo::record(&scenario).expect("reference day");
+            for minute in (0..1440).step_by(15) {
+                let view = demo.home_at(minute, home::GoalSet::default());
+                assert!(!view.devices.is_empty(), "{name} {minute}");
+                for device in &view.devices {
+                    assert!(
+                        home::ALL_KEYS.contains(&device.why.key),
+                        "{name} {minute}: {} {}",
+                        device.id,
+                        device.why.key
+                    );
+                }
+                if name == "winter" && minute == 17 * 60 + 30 {
+                    assert!(view.reduction.is_some(), "winter reduction at 17:30");
+                }
             }
         }
-        // The § 14a reduction of the winter day, 17:00–18:30 local, is visible.
-        let reduced = demo.home_at(17 * 60 + 30, home::GoalSet::default());
-        assert!(
-            reduced.reduction.is_some(),
-            "the reduction at 17:30 is on the page"
-        );
     }
 }

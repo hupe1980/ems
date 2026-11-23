@@ -1,10 +1,6 @@
 name: Release
 
-# Cutting a release is `git tag v0.2.0 && git push --tags`. Everything below
-# follows from that, in an order chosen so the irreversible step happens last:
-# crates.io cannot be un-published, a GitHub release can be deleted, and a failed
-# build costs nothing.
-
+# A version tag publishes the verified artifacts. Manual runs exercise packaging.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
@@ -65,20 +61,17 @@ jobs:
 
       # fmt · clippy · purity · tests · workspace guards · licences · docs.
       - run: just ci
+      - name: Exercise household release simulations
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          pipx install uv==0.13.6
+          just quote-trial
+          just retained-history-trial
 
-  # ── 2. The daemon, for the boxes it runs on ─────────────────────────────────
-  #
-  # Linux only, and on purpose: `hemsd` is an edge daemon for a gateway box, not
-  # a desktop application. Both architectures are built **natively** rather than
-  # cross-compiled, because the planner links HiGHS — a C++ library built from
-  # source by cmake — and a native runner is simpler and more honest than a
-  # cross-toolchain that has to be trusted to produce the same numbers.
-  #
-  # There is deliberately no musl target yet: HiGHS on musl is an open question
-  # (static C++ runtime, binary size), and shipping a build nobody has run on a
-  # real box would be a claim rather than an artefact.
+  # Build natively on each Linux architecture for the HiGHS C++ dependency.
   binaries:
-    name: hemsd (${{ matrix.target }})
+    name: Edge daemons (${{ matrix.target }})
     needs: verify
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -98,43 +91,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake
 
-      # `cargo-auditable` embeds the exact dependency tree in the binary, so the
-      # SBOM can be recovered from an artefact found in the field rather than
-      # trusted from a file shipped beside it. That is what a CRA vulnerability
-      # process needs when somebody asks "which boxes have this crate on them?"
+      # Embed the dependency tree in each executable.
       - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
         with:
           tool: cargo-auditable
 
-      - run: cargo auditable build --release --locked -p hemsd
+      - run: cargo auditable build --release --locked -p hemsd -p bemsd -p cemsd
 
-      # The binary is exercised before it is shipped. A release that has never
-      # run a day through its own control stack is a file, not a build.
       - name: Smoke test
         run: |
+          ./target/release/bemsd --version
+          ./target/release/cemsd reconcile crates/ems-sim/fixtures/shift-trace.json
           ./target/release/hemsd simulate --day winter
           ./target/release/hemsd simulate --day shared --json > /dev/null
 
       - name: Package
         run: |
           set -euo pipefail
-          name="hemsd-${{ needs.verify.outputs.version }}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          cp target/release/hemsd "dist/$name/"
-          cp LICENSE-MIT LICENSE-APACHE README.md "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          for daemon in hemsd bemsd cemsd; do
+            name="$daemon-${{ needs.verify.outputs.version }}-${{ matrix.target }}"
+            mkdir -p "dist/$name"
+            cp "target/release/$daemon" LICENSE-MIT LICENSE-APACHE "services/$daemon/README.md" "dist/$name/"
+            if [[ "$daemon" == hemsd ]]; then
+              cp services/hemsd/{hemsd.example.toml,openapi.json} "dist/$name/"
+            elif [[ "$daemon" == bemsd ]]; then
+              cp -R services/bemsd/examples "dist/$name/"
+            else
+              mkdir "dist/$name/examples"
+              cp crates/ems-sim/fixtures/shift-trace.json "dist/$name/examples/"
+              "dist/$name/cemsd" reconcile "dist/$name/examples/shift-trace.json"
+            fi
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          done
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: hemsd-${{ matrix.target }}
+          name: edge-${{ matrix.target }}
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  # ── 3. What is in it ────────────────────────────────────────────────────────
-  #
-  # A CycloneDX bill of materials for the daemon. The CRA asks for one and so does
-  # every customer with a procurement department; producing it in the same run
-  # that produces the binaries is what keeps the two describing the same thing.
   sbom:
     name: SBOM
     needs: verify
@@ -144,35 +139,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo install --locked cargo-cyclonedx
-      # `cargo-cyclonedx` takes **no `-p`**. It walks the workspace and writes one
-      # SBOM per member beside that member's manifest, and `--manifest-path` picks
-      # which manifest it starts from rather than which crate it emits. So the
-      # daemon's file is named directly below: `hemsd` is the artefact that ships
-      # and its tree transitively contains every domain crate, which is why one
-      # file is the bill of materials and twenty are a directory listing.
-      - run: cargo cyclonedx --manifest-path services/hemsd/Cargo.toml --format json --all-features
-      - name: Collect
+      - name: Generate a CycloneDX inventory for each daemon
         run: |
           set -euo pipefail
           mkdir -p sbom
-          # Named, not found. A `find` over `*.cdx.json` matches all twenty and
-          # copying each onto one destination leaves whichever the filesystem
-          # happened to return last — an SBOM for an arbitrary crate, under the
-          # daemon's name.
-          cp services/hemsd/hemsd.cdx.json \
-             "sbom/hemsd-${{ needs.verify.outputs.version }}.cdx.json"
-          # It has to describe the daemon and contain the whole workspace, or it
-          # is a bill of materials for something else.
-          python3 - "sbom/hemsd-${{ needs.verify.outputs.version }}.cdx.json" <<'PY'
-          import json, sys
-          bom = json.load(open(sys.argv[1]))
-          name = bom["metadata"]["component"]["name"]
-          ours = sum(1 for c in bom["components"] if c["name"].startswith("ems-"))
-          assert name == "hemsd", f"the SBOM describes {name}, not hemsd"
-          assert ours >= 12, f"only {ours} ems crates in it — not the daemon's whole tree"
-          print(f"{name}: {len(bom['components'])} components, {ours} of them ours")
-          PY
-          ls -l sbom
+          cargo cyclonedx --manifest-path Cargo.toml --format json
+          for daemon in hemsd bemsd cemsd; do
+            inventory="services/$daemon/$daemon.cdx.json"
+            jq -e --arg daemon "$daemon" '.metadata.component.name == $daemon and any(.components[]; .name == "ems-service")' "$inventory"
+            cp "$inventory" "sbom/$daemon-${{ needs.verify.outputs.version }}.cdx.json"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom
@@ -211,7 +187,7 @@ jobs:
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          name: hems ${{ needs.verify.outputs.version }}
+          name: ems ${{ needs.verify.outputs.version }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
@@ -219,28 +195,10 @@ jobs:
             artifacts/*.json
             artifacts/SHA256SUMS
 
-  # ── 5. crates.io, last, because it cannot be undone ─────────────────────────
-  #
-  # Twelve publishable crates. The daemons and `xtask` are `publish = false` and
-  # are not in the list below.
-  #
-  # Authentication is **trusted publishing**: GitHub's OIDC identity is exchanged
-  # for a token that lives thirty minutes. There is no long-lived
-  # `CARGO_REGISTRY_TOKEN` in the repository secrets to leak, and the exchange
-  # only succeeds for this workflow on this repository.
-  #
-  # It is configured **per crate**, and that is the operational catch: each of
-  # the twelve needs its own entry at `crates.io/crates/<name>/settings` naming
-  # owner `hupe1980`, repository `hems`, workflow `release.yml` and environment
-  # `crates-io`. A crate without one fails at its own step with a permissions
-  # error, and everything before it has already published — which the loop below
-  # is built for: add the missing entry and re-run the tag.
-  #
-  # No crate here needs a manual first publish. That rule applies to a crate
-  # *name* that has never been published, and all twelve have been since 0.1.0.
+  # Publish in dependency order after the binary release succeeds.
   crates-io:
     name: Publish to crates.io
-    needs: [verify, binaries]
+    needs: [release]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Named so crates.io's trusted publishing can be scoped to it, and so a
@@ -255,20 +213,7 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
         id: auth
 
-      # One `cargo publish` per crate, in dependency order, **tolerating a crate
-      # that is already there** — `mako`'s shape, for `mako`'s reason.
-      #
-      # `cargo publish --workspace` is neither atomic nor resumable: an upload
-      # that fails partway leaves the crates that landed on crates.io, cargo has
-      # no `--skip-published`, and a second run dies on the first one it finds
-      # (rust-lang/cargo#16181). A version cannot be un-published, so that is a
-      # release with no way forward but finishing it by hand.
-      #
-      # Tolerating "already uploaded" makes the whole job idempotent: re-run the
-      # tag and it publishes exactly what did not land. It is also what makes the
-      # hand-written order below safe to get wrong — a crate whose dependency is
-      # not on the registry yet fails loudly, and the re-run after fixing the
-      # order skips everything that already went.
+      # Re-running after a partial publish skips versions already on the registry.
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
@@ -281,8 +226,8 @@ jobs:
             out=$(cargo publish -p "$crate" --locked 2>&1) && rc=0 || rc=$?
             echo "$out"
             echo "::endgroup::"
-            if [ $rc -ne 0 ] \
+            if [ "$rc" -ne 0 ] \
                && ! echo "$out" | grep -qE "already uploaded|already exists on crates\.io"; then
-              exit $rc
+              exit "$rc"
             fi
           done

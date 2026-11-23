@@ -1,15 +1,111 @@
 +++
-title = "Simulation and evaluation"
-description = "Seven reference days and a cold one, hardware simulators that all know how to say no, a seeded weather the planner never sees, and multi-day sweeps that can falsify a day."
+title = "Simulation and meter replay"
+description = "Test a household gateway with virtual devices, replay OCPP charging limits and community shares, and check an industrial dispatch against its meter and OpenADR request."
 weight = 12
 
 [extra]
-group = "Running it"
+group = "Integration and operations"
 +++
 
-`ems-sim` stands in for every device on a reference day, and every saving or
-compliance figure on this site comes out of it. So the design question it
-answers is not “does it run?” but **can it fail?**
+Choose the boundary you want to exercise. All peers below run on the same machine.
+
+| Run from the workspace root | What crosses the connection | What the simulation supplies |
+|---|---|---|
+| `cargo test -p hemsd --features house --test virtual_house` | The household gateway reads SunSpec registers over Modbus TCP and receives grid limits over EEBUS. | Virtual equipment, grid signals and household demand |
+| `just matter-recovery` | The gateway reads appliance power through a schema-11-compatible Matter Server WebSocket API. | The commissioner peer, its readings and a connection loss. The test ends at the commissioner API. |
+| `cargo run -p bemsd -- demo` | Two charging stations exchange OCPP 1.6J messages with a local charging management system. | Station loads, meter timestamps and delivery delays |
+| `cargo run -p cemsd --features openadr -- openadr` | A site client exchanges an event and a metered report with an OpenADR 3.1 server over HTTP. | Aggregator request, industrial meter trace and alternative battery dispatch times |
+
+## Check a shift against its meter
+
+From the workspace root, run:
+```sh
+cargo run -p cemsd -- reconcile crates/ems-sim/fixtures/shift-trace.json
+```
+
+The command compares cumulative import with closed quarter-hour energy for one
+delivery point. Supply whole Wh, explicit UTC offsets and a tolerance in Wh.
+Each closed reading uses the interval start. Export the latest corrected
+values before running. The example crosses the repeated autumn clock hour.
+Its two differences are 0 Wh and +1 Wh (register minus closed meter).
+
+The terminal summary gives coverage and the largest difference. Redirect stdout to save the JSON report. A missing boundary, decreasing register, missing
+closed interval or excessive difference yields a nonzero exit with the interval
+report. Conflicting duplicates and malformed input yield a diagnostic on stderr.
+The local file limit is 4 MiB and the comparison window is at most 31 days.
+
+## Replay a building handover
+
+Run `cargo run -p bemsd -- demo` and open
+[the simulated Westgebäude](http://127.0.0.1:8081/). The German
+handover shows grid headroom, PV, shared loads and the last charging reduction.
+
+Open **Nachweis je Ladestation** for the two simulated OCPP 1.6J stations. In `?case=stale-charger`, both stations accepted the profile, but West-02 has no aligned station reading. The bank total is unknown. In `?case=idle-station`, West-02 reports 0 kW. Both readings count and the bank total can be calculated.
+
+Each station initially draws 14 kW and receives a 12 kW limit. In `?case=above-request`, each draws 1 kW above its limit after ramp-down. The bank therefore draws 26 kW at 09:12:15 against the 24 kW request. Its 24 kW snapshot at 09:15 belongs to a later observation.
+
+Open [the delayed reading at its deadline](http://127.0.0.1:8081/?case=delayed-arrival&moment=deadline). At 09:12:15 the operator still lacks one station’s reading. Advance to handover to see when it arrived and what it confirms. Step back to inspect the original uncertainty.
+
+Choose *Bestätigung fehlt* to replay the same request with its final meter
+sample missing. Reloading preserves the selected case. The demo uses synthetic
+data and exposes these read-only routes on its loopback listener.
+
+## Compare community allocations
+
+For community energy sharing, run `cargo run -p bemsd -- community --viewer coordinator`, open [the allocation replay](http://127.0.0.1:8083/) and use the login printed in the terminal. Compare the two keys on 10 kWh of supply. The static key leaves 3 kWh undistributed. The cascading key assigns those 3 kWh to the member with unmet demand. Switch to the second 02:00 interval and check its UTC offset. With a missing member reading the coordinator sees incomplete coverage and the final allocation is withheld. Restart with `--viewer member-a` and the new login to see the member’s own share.
+
+## Replay an industrial shift
+
+Try the [peak challenge](@/peak-challenge.md) for a five-minute decision in your browser. Both choices use the same meter trace as the local demo. The original close records the quarter with the battery idle. The local demo adds stale meter readings, uncertain battery capacity and the repeated clock hour.
+
+Run `cargo run -p cemsd -- demo` and open [the industrial shift replay](http://127.0.0.1:8082/). Dispatch at 02:55 UTC+2 and the 120 kW battery can hold the interval mean to 1,100 kW. Wait until 02:57 UTC+2 and the same battery leaves 1,116 kW. Reveal the unmodified meter trace to see the original 1,140 kW close at 02:00 UTC+1. The battery alternative uses a synthetic fixed annual
+demand rate. Read the matching figures at `/v1/demo/industrial?moment=delayed`.
+
+## Replay an aggregator request
+
+Run the optional OpenADR 3.1 simulation from the workspace root:
+
+```sh
+cargo run --locked -p cemsd --features openadr -- openadr
+cargo run --locked -p cemsd --features openadr -- openadr --cancel-before-dispatch --json
+```
+
+The first command starts a temporary aggregator and site client on loopback. The aggregator requests a **1,100 kW mean over one quarter hour**. This fixture uses the private OpenADR payload `EMS_QUARTER_MEAN_LIMIT` with units `KW` for the target. An instantaneous import ceiling would describe a different constraint.
+
+Compare the site’s two projected means with the original meter trace. Starting early projects 1,100 kW and waiting projects 1,116 kW. The recorded interval contains 285 kWh, or 1,140 kW on average. Only the recorded energy belongs in the usage report. The second command withdraws the event before dispatch. Add `--json` to either run for a machine-readable receipt.
+
+## Winter report
+
+`cargo run -p hemsd -- simulate --day winter` prints the following readings. Net savings include battery wear and comfort costs.
+
+```text
+  2026-01-15 — with a § 14a reduction
+
+  produced                                  7.4 kWh
+  household consumption                    11.0 kWh
+  charged into the car                     21.7 kWh
+  heat pump                                22.1 kWh
+  battery throughput                       14.6 kWh
+  imported                                 52.2 kWh
+  self-sufficiency                             12 %
+
+  electricity bill                          20.50 €
+  battery life spent                         0.58 €
+  comfort given up                           0.13 €
+  cost of the day                           21.61 €
+  without optimisation                      22.70 €
+  saved                                      1.09 €
+  …of it on the bill                         0.83 €
+
+  § 14a limit in force                       90 min
+  …against a minimum of                     10.5 kW
+  …covered by the store                     1.4 kWh
+  § 14a limit respected                         yes
+  § 9 EEG ceiling respected                     yes
+
+  production forecast, CRPS  173 W (83 % of 30 lit)
+  load forecast, CRPS           18 W (84 % covered)
+```
 
 ## The reference household
 
@@ -27,243 +123,38 @@ German single-family home in 2026.
 | Connection | 35 A main fuse |
 | § 9 EEG | an intelligent metering system since 2024, **and the 60 % cap still on** |
 
-That last row is the ordinary German household of 2026 and the two halves are
-deliberately different answers. The meter has been in for years, so § 51 EEG has
-been taking the negative quarter hours since the start of 2025 — and the § 9
-Abs. 2 cap is still on, because *that* one lifts only after the network
-operator's first successful Ansteuerbarkeit test, which is a different event on a
-different clock. `--imsys` is that test happening.
+
+The reference installation has a meter and a separate controllability-test status. Use the scenario switch `--imsys` to compare the case where the § 9 cap is lifted.
 
 ## Seven days
 
-```console
-$ just demo-all
-```
+Run `just demo-all` for the reference scenarios. To inspect one, use `cargo run -p hemsd -- simulate --day NAME`.
 
-| Day | What it shows | Saved |
-|---|---|---|
-| `winter` | a reduction from 17:00 to 18:30, a car that must be full by seven, and a dishwasher the plan holds back an hour | €1,10 |
-| `summer` | more production than the house can use, and **twelve** quarter hours of negative prices — three whole hours of § 51 EEG | €4,47 |
-| `deadline` | a car that arrives *as the reduction starts* with three hours to take 13 kWh under the household's own 10,5 kW minimum, shared with a heat pump | €0,88 |
-| `shared` | the same evening on a household with **no store**, owed 7,56 kW rather than 10,5, and a reduction that arrives at 17:07 rather than on the re-planning grid | €0,70 |
-| `offline` | **the planner switched off** — what the box does on its own | €6,08 |
-| `autumn` | a September day, planner off, the surplus in the band only one conductor can use | €0,24 |
-| `capped` | a clear May day on a 20 kWp roof, the § 9 EEG cap binding at 12,01 of 12,00 kW | €0,68 |
-
-Only the winter day's full transcript is held to the binary by a test; the
-savings in this table are not, and a figure nothing compares is wrong within a
-fortnight. `just day-report` prints the one that is checked.
-
-`autumn` is also the only one of the seven where the seam between the arbiter and
-the wiring shows: a switching wallbox spends the afternoon being asked for power
-that falls between what three conductors and one can hold, and
-`ems_device::realisable` answers each of those with zero — correctly, and
-silently. The day reports **19 ticks and 0,18 kWh** of it against nought on the
-other six, and its own test pins that, which is what keeps the number from being
-structurally zero.
-
-Two of those are chosen rather than obvious. `capped` is in **May**, not June,
-because the cap is a fraction of *direct-current* power and how close a roof gets
-to it is decided by cell temperature. `shared` removes the store rather than
-adding a device, because a household with no battery is the one where a § 14a
-ceiling actually binds — and that is where the shadow price of relief stops being
-zero.
-
-### And the comparisons
-
-Six of these run as part of `just demo-all`; the last two are their own recipes,
-because each costs minutes rather than seconds.
-
-| Flag | What it isolates |
+| Scenario | What to inspect |
 |---|---|
-| `--perfect-foresight` | the **same** January day with the weather known: €0,05 more on a €0,83 bill saving, and an unmanaged household identical to the cent |
-| `--wear-eur-per-kwh 0` | a cost-only optimiser: 16,6 kWh of battery throughput instead of 14,6, and a bill saving that *falls* from €0,83 to €0,63 — both households pay their own wear |
-| `--no-phase-switching` | on the autumn day, 0,1 kWh into the car against 6,5 — and a saving of −€23,45 against €0,24 |
-| `--imsys` | the § 9 EEG cap lifted: six cents to the managed household, eleven to the unmanaged one |
-| `--uniform-weights` | every asset given the same allocation weight, which is what one marginal value per slot amounts to |
-| `--sharing` | inside a § 42c community: 11,2 kWh allocated against the 1,4 a member who does nothing about it gets, and the baseline joins the same community. It runs a year on from the winter day's own date — a network operator's duty to allocate begins on 1 June 2026, and both sides of the comparison move together in whole weeks so the weekday survives |
-| `--heat-pump-on-off` | a single-speed compressor — the only unit a minimum runtime constrains |
-| `--risk` | one future or three, and how much of the objective sits on the worst of them |
+| `winter` | The 17:00 reduction, overnight car target and cost of the day |
+| `summer` | Rooftop surplus and three hours of negative prices |
+| `deadline` | A car arrives as a reduction starts, with three hours to charge |
+| `shared` | A household without storage shares a limit that arrives between planning boundaries |
+| `offline` | Local fallback when the planner is switched off |
+| `autumn` | A charger operating where the available surplus can support one phase |
+| `capped` | Curtailment on a 20 kWp roof under a binding export cap |
 
-## Every simulator knows how to say no
+Use `--perfect-foresight` to isolate forecast errors on the same weather, `--wear-eur-per-kwh 0` to isolate battery wear, and `--no-phase-switching` to compare charging on fixed wiring. A savings comparison needs the same site, service expectations and applicable grid limits in both runs.
 
-A simulator that agrees with its controller flatters it and hides exactly the
-bugs worth finding. So each one has at least one refusal:
+## What the simulations exercise
 
-| Simulator | Its refusal |
-|---|---|
-| `EvseSim` | below 6 A per conductor it charges **nothing**, and the contactor costs a session ten seconds while the vehicle re-negotiates |
-| `BatterySim` | reports what it **took**, not what it was told; loses what HTW Berlin measured — a quarter of what it delivers at 100 W, 7 % at 500 W, 2 % at 10 kW — and draws 8 W standing by |
-| `PvSim` | follows a curtailment command with a two-second time constant rather than instantly |
-| `BuildingSim` | a thermostat that refuses to keep heating a house that is already warm |
-| `TankSim` | runs out of hot water |
-| `ApplianceSim` | **ignores a stop** — a programme interrupted halfway is not one that resumes |
-| `CompressorSim` | refuses a stop its minimum runtime has not earned, and counts its starts |
-| `SteuerboxSim` | emits EEBUS limitation events on a script, including going quiet |
+The charger can refuse a request below its minimum current. A battery reports delivered energy after power-dependent losses, and an inverter takes time to reach its ceiling. The virtual control box can stop sending heartbeats during a reduction. Inspect the meter or command outcome to distinguish what was requested from what happened. [Device behaviour](@/docs/devices.md).
 
-**Every one of those lags is a *time*, not a number of calls**, and that is not
-a detail: a dynamic expressed per tick is a dynamic whose speed belongs to
-whoever is calling it. These days tick once a minute and a box ticks once a
-second, so a "two-second" inverter counted in steps would take four minutes to
-obey a feed-in limit. Every simulator here takes the step duration, and a day run
-at any cadence describes the same hardware.
-
-**The battery's losses are a publication's, not ours.** A planner and a
-simulator that shared one loss model would agree with each other and never see
-what it costs. So the simulator's converter follows the curve HTW Berlin
-measured on a good 10-kW hybrid (*Stromspeicher-Inspektion 2026*): a no-load
-loss of 30 W plus 2 % of the power converted, the cells √0.95 each way, 8 W
-standby — held by a test to the report's published points. The planner, which is
-linear, prices a stored kilowatt-hour at the efficiency of the power the house
-actually draws it at: the night loads HTW measured run 160–500 W, so it plans at
-400 W, where the round trip is 84 %, not the 95 % a datasheet's rated power
-promises. Priced that way, the winter day cycles 14,6 kWh through the battery
-and keeps €0,83 of its €1,10 saving on the bill.
-
-Two of those found real defects. Without the heat pump's own thermostat, a
-manager that stopped planning cooked the reference house to **64 °C** and
-reported it as a saving — energy nobody used is energy nobody bought. And the
-compressor is the clearest case in the workspace: a minimum runtime can be
-implemented, documented, cited and unit-tested and still be enforced on **no
-day**, because its rows need the slot before them and a receding horizon executes
-only the slot that has none. A constraint no simulator can be watched breaking is
-one no simulator can be watched obeying.
-
-## The day that happens is not the day that was forecast
-
-This is the part that decides whether any saving figure means anything.
-
-<pre class="mermaid">
-flowchart LR
-  SEED["seed + instant"] --> R["Realisation<br/>4 octaves of value noise:<br/>~4 h, 1 h, 15 min, 4 min"]
-  R --> SIM["the day the house lives<br/>ems-sim"]
-  HIST["six weeks of the box's<br/>own metering"] --> FC["what the planner is told<br/>ems-forecast"]
-  FC --> PLAN["plan"]
-  PLAN --> SIM
-  SIM --> SCORE["CRPS, coverage,<br/>and the money"]
-  FC --> SCORE
-</pre>
-
-`weather::Realisation` is a seeded process: four octaves of correlated noise on
-the cloud cover at about four hours, one hour, a quarter hour and four minutes —
-a front, a haze, a cumulus field, one cloud — plus a diurnal temperature shape
-with a slow error, a load multiplier and a hot-water draw that varies.
-
-The noise is **correlated rather than white**, deliberately. White noise averages
-out inside a quarter hour, so a planner working in quarter hours never sees it
-and the arbiter has nothing to catch up on. The fastest octave is the one that
-earns its keep, because it moves *below* the planner's own grain.
-
-And it is a pure function of `(seed, instant)` — no generator state, no iteration
-order to depend on — so the day still replays to the last euro cent on any
-machine under any number of threads. Determinism was never the thing that had to
-go; being *told the answer* was.
-
-The simulated roof delivers **92 %** of what its geometry says: soiling, a little
-shading, mismatch, an ordinary German roof after three years. Nothing tells the
-model, and the residual corrector has to find it — which it does, reporting 90 %.
-A figure sitting at exactly 100 % would mean the corrector is not being fed.
-
-## A test whose job is to fail if the simulator gets too good
-
-Three of the workspace's guards are worth naming because of what they guard
-against:
-
-- one asserts the reference day's forecasts were **wrong** — a day the planner
-  cannot be surprised by measures a planner that was shown the answer, and a test
-  that only checks “the day saves money” passes either way;
-- one runs the day's own quarter-hour registers through the § 42c allocation;
-- one checks that every asset the arbiter commands can be **described in S2**.
-
-A rule module can be implemented, cited, tested and reached by nothing at all,
-and no property test catches that: a property is a statement about code that
-runs.
+For a socket-level trial, start the [virtual house](@/docs/getting-started.md#a-house-without-hardware). The paired electrical trials use seven weather and price profiles with fixed load and rooftop PV. A shadow gateway observes meter and device readings while an independent controller remains responsible for limits. Comparisons involving a connected car, hot-water draw or shifted battery inventory require evidence that both alternatives delivered equal service.
 
 ## One day cannot answer some questions
 
-Two of them, and both have a command.
-
-### Is the forecast band the width it claims to be?
-
-Forecast error is correlated across a day, so ninety-six quarter hours of one
-Tuesday are close to **one draw**: a day's coverage figure is a coin toss
-reported to three significant figures.
-
-```console
-$ just backtest summer 20
+```sh
+just backtest summer 20
+just risk deadline 20
 ```
 
-Twenty seeded weathers, each one episode, their scores merged. It is the only
-thing in the workspace that can say whether the band the planner hedges against
-is the width it claims — 80 % coverage on the January day, 75 % on the June one,
-against a nominal 80 %. `Calibration` carries an **episode** count beside its
-sample count and `is_well_calibrated` asks for twenty *days*, so a single day
-that happened to land inside its band cannot report itself calibrated.
+The first command varies the seeded weather and evaluates forecast bands over twenty episodes. The second compares planning policies across repeated deadline scenarios. Inspect the worst outcome and unmet service alongside mean cost. An ordinary day with no missed deadline says little about performance in a tight evening.
 
-### What is a hedge worth?
-
-A single realisation pays a hedge's premium every time and makes its claim never,
-so measured once, insurance is always a pure loss.
-
-```console
-$ just risk deadline 20
-
-  policy                mean     worst      best    unserved     solve
-  one median           0.46€    -1.19€     1.39€       0.14€      114s
-  three futures        0.84€    -0.26€     1.75€       0.03€      702s
-  …and the tail        0.78€    -0.20€     1.44€       0.02€      760s
-  only when at risk     0.67€    -0.23€     1.42€       0.02€      737s
-```
-
-Scenarios **pay where a service is at risk**, **cost eight cents a day where
-nothing is**, and the hedge **does** buy a better bad day: on this evening it
-takes the worst weather from −€1,19 to −€0,26. That finding read the opposite
-way until the baseline was given the battery it owns — a handicapped
-counterfactual did not merely flatter a figure, it reversed a conclusion. The
-[optimizer](@/docs/optimizer.md) has the ordinary day beside it.
-
-## What the reference days are not
-
-Two limits, stated here rather than discovered by somebody else.
-
-**The box's history is generated by the same process the day is.** Six weeks of
-metering, produced by the same simulator, means the forecasts are scored against
-a world whose statistics they were fitted to. That is the friendliest possible
-test — and the weather-foresight premium it leaves on the table is cents rather
-than the 54 % a broken comparison once reported. A real box
-faces a distribution that shifts: a season, a new tenant, a roof that gets
-cleaned. The field number is worse than this one and never better, which is the
-safe direction for a claim.
-
-**And for six weeks there is no history at all.** Every day above starts warm; a
-household's box does not. An eighth day runs the same January cold — no profile,
-no correction its roof has earned, no session history — and asserts what a box
-owes on its first evening rather than a saving: that it plans at all, that it
-respects the § 14a reduction and the § 9 EEG ceiling, that the car is charged and
-nobody is cold, and that it is **honest about knowing nothing**, with a roof
-correction of exactly 1,0 and a forecast score strictly worse than the warm box's.
-
-The saving is the finding as well as an assertion: a box on its first evening
-**saves €0,63**, where the warm one saves €1,10. Without a profile it would plan
-from one meter reading — usually the night trough, a third of what the house
-will use. It starts instead from BDEW's H25 standard load profile hung on the
-household's stated or first-day consumption. A hand-fitted curve would score
-better here and say nothing about a real house: this simulator's household is
-two-peaked by construction.
-
-**A reference day is calibrated.** Each one is tuned to isolate one mechanism, so
-adding a device to a tuned scenario makes it measure two things at once and
-attribute the sum to one. That is why `offline` and `autumn` leave the dishwasher
-unloaded: they are controlled experiments on the *surplus*, and an appliance that
-eats a kilowatt-hour of exactly that surplus would make both days unreadable.
-
-## Reproducibility has a price, and it is named
-
-The solver's time budget is measured against the **wall clock**, so the answer
-depends on how busy the machine was. Two runs of the same day on the same inputs
-can differ — which is exactly what “replay the day and compare” needs not to
-happen.
-
-So a box in the field keeps the budget, and anything that has to be
-**reproducible** sets it to zero and waits. The relative gap is unaffected: it is
-a property of the search, not of the clock.
+Reference days are reproducible model comparisons. A wall-clock solver budget can affect the solution selected on a busy machine. A field savings claim requires metered costs and comparable service at the installation. [Forecast quality](@/docs/forecasting.md) · [How receipts use measured data](@/docs/household.md#the-month).

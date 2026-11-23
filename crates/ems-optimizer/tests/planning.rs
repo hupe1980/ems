@@ -234,6 +234,31 @@ fn wear_stops_a_battery_cycling_for_a_spread_that_does_not_pay() {
 }
 
 #[test]
+fn price_capped_car_counts_only_known_affordable_quarters() {
+    let h = horizon(4);
+    let mut p = prices(h, &[30, 31, 1, 32]);
+    p.slots[2].price_known = false;
+    let ev = EvSession {
+        arrival: None,
+        departure: h.first.offset(4),
+        capacity: Energy::from_kwh(20.0),
+        energy_now: Energy::ZERO,
+        energy_target: Energy::from_kwh(10.0),
+        max_charge: Power::from_kw(4.0),
+        min_charge: Power::ZERO,
+        efficiency: 1.0,
+    };
+    let pv = flat(h, 0.0);
+    let load = flat(h, 500.0);
+    let mut problem = Problem::new(h, &p, &pv, &load).with_ev(ev);
+    problem.ev_price_cap_ct = Some(30);
+    let solved = solve(&problem, &names(), T0).unwrap();
+    assert!((solved.flows[0].ev_charge.kw() - 4.0).abs() < 1e-6);
+    assert!(solved.flows[1..].iter().all(|f| f.ev_charge == Power::ZERO));
+    assert!((solved.unmet_charge.kwh() - 9.0).abs() < 1e-6);
+}
+
+#[test]
 fn a_car_reaches_its_target_before_it_leaves() {
     let h = horizon(16);
     let p = prices(h, &[30, 30, 5, 5, 30, 30, 30, 30]);

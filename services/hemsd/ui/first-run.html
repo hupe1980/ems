@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>EMS · Einrichtung</title><link rel="stylesheet" href="/app.css"></head>
+<body><main class="first-run">
+<header class="top"><h1 data-word="title">Netzanschluss einrichten</h1><button class="link" id="language" type="button">English</button></header>
+<p role="status" id="status"></p>
+<form id="login"><label><span data-word="code">Zugangscode des Gateways</span> <input name="token" type="password" autocomplete="current-password" required></label><button class="primary" data-word="sign">Anmelden</button></form>
+<form id="meter" hidden>
+<fieldset><legend data-word="role">Wer richtet ein?</legend>
+<label><input type="radio" name="role" value="resident" checked><span data-word="resident">Haushalt</span></label>
+<label><input type="radio" name="role" value="installer"><span data-word="installer">Fachbetrieb</span></label>
+<p id="handover" hidden data-word="handover">Nach der Einrichtung finden Sie das Übergabeblatt unter Einrichtung.</p>
+<label><span data-word="contact">Kontakt für Störungen (optional)</span> <input name="support" maxlength="160"></label></fieldset>
+<fieldset><legend data-word="connection">Netzanschluss</legend>
+<label><span data-word="phases">Dreiphasiger Anschluss bestätigt</span> <input name="phases" type="checkbox" required></label>
+<label><span data-word="fuse">Hauptsicherung je Phase (A)</span> <input name="fuse" type="number" required min="1" max="400"></label></fieldset>
+<fieldset><legend data-word="device">Anschlusszähler</legend>
+<p data-word="meterHint">Gleichen Sie die erkannten Geräte mit den Typenschildern ab.</p>
+<label><span data-word="address">IP-Adresse</span> <input name="host" required placeholder="192.168.1.40"></label>
+<label>Port <select name="port"><option>502</option><option>1502</option></select></label>
+<label>Modbus Unit <input type="number" name="unit" min="0" max="255" value="1" required></label></fieldset>
+<fieldset><legend><label><input type="checkbox" name="roof"><span data-word="roof">PV-Anlage beobachten</span></label></legend>
+<fieldset id="roof-fields" hidden disabled>
+<label><span data-word="address">IP-Adresse</span> <input name="roof_host" required placeholder="192.168.1.40"></label>
+<label>Port <select name="roof_port"><option>502</option><option>1502</option></select></label>
+<label>Modbus Unit <input type="number" name="roof_unit" value="1" required min="0" max="255"></label>
+<label><span data-word="roofSize">PV-Leistung (kWp)</span> <input type="number" name="roof_size" step="any" min="0.001" max="1000" required></label>
+<label><span data-word="power">AC-Nennleistung (kW)</span> <input type="number" name="roof_power" step="any" min="0.001" max="1000" required></label>
+<label><span data-word="date">Inbetriebnahme laut Anlagenblatt</span> <input type="date" name="roof_date" required></label></fieldset></fieldset>
+<fieldset><legend><label><input type="checkbox" name="storage"><span data-word="storage">Speicher beobachten</span></label></legend>
+<fieldset id="storage-fields" hidden disabled>
+<label><span data-word="address">IP-Adresse</span> <input name="storage_host" required placeholder="192.168.1.40"></label>
+<label>Port <select name="storage_port"><option>502</option><option>1502</option></select></label>
+<label>Modbus Unit <input type="number" name="storage_unit" value="3" required min="0" max="255"></label>
+<label><span data-word="storageSize">Nutzbare Kapazität (kWh)</span> <input type="number" name="storage_size" step="any" min="0.001" max="1000" required></label>
+<label><span data-word="power">AC-Nennleistung (kW)</span> <input type="number" name="storage_power" step="any" min="0.001" max="1000" required></label>
+<label><span data-word="date">Inbetriebnahme laut Anlagenblatt</span> <input type="date" name="storage_date" required></label></fieldset></fieldset>
+<fieldset id="authority" disabled hidden><legend data-word="observe">Beobachtungsbetrieb</legend>
+<p data-word="authorityHint">Das Gateway liest PV-Leistung und Speicherladestand. Die Netzgrenzen setzt weiterhin die unabhängig in Betrieb genommene Steuerung durch.</p>
+<label><span data-word="authority">Verantwortliche Steuerung laut Anlagenblatt</span> <input name="controller" required maxlength="160"></label></fieldset>
+<fieldset><legend data-word="tariff">Festpreistarif</legend>
+<label><span data-word="energy">Energiepreis netto (ct/kWh)</span> <input name="energy" type="number" step="any" min="0" max="1000" required></label>
+<label><span data-word="network">Netzentgelt netto (ct/kWh)</span> <input name="network" type="number" step="any" min="0" max="1000" required></label>
+<label><span data-word="standing">Grundpreis (€/Jahr)</span> <input name="standing" type="number" step="any" min="0" max="100000" required></label></fieldset>
+<button class="primary" data-word="review">Geräte prüfen</button>
+</form>
+<section id="review" hidden><h2 id="device" tabindex="-1"></h2><pre id="block"></pre>
+<button class="primary" id="apply" data-word="apply">Einrichten und Gateway neu starten</button> <button class="link" id="cancel" data-word="cancel">Zurück</button></section>
+</main><script src="/first-run.js"></script></body></html>

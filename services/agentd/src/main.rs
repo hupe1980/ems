@@ -16,7 +16,7 @@ use ems_service::{Authority, Health, Server, Shutdown, shutdown};
 #[command(name = "agentd", version, about = "The hems advisory plane")]
 struct Cli {
     /// The configuration file. Absent, or absent from disk, means the defaults.
-    #[arg(long, env = "HEMS_AGENTD_CONFIG")]
+    #[arg(long, env = "EMS_AGENTD_CONFIG")]
     config: Option<PathBuf>,
 }
 
@@ -27,7 +27,7 @@ const PRINCIPAL: &str = "principal";
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: agentd::Settings = ems_service::load(cli.config.as_deref(), "HEMS_AGENTD")?;
+    let settings: agentd::Settings = ems_service::load(cli.config.as_deref(), "EMS_AGENTD")?;
     ems_service::init_tracing(
         ems_service::identity!(),
         &settings.service.log_filter,

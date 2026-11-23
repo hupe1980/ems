@@ -66,7 +66,7 @@ pub fn battery_power(
     Ok(match direction {
         Direction::In => Power::new(battery.max_charge.get() * factor),
         // Load convention: discharging is negative.
-        Direction::Out => Power::new(-battery.max_discharge.get() * factor),
+        Direction::Out => Power::new(-battery.max_discharge.get() * (1.0 - factor)),
     })
 }
 
@@ -315,7 +315,7 @@ mod tests {
         let charge = frbc_instruction(d.actuator, d.charge, 1.0);
         assert_eq!(battery_power(&d, &charge, &b).unwrap(), Power::from_kw(5.0));
 
-        let discharge = frbc_instruction(d.actuator, d.discharge, 1.0);
+        let discharge = frbc_instruction(d.actuator, d.discharge, 0.0);
         assert_eq!(
             battery_power(&d, &discharge, &b).unwrap(),
             Power::from_kw(-5.0)
@@ -368,14 +368,11 @@ mod tests {
     }
 
     #[test]
-    fn factor_zero_is_idle_in_either_mode() {
-        // The reason both modes start at idle: a manager can stop the battery
-        // without first switching mode, so it never overshoots on a change of
-        // mind.
+    fn each_mode_can_reach_idle_at_its_zero_power_endpoint() {
         let b = battery();
         let d = describe_battery(&b, T0);
-        for mode in [d.charge, d.discharge] {
-            let idle = frbc_instruction(d.actuator, mode, 0.0);
+        for (mode, factor) in [(d.charge, 0.0), (d.discharge, 1.0)] {
+            let idle = frbc_instruction(d.actuator, mode, factor);
             assert_eq!(battery_power(&d, &idle, &b).unwrap(), Power::ZERO);
         }
     }

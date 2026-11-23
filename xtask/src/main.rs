@@ -54,35 +54,19 @@ fn print_help() {
         "\
 cargo xtask <task>
 
-  check-citations   every regulatory citation in the code names a document that
-                    concepts/REFERENCES.md actually indexes
-  check-events      every CloudEvents type used in the workspace is in the
-                    ems-events catalogue
-  check-manifests   every publishable crate can actually be packaged: the files
-                    its manifest promises exist
-  check-wire        every serialisable quantity, instant and date names how it
-                    travels, so a value that becomes money or a Nachweis cannot
-                    go through an f64 or come back as a tuple
-  check-vital       a daemon's background loops are spawned through
-                    Health::vital, so /livez can actually fail
-  check-examples    every daemon ships an annotated example configuration, a
-                    test parses it so it cannot drift from the struct, and every
-                    endpoint it sets is one the daemon will accept
-  check-stats       the landing page's and README's citation, test and crate
-                    counts are the ones the build actually produces
-  check-notes       every decision, risk and milestone label the code cites
-                    resolves to an entry in the architecture notes, and no label
-                    is defined twice
-  check-deps        the sibling-crate versions the architecture notes state are
-                    the ones the workspace manifest resolves
-  check-deps-used   every dependency a crate declares is one its source reaches,
-                    so a published manifest does not promise what it never uses
-  check-actions     every GitHub Action a workflow uses is pinned to a commit
-                    SHA, so a tag moved upstream cannot change what a release
-                    is built with
-  check-api         the checked-in `services/hemsd/openapi.json` and the table
-                    on the site's API page are what `hemsd openapi` prints;
-                    `check-api --write` rewrites both
+  check-citations   Resolve regulatory citation prefixes against indexed sources.
+  check-events      Check CloudEvents types against the ems-events catalogue.
+  check-manifests   Check files required for crate packaging.
+  check-wire        Verify public representations of quantities, dates and instants.
+  check-vital       Check daemon liveness monitoring for background tasks.
+  check-examples    Validate example daemon configurations.
+  check-stats       Compare published workspace counts with build inputs.
+  check-notes       Check reference labels and links when their sources are present.
+  check-deps        Compare documented dependency versions with the manifest.
+  check-deps-used   Detect unused dependencies.
+  check-actions     Verify workflow action pins.
+  check-api         Compare the OpenAPI contract and API guide with the router.
+                    Use --write to update both generated copies.
   check-all         all of the above
 "
     );
@@ -268,23 +252,7 @@ fn action_is_pinned(target: &str) -> bool {
 
 // ── check-citations ─────────────────────────────────────────────────────────
 
-/// Every regulatory claim in hems cites its source in the form `[A1 4.5.2]` or
-/// `[LPC-031]`. This checks that the documents those refer to are indexed in
-/// `concepts/REFERENCES.md`, so a citation can always be followed to a file and a
-/// retrieval URL.
-///
-/// The failure it prevents: a rule that cites a Festlegung nobody can produce,
-/// which is indistinguishable from a rule somebody invented.
-/// Which document each citation prefix belongs to, and a string that must
-/// appear in `concepts/REFERENCES.md` for that document to count as present.
-///
-/// A family is added here only once the document is actually indexed. An entry
-/// whose needle is broad enough to match anything is worse than no entry: it
-/// reports a citation as checked when nothing checked it.
-///
-/// Module-level so `check-citations` and `check-stats` count the same thing —
-/// two lists would be two definitions of what a citation is, and the number on
-/// the landing page would be checked against the wrong one.
+/// Citation prefix, source title and lookup key used by the citation and count checks.
 const SOURCES: [(&str, &str, &str); 5] = [
     ("[A1 ", "BK6-22-300 Anlage 1", "bk6-22-300-anlage1"),
     (
@@ -370,75 +338,7 @@ fn check_citations(root: &Path) -> Result<()> {
 
 // ── check-manifests ─────────────────────────────────────────────────────────
 
-/// A manifest that names a file must name one that exists.
-///
-/// The failure it prevents: `readme = "README.md"` with no such file. Nothing
-/// notices — `cargo build`, `cargo test` and `cargo clippy` are all perfectly
-/// happy — until the day somebody runs `cargo publish` and finds that six of the
-/// crates cannot be packaged. Which is exactly what an audit of this workspace
-/// found.
-/// Every long-running task a daemon spawns from `main` goes through
-/// `ems_service::Health::vital`, so `/livez` can fail.
-///
-/// # Why this is a guard rather than a review note
-///
-/// `Health::set_live` had no caller for the life of the project, so every
-/// daemon's `/livez` returned 200 as long as its HTTP server was answering —
-/// including one whose control loop had panicked half an hour before. That is a
-/// liveness probe that is worse than none: the orchestrator told to restart on it
-/// never restarts anything, and the fault is invisible *because* the process
-/// looks healthy. D132 named it and `Health::vital` fixed it — in `hemsd`.
-///
-/// Three fleet daemons kept the defect for months afterwards: `tariffd`'s and
-/// `forecastd`'s fetch loops and `histd`'s retention sweep were plain
-/// `tokio::spawn`s, so a tariffd whose poller had died went on serving
-/// yesterday's prices to every box in the fleet with a green liveness probe. The
-/// primitive was right and nobody called it, which is exactly the shape D132 is
-/// about — so remembering is not the mechanism. This is.
-///
-/// The one exception is the signal handler: `shutdown::on_signal` is *supposed*
-/// to return, and failing liveness when it does would fail every clean shutdown.
-/// Every daemon ships an example configuration, and something parses it.
-///
-/// A daemon's configuration is documented in two places: the doc comments on its
-/// `Settings`, which a developer reads, and the annotated example, which is what
-/// whoever deploys it copies. The second is the one that goes stale — nothing
-/// compiles it, and a commented file that has drifted from the struct is worse
-/// than none, because every line of it looks authoritative to the person
-/// standing in front of a broken deployment.
-///
-/// So two things are checked: that the file exists, and that some test
-/// `include_str!`s it. The second is the half that matters — a file nothing
-/// parses is a file that has already drifted and nobody has noticed.
-/// The landing page's numbers are the ones the build produces.
-///
-/// A figure on a landing page is the most-read number in a project and the
-/// least-checked: nothing compiles it, so it is wrong within a fortnight of the
-/// thing it describes moving. Two of the five were — 459 citations against 469,
-/// and 1019 tests against 1050.
-///
-/// Only the ones with a mechanical source are checked. The **citation** count
-/// and the **pure crate** count are computed here; the test count is not, because
-/// producing it means running the suite, and a guard that had to do that would
-/// be the slowest thing in `just ci` for a number on a web page. It is checked
-/// by hand against `cargo test`, and `just ci` runs both.
-/// Every `D107`, `R32` and `M5c` the source cites resolves to an entry, and no
-/// label is defined twice.
-///
-/// The workspace's doc comments cite decisions, risks and milestones by label —
-/// three hundred places — and the registers they resolve to are **internal
-/// notes** that are not published with the crates. A label is therefore the only
-/// thing a reader outside this repository gets, which makes a dangling one worse
-/// than an ordinary broken link: there is nothing else to go on. The registers
-/// promise stable labels, and a promise nothing checks is a convention.
-///
-/// A withdrawn decision stays in the log **as withdrawn** rather than being
-/// deleted, which is what this enforces from the other end: the code that cites
-/// one is usually the code that replaced it, and that is the citation most worth
-/// resolving. D107 was deleted and three tests went on pointing at it.
-///
-/// Absent notes are not a failure. `concepts/` is internal, so a clone without
-/// it must still pass CI — the guard says it found nothing to resolve.
+/// Resolve decision, risk and milestone labels when the registers are available.
 fn check_notes(root: &Path) -> Result<()> {
     let notes = root.join("concepts");
     let mut known: BTreeSet<String> = BTreeSet::new();
@@ -706,20 +606,7 @@ fn internal_links(root: &Path, wrong: &mut Vec<String>) -> Result<usize> {
     Ok(checked)
 }
 
-/// Sibling-crate feedback files the notes name but the repository does not have.
-///
-/// `<CRATE>_FEEDBACK.md` in the root is where a bug or a feature request for a
-/// sibling crate is written down, and the notes cite them by name. A citation
-/// that resolves to nothing is worse here than an ordinary broken link, because
-/// what it claims is that a request has been *filed* with another team: the
-/// roadmap said "the one request of `METERING_FEEDBACK.md` that 0.23 has not
-/// answered" while no such file existed, so the item read as waiting on somebody
-/// who had never been asked.
-///
-/// **Only the notes that describe current state and open work.** The decision
-/// log legitimately names files that are gone — a feedback file is deleted when
-/// its last item is resolved upstream, and the decision recording that closure
-/// is exactly where the name survives.
+/// Check local feedback cited by current notes. Historical decisions can cite retired files.
 fn feedback_files(root: &Path, wrong: &mut Vec<String>) -> Result<usize> {
     const CURRENT: [&str; 2] = ["ROADMAP.md", "RISKS.md"];
     let notes = root.join("concepts");
@@ -730,15 +617,15 @@ fn feedback_files(root: &Path, wrong: &mut Vec<String>) -> Result<usize> {
             continue;
         }
         let text = std::fs::read_to_string(&path)?;
-        for (i, _) in text.match_indices("_FEEDBACK.md") {
-            let start = text[..i]
-                .rfind(|c: char| !c.is_ascii_uppercase() && c != '_')
-                .map_or(0, |b| b + 1);
-            let file = &text[start..i + "_FEEDBACK.md".len()];
+        for file in text
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.')
+            .map(|word| word.trim_end_matches('.'))
+            .filter(|word| word.starts_with("FEEDBACK_"))
+        {
             checked += 1;
-            if !root.join(file).exists() {
+            if !root.join(file).is_file() {
                 wrong.push(format!(
-                    "  concepts/{name}: names {file}, which is not in the repository —                      a request nobody has filed"
+                    "  concepts/{name}: names {file}, which is missing from the checkout"
                 ));
             }
         }
@@ -1015,6 +902,10 @@ fn check_examples(root: &Path) -> Result<()> {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_owned();
+        // These read-only previews have no configuration-file entry point.
+        if matches!(name.as_str(), "bemsd" | "cemsd") {
+            continue;
+        }
         checked += 1;
         let example = daemon.join(format!("{name}.example.toml"));
         if !example.exists() {
@@ -1484,47 +1375,7 @@ fn decimal_field(trimmed: &str) -> Option<&str> {
     .then_some(name)
 }
 
-/// The versions the architecture notes state are the ones the manifest requires.
-///
-/// A dependency table in prose is the most quoted fact about a workspace and the
-/// least checked one: nothing compiles it, so it drifts within a release of
-/// whatever it describes — and a design argument resting on "what version X
-/// does" then rests on a version nobody builds against.
-///
-/// Only the version is checked. What follows it in that cell is the reasoning,
-/// which cannot be mechanised; the number can.
-///
-/// `concepts/` is internal and absent from a clone, so a missing file is not a
-/// failure — the same rule [`check_stats`] follows for a missing site.
-/// Every dependency a crate declares is one its source actually reaches.
-///
-/// # Why a guard rather than a tidy-up
-///
-/// A declared dependency nobody uses is not free and it is not visible. It costs
-/// a **downstream** consumer a resolution and a compile — every crate here is
-/// published — and it costs this workspace nothing measurable, which is exactly
-/// why eight of them accumulated without anybody noticing. No test can fail for
-/// one, `cargo build` is silent, and `cargo tree` only answers if asked.
-///
-/// One of the eight was a **layering** defect rather than weight: `ems-sim`
-/// declared `ems-forecast`. Nothing used it, but the edge said the simulator —
-/// "the day that happens" — may read the forecaster — "the day that was
-/// expected" — and keeping those apart is the whole of D35. An unused edge is
-/// how a used one arrives.
-///
-/// # How it decides
-///
-/// Textually, and deliberately so: it is a build-graph question answered from
-/// the source, needing no nightly toolchain and no network. A dependency counts
-/// as reached when its identifier appears as a path root (`foo::`), in a `use`,
-/// in an attribute, or as an `extern crate` — anywhere in the crate's `src` and
-/// `tests`. That over-accepts (a mention inside a string literal counts) and
-/// never under-accepts, which is the right direction for a guard whose failure
-/// mode would otherwise be a false alarm on somebody's Friday afternoon.
-///
-/// A dependency that is genuinely needed without being named — a feature-only
-/// edge, a linked system library — says so with `# xtask: unreferenced` on its
-/// own line above the entry, and the reason belongs beside it.
+/// Check for unused declared dependencies. Allow an explicit exemption for feature-only or native links.
 fn check_deps_used(root: &Path) -> Result<usize> {
     let checked = declared_dependencies(root)?;
     println!("check-deps-used: {checked} declared dependencies, every one reached");
@@ -1542,7 +1393,7 @@ fn declared_dependencies(root: &Path) -> Result<usize> {
         let Ok(manifest) = std::fs::read_to_string(&manifest_path) else {
             continue;
         };
-        let mut source = String::new();
+        let mut source = std::fs::read_to_string(dir.join("build.rs")).unwrap_or_default();
         for sub in ["src", "tests", "benches", "examples"] {
             collect_rust(&dir.join(sub), &mut source);
         }
@@ -1685,7 +1536,7 @@ fn check_deps(root: &Path) -> Result<()> {
             .find(|token| token.contains('.') && token.starts_with(|c: char| c.is_ascii_digit()));
         checked += 1;
         match stated {
-            Some(stated) if stated == want => {}
+            Some(stated) if stated == want.strip_prefix('=').unwrap_or(want) => {}
             Some(stated) => wrong.push(format!(
                 "  {name}: the notes say {stated}, the manifest requires {want}"
             )),

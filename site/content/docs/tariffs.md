@@ -1,21 +1,47 @@
 +++
 title = "Tariffs and prices"
-description = "A German electricity bill is a stack, and every layer moves for its own reasons: five day-ahead sources, § 51 EEG, and an advisor for the § 14a Module."
+description = "Activate a signed electricity contract and trace the prices used in plans and settlement."
 weight = 7
 
 [extra]
-group = "The box"
+group = "Control and metering"
 +++
 
-Since **1 October 2025** the German day-ahead auction clears in quarter hours, and
-since **§ 41a EnWG** every supplier has to offer a tariff that follows it. That
-makes “what does a kilowatt-hour cost at 17:15 on Thursday?” a question with an
-answer — and the answer is the input the [planner](@/docs/optimizer.md) spends
-most of its objective on.
+A household plans against the gross price of importing energy and the revenue from exporting it in each quarter-hour. The same wholesale price can produce different retail prices at two addresses because their contracts and network charges differ. [Market data service](@/docs/services.md#tariffd-the-price-stack).
 
-`ems-tariff` is that answer. Like every domain crate it does **no I/O**: the
-parsers are `&str` in, a series out, and the fetching lives in
-[`tariffd`](@/docs/services.md#tariffd-the-price-stack).
+## Use a signed electricity contract
+
+In **Setup → Electricity contract**, choose the supplier’s compact JWS file.
+Compare the displayed signing-key fingerprint with a copy you received
+independently from the supplier. Review the contract, effective time and gross
+price, then accept. The gateway keeps the approved file across restarts.
+A current contract takes effect from the next quarter hour. A future contract
+starts at Berlin midnight on its effective date.
+
+The day receipt names the contract applied to the measured intervals. If a
+dynamic index is missing, Setup labels its price as estimated and the affected
+interval stays unpriced on the receipt. When the priced year or validity ends,
+Setup identifies the expired sheet and the configured tariff takes over.
+
+For suppliers, sign the exact UTF-8 sheet as a compact JWS with protected
+`alg: "Ed25519"`, `kid` and a public `jwk` containing `kty: "OKP"`,
+`crv: "Ed25519"` and `x`. Provide the RFC 7638 SHA-256 key fingerprint with
+the order. [JWS](https://www.rfc-editor.org/rfc/rfc7515) · [Ed25519 algorithm identifier](https://www.rfc-editor.org/rfc/rfc9864)
+
+## Check a seller sheet locally
+
+From the workspace root, calculate the gross import price at the start of a quarter hour:
+
+```sh
+cargo run -p hemsd -- price-sheet crates/ems-tariff/examples/preisblatt-dynamic.json \
+  --at 2027-01-05T17:00:00+01:00 --index-ct=-2
+```
+
+The example returns `30.02489` ct/kWh. For a fixed contract, omit
+`--index-ct`. For a dynamic contract, supply the net DE-LU index specified
+by the sheet for that slot. The JSON result names any national levy filled
+from the published table. This offline calculation leaves the gateway’s
+active contract untouched. Add `--signed` for a compact JWS to verify its signature and print its key fingerprint.
 
 ## The bill is a stack
 
@@ -92,29 +118,11 @@ the figures from it:
 konzessionsabgabe = 1.32
 ```
 
-## The five sources, and what is a decision in each
+## Market sources and units
 
-`ems-tariff::source` parses what ENTSO-E, SMARD, aWATTar, Tibber and
-Energy-Charts actually publish. Each is a pure function tested against a
-**captured response**, on a machine with no network, including the two days a
-year with 92 and 100 quarter hours.
+The tariff library parses ENTSO-E, SMARD, aWATTar, Tibber and Energy-Charts responses. The source determines the price basis. A gross consumer figure already includes charges that a wholesale price still needs. Keep the basis with each value to avoid applying levies twice.
 
-Three things in them are decisions rather than plumbing:
-
-- **The factor of ten lives in one place.** €/MWh and ct/kWh differ by ten, and a
-  conversion written at five call sites is wrong at one of them within a year.
-- **An hourly price expands, it is never averaged.** A source that still publishes
-  hours becomes four identical quarter hours. Averaging four quarter hours into
-  one destroys exactly the structure the planner exists to exploit.
-- **A position is resolved as an instant, not an index.** “Position 27 of the
-  day” is not a time until somebody says which day, and on the March and October
-  days it is not the same quarter hour as position 27 of an ordinary one.
-
-And one that costs real money: Tibber publishes a **gross consumer** price.
-`PriceBasis` refuses to let it be used as a wholesale one, because adding the
-levies on top of a price that already contains them roughly doubles a
-household's modelled bill — and a planner optimising against a doubled bill makes
-confident, expensive, wrong decisions.
+Hourly observations expand to four equal quarter-hours. Source timestamps are resolved as instants so the repeated local hour in October can contain different prices on its two occurrences. A missing slot stays unknown.
 
 ## § 51 EEG: negative prices earn nothing
 
@@ -135,61 +143,13 @@ the same date that lifts the § 9 EEG cap — see
 
 ## Modul 3: time-variable network charges
 
-A network charge that changes with the clock is the second dynamic layer, and it
-moves for entirely different reasons from the first: the market prices *energy*,
-Modul 3 prices *the network at times it is busy*. The two are routinely out of
-phase, and a planner that only sees one of them will move load into an hour that
-is cheap on the wrong axis.
+Use the local network operator’s effective calendar for the year and site. Modul 3 is used together with Modul 1 and an intelligent metering system. A cheap market interval can fall in an expensive network window. The planner compares the combined retail cost.
 
-Availability is narrow and worth knowing before building on it: only together
-with Modul 1, only at a location without registrierende Leistungsmessung, and
-only with an intelligent metering system. Windows and price levels are fixed per
-calendar year for the whole network area, must be billed in at least two
-quarters, and must appear in the preliminary price sheet by 15 October of the
-preceding year.
-
-There is **no machine-readable national format** for any of it — a PDF and an
-Excel sheet per network operator — so the installer transcribes the operator's
-calendar into `[tariff.modul3]` and `hemsd run --check` refuses a box whose
-calendar breaks the [Anwendungshilfe](@/docs/grid-rules.md#modul-3-time-variable-network-charges).
-Window membership is decided on **local wall-clock time**, because that is how
-the price sheet is written.
-
-At fleet scale the same transcription happens once per Netzgebiet instead of
-once per household: `tariffd` keeps a curated catalogue — one entry per network
-operator and year, in the identical shape a box uses, validated against the
-same Anwendungshilfe when the daemon starts — and serves it openly at
-`/v1/modul3/{netzbetreiber}`. A calendar that breaks a rule refuses the whole
-daemon rather than warning, because a fleet serving windows nobody may sell
-prices a whole Netzgebiet against a tariff nobody may be billed on.
-
-It is worth planning against for a reason the wholesale curve cannot match: the
-windows are fixed **a year in advance**. A household learns tomorrow's spot price
-each afternoon and learns its Hochtarif in the preliminary price sheet of the
-preceding October, so the one flexibility it can schedule around with certainty
-is this one.
+Configure windows under `[tariff.modul3]` and validate them with `hemsd run --check --config house.toml`. Windows follow local wall-clock time. The fleet catalogue serves curated operator calendars at `/v1/modul3/{netzbetreiber}`. [Network charge modules](@/docs/grid-rules.md#modul-3-time-variable-network-charges).
 
 ## The Modul advisor
 
-Modul 1, 2 and 3 are three different ways of paying the network, and a household
-may only pick one. Nobody selling a tariff can be relied on to run that
-comparison in the customer's favour. A household's own energy manager can, and it
-is holding the only data that answers it.
-
-`compare_moduls` prices a household's **own quarter-hourly history** under all
-three:
-
-```console
-  Modul 2 pays above                     2417 kWh/a
-  …on this day it would have         -3.97 € on the energy
-```
-
-It reports a **threshold in kilowatt-hours a year**, not a projected saving, and
-that is the whole design. One day is not a year: multiplying a January Thursday
-with a car on the cable by 365 tells every household with an electric vehicle
-that it is losing four figures. A threshold is a statement the data supports —
-*above this annual consumption, Modul 2 is the cheaper contract* — and the
-household already knows which side of it they are on.
+The module comparison prices the household’s quarter-hourly history under the eligible arrangements. Its break-even output is annual consumption in kWh. A single winter day can illustrate which component changes without establishing what the household would save over a year.
 
 ## § 42c: the neighbours' roof is a cheap block, not a free one
 

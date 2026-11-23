@@ -13,14 +13,14 @@ use tokio::sync::RwLock;
 #[command(name = "fleetd", version, about = "The hems fleet service")]
 struct Cli {
     /// The configuration file. Absent, or absent from disk, means the defaults.
-    #[arg(long, env = "HEMS_FLEETD_CONFIG")]
+    #[arg(long, env = "EMS_FLEETD_CONFIG")]
     config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_FLEETD")?;
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "EMS_FLEETD")?;
     ems_service::init_tracing(
         ems_service::identity!(),
         &settings.service.log_filter,

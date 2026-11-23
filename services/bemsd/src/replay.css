@@ -1,0 +1,24 @@
+.building {
+  --accent: light-dark(#075b52, #8ddfcf);
+  --muted: light-dark(#505d5b, #b9c6c2);
+  max-width: 38rem;
+  font-variant-numeric: tabular-nums;
+}
+.building .cap, .building nav p { color: var(--muted); font-size: .875rem; }
+.building h1 { margin: .25rem 0 1.75rem; }
+.building h2 { font-size: 1.25rem; }
+.building strong { font-size: clamp(1.4rem, 4vw, 2rem); }
+.building nav[aria-label] {
+  margin: 1.25rem 0;
+  padding: .6rem 1rem .8rem;
+  background: light-dark(#edf5f2, #1c302c);
+  border-inline-start: .25rem solid var(--accent);
+}
+.building nav p { margin: 0; }
+.building nav a { color: var(--accent); margin-inline-end: .75rem; }
+.building a:focus-visible, .building summary:focus-visible, #zeitpunkt:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.building details { border-block-start: 1px solid var(--muted); }
+.building summary { font-weight: 600; }
+.building details dd { margin-block-end: .75rem; font-weight: normal; }

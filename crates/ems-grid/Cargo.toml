@@ -1,6 +1,6 @@
 [package]
 name        = "ems-grid"
-description = "The German grid rules for a home energy system, executable and cited — § 14a EnWG netzorientierte Steuerung, the EEBUS LPC/LPP limitation state machine, § 9 EEG feed-in limits, § 14a Modul 3 time windows, and the evidence record an operator has to keep"
+description = "German grid limits, metering and settlement rules for distributed energy systems"
 keywords    = ["energy", "smart-grid", "enwg", "eebus", "compliance"]
 categories  = ["science", "simulation"]
 readme      = "README.md"

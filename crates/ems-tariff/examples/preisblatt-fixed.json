@@ -1,0 +1,22 @@
+{
+  "preisblatt": 1,
+  "contract": "V-2026-004711",
+  "valid_from": "2027-01-01",
+  "valid_until": null,
+  "priced_for_year": 2027,
+  "energy": { "kind": "fixed", "ct_per_kwh": "9.80" },
+  "network": {
+    "modul": 1,
+    "arbeitspreis_ct_per_kwh": "11.20",
+    "reduction_eur_per_year": "168.42"
+  },
+  "components_ct_per_kwh": {
+    "konzessionsabgabe": "1.66",
+    "stromsteuer": "2.05",
+    "paragraph_19_strom_nev": "2.027",
+    "kwkg": "0.451",
+    "offshore": "1.143"
+  },
+  "vat_rate": "0.19",
+  "standing_eur_per_year": { "grundpreis": "118.00", "messstellenbetrieb": "30.00" }
+}

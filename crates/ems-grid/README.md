@@ -35,35 +35,11 @@ stateDiagram-v2
   unlimited_autonomous --> unlimited_controlled : contact returns
 ```
 
-A restart comes back **limited**, not free `[LPC-901/1]`; and the Failsafe
-Duration Minimum is a *release valve* rather than a safety timer `[LPC-922]`,
-because a broken control box must not block a household for ever. That last one
-is what an implementation written from intuition gets wrong, and it has a test
-named after it.
+After restart the state machine retains a limitation under `[LPC-901/1]`. If the peer stays silent, the minimum failsafe duration eventually permits the autonomous state under `[LPC-922]`.
 
-📍 **Every limit is measured where its rule measures it.** § 14a bounds the
-netzwirksamer Leistungsbezug — what the controllable devices draw *from the
-grid* — so photovoltaic surplus and a discharging battery both raise the ceiling.
-§ 9 EEG bounds what leaves the *connection point*, so the household's own
-consumption is headroom. `site_feed_in_ceiling` is the one call a daemon needs
-for the second of those.
+§ 14a limits the controllable devices’ demand from the grid. § 9 EEG limits the net export measured at the connection point. `site_feed_in_ceiling` accounts for on-site consumption when converting the export limit into a device ceiling.
 
-🤝 **Where the rule belongs to [`metering`](https://github.com/hupe1980/metering),
-this crate calls it.** `P_min,14a`, the netzwirksamer Leistungsbezug and its
-`Verursachungsregel`, the Modul 3 Zählzeitdefinition and its conformance rules,
-and the allocation identity § 42b and § 42c settle on are `metering`'s.
-`ems-grid` contributes what is specific to *control*: grouping a site's assets
-into the devices the Festlegung counts, the transitional regimes, the LPC state
-machine, the evidence record, the window MiSpeL governs, and § 42c. The MiSpeL
-and § 42c *arithmetic* is `metering`'s — one implementation of each, held to
-the Festlegung's own worked examples.
-
-🧊 No I/O, no clock, no async — the state machine is sans-I/O, so a week of
-Steuerbox behaviour is a unit test in microseconds.
-
-💶 Control is `f64`, settlement is `rust_decimal::Decimal`. The MiSpeL and § 42c
-modules compute quantities that become money and a Nachweis, so they are exact
-and the type system keeps them apart from the optimiser's view of the same site.
+The rule engine takes time and measurements as inputs. Settlement quantities use decimal arithmetic. The control loop uses floating-point power. [Metering primitives](https://github.com/hupe1980/metering)
 
 ```rust
 use ems_grid::para14a::{ControlMode, SteuVe, minimum_power};
@@ -85,7 +61,7 @@ $ cargo add ems-grid
 ```
 
 API reference on [docs.rs](https://docs.rs/ems-grid); the design is explained in
-[The grid rules](https://hupe1980.github.io/ems/docs/grid-rules/) on the hems site.
+[The grid rules](https://hupe1980.github.io/ems/docs/grid-rules/).
 
 ## License
 

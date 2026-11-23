@@ -1,6 +1,6 @@
 [package]
 name        = "forecastd"
-description = "The fleet's weather service: ICON-D2 through Open-Meteo, turned into the irradiance and temperature a household's own array model and heat pump are planned against"
+description = "Fleet weather service for household solar and heating forecasts"
 publish     = false
 version.workspace      = true
 authors.workspace      = true

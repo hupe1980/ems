@@ -1,12 +1,4 @@
-{#- The project and the site, as one JSON-LD graph.
-
-    Included rather than written in both templates: `page.html` overrides the
-    schema block to add its own article and breadcrumb, and two copies of the
-    project's identity are two things that can disagree about what hems is. The
-    `@id`s are what let a page's article point at them instead of repeating them.
-
-    `extra` is whatever the caller wants appended to the graph, already
-    JSON-encoded and starting with its own comma. -#}
+{# Shared project and site identity. Templates can append page-specific JSON-LD nodes. #}
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -16,20 +8,17 @@
       "@id": "{{ config.base_url }}/#project",
       "name": "{{ config.title }}",
       "description": {{ config.description | json_encode | safe }},
-      "url": "{{ config.base_url }}",
+      "url": "{{ get_url(path='@/_index.md') }}",
       "image": "{{ get_url(path='og.png') }}",
       "codeRepository": "{{ config.extra.repository }}",
       "programmingLanguage": "Rust",
-      "runtimePlatform": "Rust",
       "license": ["https://spdx.org/licenses/MIT.html", "https://spdx.org/licenses/Apache-2.0.html"],
-      "author": { "@type": "Person", "name": "{{ config.extra.author }}", "url": "https://github.com/{{ config.extra.author }}" },
-      "applicationCategory": "Home energy management",
-      "keywords": {{ config.extra.keywords | json_encode | safe }}
+      "author": { "@type": "Person", "name": "{{ config.extra.author }}", "url": "https://github.com/{{ config.extra.author }}" }
     },
     {
       "@type": "WebSite",
       "@id": "{{ config.base_url }}/#website",
-      "url": "{{ config.base_url }}",
+      "url": "{{ get_url(path='@/_index.md') }}",
       "name": "{{ config.title }}",
       "description": {{ config.description | json_encode | safe }},
       "inLanguage": "en"

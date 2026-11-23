@@ -45,6 +45,8 @@
 pub mod advisor;
 pub mod cache;
 pub mod levies;
+#[cfg(feature = "serde")]
+pub mod sheet;
 pub mod source;
 pub mod stack;
 pub mod tariff;

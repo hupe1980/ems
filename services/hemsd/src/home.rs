@@ -78,6 +78,7 @@ pub const ALL_KEYS: &[&str] = &[
     "guard.backup_reserve",
     "user.boost",
     "user.pause",
+    "user.price_cap",
     "user.away",
     "plan.charge",
     "plan.run",
@@ -202,6 +203,12 @@ pub fn idle() -> Explanation {
 /// One device, as the page shows it.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Device {
+    /// Most recent device measurement, including the last one before silence.
+    pub last_seen: Option<String>,
+    /// Latest measurement in watts, absent for a silent device.
+    pub measured_w: Option<f64>,
+    /// Latest command in watts.
+    pub commanded_w: Option<f64>,
     /// The asset.
     pub id: String,
     /// The household's own name for it, where the configuration gives one.
@@ -215,6 +222,10 @@ pub struct Device {
     pub kw: Option<f64>,
     /// State of charge in `[0, 1]`, where the device has one and reports it.
     pub soc: Option<f64>,
+    /// Approximate euros per extra percentage point (car) or degree (tank),
+    /// from this slot’s store marginal and the installed device model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_eur_per_unit: Option<f64>,
     /// Why it is doing it.
     pub why: Explanation,
     /// Something the household should know about the device itself: `silent`
@@ -335,11 +346,15 @@ pub struct GoalAnswer {
     /// What still has to go in, kWh.
     pub needed_kwh: f64,
     /// The share of the time left the goal would use: `0` nothing, `1` all of it.
-    pub tightness: f64,
+    /// Absent when no deliverable time remains for a positive target.
+    pub tightness: Option<f64>,
     /// Where the goal is impossible: the state of charge the car can reach by
     /// then, in `[0, 1]`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reachable_soc: Option<f64>,
+    /// Priced quarter hours available under the requested cap before departure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eligible_quarters: Option<usize>,
 }
 
 /// Above this share of the time left, a goal is called tight.
@@ -355,16 +370,36 @@ pub const TIGHT_ABOVE: f64 = 0.8;
 /// as target and departure, the charge point's limits.
 #[must_use]
 pub fn judge_goal(session: &ems_optimizer::model::EvSession, now: Slot) -> GoalAnswer {
+    judge_car_price(session, now, None, None)
+}
+
+/// Judge the time window using only confirmed prices within the requested cap.
+#[must_use]
+pub fn judge_car_price(
+    session: &ems_optimizer::model::EvSession,
+    now: Slot,
+    cap: Option<i32>,
+    prices: Option<&ems_tariff::PriceStack>,
+) -> GoalAnswer {
+    let from = session.arrival.unwrap_or(now).max(now);
+    let window = from.distance_to(session.departure).max(0);
+    let eligible = cap.map(|limit| {
+        (0..window)
+            .filter(|i| prices.is_some_and(|p| p.within_cap(from.offset(*i), limit)))
+            .count()
+    });
     let needed = (session.energy_target - session.energy_now).kwh().max(0.0);
     if needed <= 0.0 {
         return GoalAnswer {
             verdict: Verdict::Met,
             needed_kwh: 0.0,
-            tightness: 0.0,
+            tightness: Some(0.0),
             reachable_soc: None,
+            eligible_quarters: eligible,
         };
     }
-    let tightness = demand_ratio(session, now);
+    #[allow(clippy::cast_precision_loss)]
+    let tightness = demand_ratio(session, eligible.map_or(window as f64, |n| n as f64));
     let verdict = if tightness > 1.0 {
         Verdict::Impossible
     } else if tightness > TIGHT_ABOVE {
@@ -380,8 +415,9 @@ pub fn judge_goal(session: &ems_optimizer::model::EvSession, now: Slot) -> GoalA
     GoalAnswer {
         verdict,
         needed_kwh: needed,
-        tightness,
+        tightness: tightness.is_finite().then_some(tightness),
         reachable_soc,
+        eligible_quarters: eligible,
     }
 }
 
@@ -391,10 +427,8 @@ pub fn judge_goal(session: &ems_optimizer::model::EvSession, now: Slot) -> GoalA
 /// planner, which only asks how much of the window a promise uses, and blind
 /// above one, which is exactly where a goal becomes impossible. The same
 /// arithmetic, unclamped; the test holds the two together below one.
-fn demand_ratio(session: &ems_optimizer::model::EvSession, now: Slot) -> f64 {
+fn demand_ratio(session: &ems_optimizer::model::EvSession, slots: f64) -> f64 {
     let owed = (session.energy_target - session.energy_now).kwh().max(0.0);
-    let from = session.arrival.unwrap_or(now).max(now);
-    let slots = from.distance_to(session.departure).max(0) as f64;
     let deliverable = session.max_charge.kw() * session.efficiency.clamp(0.0, 1.0) * slots * 0.25;
     if deliverable <= 0.0 {
         return f64::INFINITY;
@@ -410,6 +444,9 @@ fn demand_ratio(session: &ems_optimizer::model::EvSession, now: Slot) -> f64 {
 pub struct CarGoal {
     /// The state of charge wanted, in `[0, 1]`.
     pub target_soc: f64,
+    /// Highest gross import price allowed, in whole ct/kWh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_cap_ct: Option<i32>,
     /// By when, local wall-clock minutes after midnight (`420` is 07:00).
     pub by_minute: u16,
 }
@@ -434,7 +471,8 @@ pub struct TankAnswer {
     /// Electricity the heater still has to take, kWh.
     pub needed_kwh: f64,
     /// The share of the time left the goal would use: `0` nothing, `1` all of it.
-    pub tightness: f64,
+    /// Absent when no deliverable time remains for a positive target.
+    pub tightness: Option<f64>,
     /// Where the goal is impossible: the temperature the tank can reach by
     /// then, °C.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -466,7 +504,7 @@ pub fn judge_tank(
         return TankAnswer {
             verdict: Verdict::Met,
             needed_kwh: 0.0,
-            tightness: 0.0,
+            tightness: Some(0.0),
             reachable_c: None,
         };
     }
@@ -493,7 +531,7 @@ pub fn judge_tank(
     TankAnswer {
         verdict,
         needed_kwh: heat / cop,
-        tightness,
+        tightness: tightness.is_finite().then_some(tightness),
         reachable_c: (verdict == Verdict::Impossible)
             .then(|| (now_c + deliverable / per_kelvin.max(f64::EPSILON)).min(tank.t_max_c)),
     }
@@ -528,8 +566,17 @@ pub struct GoalSet {
 /// Monday's power cut.
 #[derive(Clone, Default)]
 pub struct Goals {
-    set: std::sync::Arc<tokio::sync::Mutex<GoalSet>>,
+    set: tokio::sync::watch::Sender<GoalSet>,
+    planned: tokio::sync::watch::Sender<Option<(ems_core::prelude::PlanId, GoalSet)>>,
+    boost: std::sync::Arc<std::sync::Mutex<BoostState>>,
+    writer: std::sync::Arc<tokio::sync::Mutex<()>>,
     store: Option<std::sync::Arc<tokio::sync::Mutex<crate::store::Store>>>,
+}
+
+#[derive(Default)]
+struct BoostState {
+    revision: u64,
+    until: Option<time::OffsetDateTime>,
 }
 
 impl Goals {
@@ -545,14 +592,102 @@ impl Goals {
             None => GoalSet::default(),
         };
         Ok(Self {
-            set: std::sync::Arc::new(tokio::sync::Mutex::new(set)),
+            set: tokio::sync::watch::Sender::new(set),
+            planned: tokio::sync::watch::Sender::new(None),
+            writer: std::sync::Arc::default(),
+            boost: std::sync::Arc::default(),
             store,
         })
     }
 
     /// The goals in force.
-    pub async fn get(&self) -> GoalSet {
-        *self.set.lock().await
+    #[must_use]
+    pub fn get(&self) -> GoalSet {
+        *self.set.borrow()
+    }
+
+    pub(crate) fn changes(&self) -> tokio::sync::watch::Receiver<GoalSet> {
+        self.set.subscribe()
+    }
+
+    pub(crate) fn record_plan(&self, id: ems_core::prelude::PlanId, goals: GoalSet) {
+        self.planned.send_replace(Some((id, goals)));
+    }
+
+    pub(crate) fn goals_for_plan(&self, id: ems_core::prelude::PlanId) -> GoalSet {
+        let current = self.get();
+        let Some((_, used)) = self.planned.borrow().filter(|(plan, _)| *plan == id) else {
+            return GoalSet::default();
+        };
+        GoalSet {
+            car: used.car.filter(|g| Some(*g) == current.car),
+            tank: used.tank.filter(|g| Some(*g) == current.tank),
+        }
+    }
+
+    fn boost_state(&self) -> std::sync::MutexGuard<'_, BoostState> {
+        self.boost
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Snapshot before a confirmation solve so a cancellation while it runs wins.
+    #[must_use]
+    pub fn boost_revision(&self) -> u64 {
+        self.boost_state().revision
+    }
+
+    /// Start an in-memory boost only for the goal the household confirmed.
+    pub async fn start_boost(
+        &self,
+        expected: CarGoal,
+        until: time::OffsetDateTime,
+        revision: u64,
+    ) -> bool {
+        let _writer = self.writer.lock().await;
+        let mut state = self.boost_state();
+        if self.get().car != Some(expected) || state.revision != revision {
+            return false;
+        }
+        state.until = Some(until);
+        true
+    }
+
+    /// Cancel a boost and invalidate a confirmation that is still being priced.
+    pub fn cancel_boost(&self) {
+        let mut state = self.boost_state();
+        state.until = None;
+        state.revision = state.revision.wrapping_add(1);
+    }
+
+    /// Report the current request. The next control tick clears an expired one.
+    #[must_use]
+    pub fn boosting(&self, now: time::OffsetDateTime) -> bool {
+        self.boost_state().until.is_some_and(|by| now < by)
+    }
+
+    /// End a boost unless the connected car still needs it and its price qualifies.
+    pub fn boost_for_tick(
+        &self,
+        vehicle: Option<&ems_drv::VehiclePresence>,
+        affordable: bool,
+        now: time::OffsetDateTime,
+    ) -> bool {
+        let mut state = self.boost_state();
+        let Some(by) = state.until else {
+            return false;
+        };
+        if now < by
+            && affordable
+            && vehicle
+                .zip(self.get().car)
+                .is_some_and(|(v, g)| v.current_soc(now).is_some_and(|soc| soc < g.target_soc))
+        {
+            return true;
+        }
+        state.until = None;
+        state.revision = state.revision.wrapping_add(1);
+        false
     }
 
     /// Change them, and keep the change. Answers whether anything changed.
@@ -564,16 +699,22 @@ impl Goals {
         &self,
         change: impl FnOnce(&mut GoalSet),
     ) -> Result<bool, crate::store::StoreError> {
-        let mut set = self.set.lock().await;
-        let mut next = *set;
+        // Publish after persistence. The control tick can read the last committed
+        // cap while a slow store serializes a concurrent edit.
+        let _writer = self.writer.lock().await;
+        let set = self.get();
+        let mut next = set;
         change(&mut next);
-        if next == *set {
+        if next == set {
             return Ok(false);
         }
         if let Some(store) = &self.store {
             store.lock().await.put_goals(&next)?;
         }
-        *set = next;
+        if next.car != set.car {
+            self.cancel_boost();
+        }
+        self.set.send_replace(next);
         Ok(true)
     }
 }
@@ -773,15 +914,41 @@ fn worth(input: &Live<'_>, slot: Slot) -> Option<Worth> {
     })
 }
 
+/// One appliance power point observed through the local Matter commissioner.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct AppliancePower {
+    /// Installer-assigned label.
+    pub name: String,
+    /// Fabric-local node ID (hexadecimal).
+    pub node: String,
+    /// Commissioned endpoint.
+    pub endpoint: u16,
+    /// waiting, unavailable, current, unknown, or stale.
+    pub state: &'static str,
+    /// Last response value in W. A null measurement clears a previous value.
+    pub watts: Option<f64>,
+    /// Time the last successful device read arrived, as RFC 3339.
+    pub received_at: Option<String>,
+}
+
 /// Everything the household page shows, in one document.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Home {
+    /// The gateway is observing the site without sending device commands.
+    pub shadow: bool,
+    /// Feed-in ceiling received from the operator, in watts.
+    pub feed_in_limit_w: Option<f64>,
+    /// Appliance telemetry shown in Setup when configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matter: Option<AppliancePower>,
     /// Which household.
     pub site: String,
     /// The instant this view describes, RFC 3339.
     pub at: Option<String>,
     /// `true` when this is `hemsd demo` replaying a reference day.
     pub demo: bool,
+    /// The household confirmed immediate charging to its saved goal.
+    pub charging_now: bool,
     /// In a demo, the minute of the day being shown, so the page's slider can
     /// start where the replay is.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -796,6 +963,9 @@ pub struct Home {
     pub devices: Vec<Device>,
     /// The plan, from now to the end of its horizon.
     pub plan: Vec<PlanSlot>,
+    /// Creation time of the retained plan when the latest planning attempt failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_plan_at: Option<String>,
     /// What the plan expects its horizon to put on the bill. Absent where the
     /// plan carries no price.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -807,11 +977,11 @@ pub struct Home {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worth: Option<Worth>,
     /// The day so far.
-    pub receipt: Option<Receipt>,
+    pub receipt: Option<crate::month::ClosedDay>,
     /// The car goal in force, and what it comes to.
-    pub goal: Option<(CarGoal, GoalAnswer)>,
+    pub goal: Option<(CarGoal, Option<GoalAnswer>)>,
     /// The hot-water goal in force, and what it comes to.
-    pub tank_goal: Option<(TankGoal, TankAnswer)>,
+    pub tank_goal: Option<(TankGoal, Option<TankAnswer>)>,
     /// What an installer gives the metering point operator.
     pub ski: Option<String>,
     /// The SHA-256 fingerprint of the box's SHIP certificate.
@@ -891,7 +1061,7 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         })
         .unwrap_or_default();
 
-    let devices = devices_now(input, price_ct, &horizon_prices, &|id| {
+    let devices = devices_now(input, slot, price_ct, &horizon_prices, &|id| {
         next_use(input.plan?, id, slot, &price_of)
     });
 
@@ -944,41 +1114,49 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         })
         .unwrap_or_default();
 
-    let tank_goal = input.goals.tank.and_then(|g| {
-        let tank = input.site.assets.iter().find_map(|a| match a {
-            Asset::Dhw(tank) => Some(tank),
+    // A stored goal survives missing telemetry. Only the live verdict needs facts.
+    let tank_goal = input.goals.tank.map(|goal| {
+        let answer = input.site.assets.iter().find_map(|asset| match asset {
+            Asset::Dhw(tank) => input
+                .tank
+                .as_ref()
+                .map(|facts| judge_tank(tank, facts, goal, now)),
             _ => None,
-        })?;
-        Some((g, judge_tank(tank, input.tank.as_ref()?, g, now)))
+        });
+        (goal, answer)
     });
-    let goal = input.goals.car.map(|g| {
-        let answer = input.car.map_or(
-            GoalAnswer {
-                verdict: Verdict::Feasible,
-                needed_kwh: 0.0,
-                tightness: 0.0,
-                reachable_soc: None,
-            },
-            |facts| judge_goal(&session_for(&facts, g, now), slot),
-        );
-        (g, answer)
+    let goal = input.goals.car.map(|goal| {
+        let answer = input.car.map(|facts| {
+            judge_car_price(
+                &session_for(&facts, goal, now),
+                slot,
+                goal.price_cap_ct,
+                input.prices,
+            )
+        });
+        (goal, answer)
     });
 
     Home {
+        shadow: status.shadow,
+        feed_in_limit_w: status.feed_in_ceiling.map(Power::get),
+        matter: None,
         // The household's own name for its house; empty where it gave none,
         // and the page then says "Home" rather than an identifier.
         site: input.site.label.trim().to_owned(),
         at: status.at.map(rfc3339),
         demo: false,
+        charging_now: false,
         at_minute: None,
         grid_kw: status.grid.map(Power::kw),
         price_ct,
         reduction,
         devices,
         plan,
+        previous_plan_at: None,
         ahead: input.plan.and_then(|p| ahead(p, now)),
         worth: worth(input, slot),
-        receipt: status.last_day.as_ref().map(receipt_of),
+        receipt: status.last_day.clone(),
         goal,
         tank_goal,
         ski: input.ski.clone(),
@@ -989,9 +1167,31 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
     }
 }
 
+/// The store dual prices electricity at the inlet. Convert target increments
+/// to electrical kWh before multiplying, including charging losses or tank COP.
+fn goal_slope(input: &Live<'_>, id: &AssetId, slot: Slot) -> Option<f64> {
+    let kwh_per_unit = match input.site.asset(id)? {
+        Asset::Evse(_) => {
+            let car = input.car?;
+            car.capacity.kwh() / (100.0 * car.efficiency)
+        }
+        Asset::Dhw(tank) => tank.heat_capacity_kwh_per_k() / input.tank?.cop,
+        _ => return None,
+    };
+    let planned = input.plan?.slots.iter().find(|s| s.slot == slot)?;
+    let marginal = planned
+        .targets
+        .iter()
+        .find(|t| t.asset == *id)?
+        .marginal_eur_per_kwh?;
+    let rate = marginal * kwh_per_unit;
+    (kwh_per_unit.is_finite() && kwh_per_unit > 0.0 && rate.is_finite()).then_some(rate)
+}
+
 /// Every device the household would recognise, with what it is doing and why.
 fn devices_now(
     input: &Live<'_>,
+    slot: Slot,
     price_ct: Option<f64>,
     horizon_prices: &[f64],
     next: &dyn Fn(&AssetId) -> Option<(String, f64)>,
@@ -1003,7 +1203,7 @@ fn devices_now(
             let (measured, soc) = status.readings.get(&id).copied().unwrap_or((None, None));
             let commanded = status.commanded.get(&id).copied();
             let shown = measured.or(commanded);
-            let why = waiting(
+            let mut why = waiting(
                 status.reasons.get(&id).map_or_else(idle, |reason| {
                     relative(
                         explain(reason, commanded.unwrap_or(Power::ZERO), price_ct),
@@ -1013,6 +1213,16 @@ fn devices_now(
                 }),
                 next(&id),
             );
+            if why.key == "user.pause"
+                && kind == "car"
+                && let Some(cap) = input.goals.car.and_then(|g| g.price_cap_ct)
+                && !input
+                    .prices
+                    .is_some_and(|prices| prices.within_cap(slot, cap))
+            {
+                why.key = "user.price_cap";
+                why.params.insert("cap", cap.to_string());
+            }
             let notice = if status.undriven.contains(&id) {
                 Some("undriven")
             } else if status.silent.contains(&id) {
@@ -1026,6 +1236,9 @@ fn devices_now(
                 None
             };
             Device {
+                last_seen: status.last_measured.get(&id).copied().map(rfc3339),
+                commanded_w: commanded.map(Power::get),
+                measured_w: measured.map(Power::get),
                 id: id.to_string(),
                 name: input
                     .site
@@ -1036,6 +1249,7 @@ fn devices_now(
                 kind,
                 kw: shown.map(Power::kw),
                 soc,
+                goal_eur_per_unit: goal_slope(input, &id, slot),
                 why,
                 notice,
             }
@@ -1319,6 +1533,82 @@ mod tests {
         assert!(reach > 0.44 && reach < 0.80, "{reach}");
     }
 
+    #[tokio::test]
+    async fn immediate_charging_ends_on_the_first_missing_operating_fact() {
+        let now = time::macros::datetime!(2026-11-23 04:00 UTC);
+        let goal = CarGoal {
+            target_soc: 0.8,
+            by_minute: 420,
+            price_cap_ct: Some(30),
+        };
+        let goals = Goals::default();
+        goals.change(|g| g.car = Some(goal)).await.unwrap();
+        let until = now + time::Duration::hours(2);
+        let live = ems_drv::VehiclePresence {
+            connected: true,
+            soc: Some(0.5),
+            capacity_wh: Some(60000.0),
+            at: now,
+        };
+        for (vehicle, allowed, at) in [
+            (None, true, now),
+            (
+                Some(ems_drv::VehiclePresence {
+                    connected: false,
+                    ..live
+                }),
+                true,
+                now,
+            ),
+            (
+                Some(ems_drv::VehiclePresence { soc: None, ..live }),
+                true,
+                now,
+            ),
+            (
+                Some(ems_drv::VehiclePresence {
+                    soc: Some(0.8),
+                    ..live
+                }),
+                true,
+                now,
+            ),
+            (Some(live), false, now),
+            (
+                Some(live),
+                true,
+                now + time::Duration::minutes(1) + time::Duration::SECOND,
+            ),
+            (
+                Some(ems_drv::VehiclePresence { at: until, ..live }),
+                true,
+                until,
+            ),
+        ] {
+            assert!(goals.start_boost(goal, until, goals.boost_revision()).await);
+            assert!(goals.boost_for_tick(Some(&live), true, now));
+            assert!(!goals.boost_for_tick(vehicle.as_ref(), allowed, at));
+            assert!(!goals.boost_for_tick(Some(&live), true, now));
+        }
+        assert!(goals.start_boost(goal, until, goals.boost_revision()).await);
+        let pending = goals.boost_revision();
+        goals.cancel_boost();
+        assert!(!goals.start_boost(goal, until, pending).await);
+        assert!(!goals.boosting(now));
+        let revised = CarGoal {
+            target_soc: 0.7,
+            ..goal
+        };
+        assert!(
+            !goals
+                .start_boost(revised, until, goals.boost_revision())
+                .await
+        );
+        assert!(goals.start_boost(goal, until, goals.boost_revision()).await);
+        goals.change(|g| g.car = Some(revised)).await.unwrap();
+        assert!(!goals.boosting(now));
+    }
+
     #[test]
     fn the_verdict_measures_what_the_planner_measures() {
         // Below one the ratio *is* the planner's tightness; only above it, where
@@ -1326,7 +1616,7 @@ mod tests {
         for slots in [9, 12, 20, 40] {
             let (s, now) = session(26.4, 48.0, slots);
             assert!(
-                (demand_ratio(&s, now) - s.tightness(now)).abs() < 1e-9,
+                (judge_goal(&s, now).tightness.unwrap() - s.tightness(now)).abs() < 1e-9,
                 "{slots}"
             );
         }
@@ -1472,7 +1762,7 @@ mod tests {
         let goals = Goals::remembering(Some(store.clone()))
             .await
             .expect("an empty store reads as no goals");
-        assert_eq!(goals.get().await, GoalSet::default());
+        assert_eq!(goals.get(), GoalSet::default());
         let asked = TankGoal {
             target_c: 50.0,
             by_minute: 1080,
@@ -1488,7 +1778,7 @@ mod tests {
             .await
             .expect("the goals read back");
         assert_eq!(
-            again.get().await,
+            again.get(),
             GoalSet {
                 car: None,
                 tank: Some(asked)
@@ -1501,7 +1791,7 @@ mod tests {
             .factory_reset_discarding_evidence()
             .expect("a reset");
         let reset = Goals::remembering(Some(store)).await.expect("readable");
-        assert_eq!(reset.get().await, GoalSet::default());
+        assert_eq!(reset.get(), GoalSet::default());
     }
 
     #[test]

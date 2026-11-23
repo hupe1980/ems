@@ -137,6 +137,8 @@ struct Outstanding {
     /// The instruction's own identifier, which is what an `InstructionStatusUpdate`
     /// is about.
     id: s2_kit::types::Id,
+    request: CemRequest,
+    aborted_by: Option<String>,
     /// Whether the manager has already been told this one was overridden.
     ///
     /// Once, not once a second: a § 14a reduction lasts minutes and a status
@@ -147,20 +149,7 @@ struct Outstanding {
 /// The state behind [`Cem`].
 #[derive(Debug, Default)]
 struct Held {
-    requests: BTreeMap<AssetId, CemRequest>,
-    /// The instruction behind each live request.
     outstanding: BTreeMap<AssetId, Outstanding>,
-    /// Assets whose S2 instruction the guard is currently overriding, and which
-    /// rule is doing it.
-    ///
-    /// Written by the control loop on every tick, read by the session that owes
-    /// the manager an answer. **This is the half an S2 implementation usually
-    /// leaves out**, and leaving it out is not a cosmetic gap: an instruction is
-    /// answered `Accepted` the moment it decodes, and if a network operator's
-    /// reduction then overrides it the manager is never told. An aggregator that
-    /// has sold flexibility on the strength of an `Accepted` is selling
-    /// something the grid has already taken back.
-    overridden: BTreeMap<AssetId, String>,
     /// Assets a manager is connected to and has selected a control type for.
     active: BTreeSet<AssetId>,
     /// Instructions this Resource Manager refused — an unknown actuator, a
@@ -197,23 +186,44 @@ impl Cem {
     /// follows, and for the same reason: a sweep is a second place for the two
     /// to disagree about what *now* is.
     pub async fn active(&self, now: OffsetDateTime) -> BTreeMap<AssetId, CemRequest> {
+        self.instructions(now)
+            .await
+            .into_iter()
+            .map(|(asset, (_, request))| (asset, request))
+            .collect()
+    }
+
+    pub(super) async fn instructions(
+        &self,
+        now: OffsetDateTime,
+    ) -> BTreeMap<AssetId, (s2_kit::types::Id, CemRequest)> {
         let mut held = self.held.write().await;
-        held.requests.retain(|_, r| r.is_live(now));
-        held.requests.clone()
+        held.outstanding
+            .retain(|_, entry| entry.request.is_live(now));
+        held.outstanding
+            .iter()
+            .filter(|(_, entry)| entry.aborted_by.is_none())
+            .map(|(asset, entry)| (asset.clone(), (entry.id, entry.request)))
+            .collect()
     }
 
     /// What the surface should say about itself.
     pub async fn status(&self, now: OffsetDateTime) -> CemStatus {
         let mut held = self.held.write().await;
-        held.requests.retain(|_, r| r.is_live(now));
+        held.outstanding
+            .retain(|_, entry| entry.request.is_live(now));
         CemStatus {
             connected: held.active.iter().map(ToString::to_string).collect(),
-            instructing: held.requests.keys().map(ToString::to_string).collect(),
-            overridden: held
-                .overridden
+            instructing: held
+                .outstanding
                 .iter()
-                .filter(|(asset, _)| held.requests.contains_key(*asset))
-                .map(|(asset, rule)| (asset.to_string(), rule.clone()))
+                .filter(|(_, entry)| entry.aborted_by.is_none())
+                .map(|(asset, _)| asset.to_string())
+                .collect(),
+            overridden: held
+                .outstanding
+                .iter()
+                .filter_map(|(asset, entry)| Some((asset.to_string(), entry.aborted_by.clone()?)))
                 .collect(),
             refused: held.refused,
             unactioned: held.unactioned,
@@ -222,18 +232,27 @@ impl Cem {
 
     async fn instruct(&self, asset: AssetId, request: CemRequest, id: s2_kit::types::Id) {
         let mut held = self.held.write().await;
-        held.requests.insert(asset.clone(), request);
-        held.outstanding
-            .insert(asset, Outstanding { id, told: false });
+        held.outstanding.insert(
+            asset,
+            Outstanding {
+                id,
+                request,
+                aborted_by: None,
+                told: false,
+            },
+        );
     }
 
-    /// Which assets the guard is currently overriding a manager on, named by the
-    /// rule doing it.
-    ///
-    /// Called by the control loop once a tick with the whole map, so an override
-    /// that has *lifted* disappears by not being mentioned.
-    pub async fn note_overrides(&self, overridden: BTreeMap<AssetId, String>) {
-        self.held.write().await.overridden = overridden;
+    /// Abort only the instruction evaluated by the control tick. A replacement
+    /// may arrive while the gateway is applying the previous request.
+    pub async fn abort(&self, asset: &AssetId, id: s2_kit::types::Id, reason: &str) {
+        let mut held = self.held.write().await;
+        if let Some(entry) = held.outstanding.get_mut(asset)
+            && entry.id == id
+            && entry.aborted_by.is_none()
+        {
+            entry.aborted_by = Some(reason.to_owned());
+        }
     }
 
     /// The instruction this asset owes the manager an abort for, if it owes one.
@@ -241,8 +260,8 @@ impl Cem {
     /// Takes it: the answer is given once per instruction, not once per tick.
     async fn owed_abort(&self, asset: &AssetId) -> Option<(s2_kit::types::Id, String)> {
         let mut held = self.held.write().await;
-        let rule = held.overridden.get(asset)?.clone();
         let outstanding = held.outstanding.get_mut(asset)?;
+        let rule = outstanding.aborted_by.as_ref()?.clone();
         if outstanding.told {
             return None;
         }
@@ -264,9 +283,7 @@ impl Cem {
     async fn closed(&self, asset: &AssetId) {
         let mut held = self.held.write().await;
         held.active.remove(asset);
-        held.requests.remove(asset);
         held.outstanding.remove(asset);
-        held.overridden.remove(asset);
     }
 
     async fn refused(&self) {
@@ -283,14 +300,9 @@ impl Cem {
 pub struct CemStatus {
     /// Assets a manager has opened a session on and chosen a control type for.
     pub connected: Vec<String>,
-    /// Assets a manager currently has an unexpired instruction on.
+    /// Assets with an unexpired manager instruction still in force.
     pub instructing: Vec<String>,
-    /// Assets where the guard is overriding what the manager asked for, and the
-    /// rule doing it.
-    ///
-    /// On the household's own screen as well as on the wire, because it is the
-    /// sentence that explains a bill: *your manager asked for this and your
-    /// network operator would not allow it.*
+    /// Reason an instruction was aborted. Kept until replacement, expiry or disconnect.
     pub overridden: std::collections::BTreeMap<String, String>,
     /// Instructions refused since the box started.
     pub refused: u64,

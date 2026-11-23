@@ -37,8 +37,8 @@ async fn month_of_registers(store: &Store, site: &str, year: i32, month: u8, qua
                     grid_feed_in: Decimal::new(3, 3),
                     device_consumption: Decimal::new(200, 3),
                     device_generation: Decimal::new(150, 3),
-                    anzulegender_wert: Decimal::new(786, 2),
-                    spot_price: Decimal::new(1250, 2),
+                    anzulegender_wert: Some(Decimal::new(786, 2)),
+                    spot_price: Some(Decimal::new(1250, 2)),
                     ..QuarterHour::empty(slot)
                 },
                 now,
@@ -78,8 +78,8 @@ async fn month_of_registers_with_a_metered_store(
                     // the rest.
                     storage_consumption: Some(Decimal::new(120, 3)),
                     storage_generation: Some(Decimal::new(100, 3)),
-                    anzulegender_wert: Decimal::new(786, 2),
-                    spot_price: Decimal::new(1250, 2),
+                    anzulegender_wert: Some(Decimal::new(786, 2)),
+                    spot_price: Some(Decimal::new(1250, 2)),
                     ..QuarterHour::empty(slot)
                 },
                 start,
@@ -210,7 +210,8 @@ async fn a_settlement_can_be_reproduced_from_the_registers_it_was_computed_from(
         .expect("the month settles");
     // The instant the document was produced at: the day after the period, not
     // the wall clock.
-    let settled_at = ems_core::calendar::day_start_utc(date!(2026 - 12 - 01));
+    let settled_at = ems_core::calendar::day_start_utc(date!(2026 - 12 - 01))
+        + time::Duration::microseconds(123_456);
     let before = first["figures"]["abgrenzung"]["grid_draw"]
         .as_str()
         .unwrap()
@@ -227,8 +228,8 @@ async fn a_settlement_can_be_reproduced_from_the_registers_it_was_computed_from(
                 grid_feed_in: Decimal::new(3, 3),
                 device_consumption: Decimal::new(200, 3),
                 device_generation: Decimal::new(150, 3),
-                anzulegender_wert: Decimal::new(786, 2),
-                spot_price: Decimal::new(1250, 2),
+                anzulegender_wert: Some(Decimal::new(786, 2)),
+                spot_price: Some(Decimal::new(1250, 2)),
                 ..QuarterHour::empty(slot)
             },
             settled_at + time::Duration::days(14),
@@ -264,7 +265,12 @@ async fn a_settlement_can_be_reproduced_from_the_registers_it_was_computed_from(
             .unwrap(),
         before
     );
-    assert_eq!(reproduced["as_of"], settled_at.unix_timestamp());
+    assert_eq!(
+        reproduced["as_of"],
+        settled_at
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -291,8 +297,7 @@ async fn basisfall_a4_is_refused_where_the_store_is_not_separately_metered() {
 
 #[tokio::test]
 async fn a_month_with_gaps_is_settled_and_is_not_called_complete() {
-    // A quarter hour the box could not price gets no register, so a month can
-    // have gaps; a settlement over part of it must not look like a whole one.
+    // Only part of the month has meter records. Coverage must expose the gap.
     let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = Store::new(fixture.db.clone());
     month_of_registers(&store, "haus-1", 2026, 11, 2_000).await;
@@ -579,8 +584,8 @@ async fn exclusivity_held_reports_zero_rather_than_silence() {
                     grid_feed_in: Decimal::ZERO,
                     device_consumption: Decimal::ZERO,
                     device_generation: Decimal::new(150, 3),
-                    anzulegender_wert: Decimal::new(786, 2),
-                    spot_price: Decimal::new(1250, 2),
+                    anzulegender_wert: Some(Decimal::new(786, 2)),
+                    spot_price: Some(Decimal::new(1250, 2)),
                     ..QuarterHour::empty(slot)
                 },
                 start,
@@ -627,5 +632,28 @@ async fn a_settlement_covers_only_the_month_it_names() {
     assert_eq!(
         october["quarter_hours_present"], OCTOBER_2027,
         "November's registers are November's"
+    );
+}
+
+#[tokio::test]
+async fn measured_registers_round_trip_without_wholesale_or_support_prices() {
+    let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
+    let store = Store::new(fixture.db.clone());
+    let now = ems_core::calendar::day_start_utc(date!(2027 - 02 - 01));
+    let slot = ems_core::prelude::Slot::containing(now);
+    let row = QuarterHour {
+        grid_draw: Decimal::new(125, 2),
+        ..QuarterHour::empty(slot)
+    };
+    store
+        .put_quarter_hour("unknown-prices", &row, now)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .quarter_hours("unknown-prices", None, None)
+            .await
+            .unwrap(),
+        [row]
     );
 }

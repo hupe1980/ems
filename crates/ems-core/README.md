@@ -1,51 +1,10 @@
 # ems-core
 
-The domain model every other crate in the [hems](https://github.com/hupe1980/ems)
-workspace speaks: sites, assets, circuits, the 15-minute Europe/Berlin slot grid,
-measurements, and commands that must name their reason.
+Shared types for sites, meters, assets, circuits, measurements and reasoned commands. Schedules use 15-minute slots with Europe/Berlin calendar boundaries. Time enters as a parameter.
 
-**Facts, not rules.** What a heat pump *is* lives here; whether it is a
-steuerbare Verbrauchseinrichtung under § 14a EnWG lives in `ems-grid`, and the
-regulatory vocabulary the two share — `Fallgruppe`, the Bundesland calendar, the
-market identifiers — comes from
-[`metering`](https://github.com/hupe1980/metering).
+Positive power flows into the measured asset. Consumption is positive and generation is negative. At the connection meter, positive power means grid import. The site balance can therefore compare grid power directly with the sum of asset powers.
 
-- 🧊 **No I/O, no clock, no async** — time is a parameter, so a winter day with a
-  DST transition is a unit test.
-- ➕ **One sign convention** — positive power flows *into* the thing measured, so
-  `grid == Σ assets` holds site-wide and is testable.
-- 🧾 **Commands explain themselves** — a `Setpoint` cannot exist without a
-  `Reason`, and reasons carry an `Authority` that makes "the grid limit wins" a
-  checked property rather than a convention.
-- 🏠 **The building is a store** — a two-mass RC model discretised *exactly* by a
-  matrix exponential, so the planner, its baseline and the simulator all step the
-  same house and none of them can ring or diverge at a quarter-hour step. So is
-  the hot-water tank: three hundred litres between 45 and 60 °C are five
-  kilowatt-hours of heat that can be bought hours before they are used.
-- 🍽️ **A shiftable appliance carries its programme** — `LoadKind::Shiftable`
-  holds the `Programme` it will run, quarter hour by quarter hour, so the state
-  where a machine announces flexibility and cannot say what shape it takes is not
-  representable. And it is a *shape*, not a duration and an average: a dishwasher
-  takes two kilowatts to heat and two hundred watts to wash, and a planner handed
-  the average schedules a machine that does not exist.
-- 🔀 **Wiring and mode are different questions** — `PhaseConnection` is what a
-  device is wired to, `PhaseMode` is what it is using right now. Answering the
-  second with the first is how an 11 kW wallbox drawing symmetrically on three
-  conductors acquires the 4,6 kVA limit a *single-phase* device is allowed.
-
-Every layer hands down an **interval**, and nobody widens one:
-
-```mermaid
-flowchart LR
-  A["physically possible"] --> B["guard: fuses, ratings,<br/>reserve, § 14a, § 9 EEG"]
-  B --> C["plan: what it wants<br/>this quarter hour"]
-  C --> D["arbiter: a point<br/>inside what is left"]
-  D --> E["device: what it will<br/>actually accept"]
-```
-
-An empty interval — `floor > ceiling` — is a real outcome rather than a bug: two
-rules that cannot both be satisfied. `Envelope::resolve` keeps the stricter
-*ceiling*, because exceeding a grid limit is worse than falling short of a floor.
+A `Setpoint` includes its source and the reason for the decision. `Envelope::resolve` gives the stricter ceiling precedence when a requested floor exceeds it. Device wiring and the number of conductors currently in use are represented separately.
 
 ```rust
 use ems_core::prelude::*;
@@ -67,7 +26,7 @@ $ cargo add ems-core
 ```
 
 API reference on [docs.rs](https://docs.rs/ems-core); the design is explained in
-[The domain model](https://hupe1980.github.io/ems/docs/domain-model/) on the hems site.
+[The domain model](https://hupe1980.github.io/ems/docs/domain-model/).
 
 ## License
 

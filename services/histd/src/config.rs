@@ -17,7 +17,7 @@ pub struct Settings {
     ///
     /// A box may read and write **its own** record and no other. Each is a
     /// [`ems_service::Secret`], so the usual deployment writes
-    /// `haus-1 = "env:HEMS_HISTD_TOKEN_HAUS1"` and no credential enters the
+    /// `haus-1 = "env:EMS_HISTD_TOKEN_HAUS1"` and no credential enters the
     /// configuration file.
     ///
     /// Empty means this service accepts **nothing**, which is the safe reading
@@ -44,6 +44,9 @@ pub struct Settings {
     /// The operator credentials, each scoped to a tenant.
     #[serde(default)]
     pub operators: Vec<ems_service::OperatorCredential>,
+    /// Sites with a commissioned MeterStore register identity.
+    #[serde(default)]
+    pub register_meters: std::collections::BTreeMap<String, RegisterMeter>,
     /// How to reach PostgreSQL.
     ///
     /// A fleet service, so a database a fleet can reach: what this daemon holds
@@ -93,6 +96,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             service: ems_service::Settings::default(),
+            register_meters: std::collections::BTreeMap::new(),
             site_tokens: std::collections::BTreeMap::new(),
             tenants: std::collections::BTreeMap::new(),
             operators: Vec::new(),
@@ -332,4 +336,14 @@ mod tests {
             "and the Festlegung permits it"
         );
     }
+}
+
+/// Stable market identity for a site's quarter-hour registers.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterMeter {
+    /// Market location used to identify the connection meter.
+    pub malo: metering::MaloId,
+    /// Market participant responsible for the producer version scope.
+    pub operator: metering::ids::BdewCode,
 }

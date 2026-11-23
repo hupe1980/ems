@@ -142,7 +142,7 @@ impl Settings {}
 /// the value is not:
 ///
 /// ```text
-/// webhook_secrets = ["env:HEMS_OBSD_WEBHOOK_SECRET"]   # from the environment
+/// webhook_secrets = ["env:EMS_OBSD_WEBHOOK_SECRET"]   # from the environment
 /// webhook_secrets = ["file:/run/secrets/webhook"]      # from a mounted file
 /// webhook_secrets = ["whsec_literal"]                  # the secret itself
 /// ```
@@ -240,8 +240,8 @@ impl serde::Serialize for Secret {
 
 /// Load `T` from `path` if it exists, then let the environment override it.
 ///
-/// `prefix` names the environment variables: `HEMS_TARIFFD_LISTEN` for a prefix
-/// of `HEMS_TARIFFD`. Only the shared [`Settings`] are read from the
+/// `prefix` names the environment variables: `EMS_TARIFFD_LISTEN` for a prefix
+/// of `EMS_TARIFFD`. Only the shared [`Settings`] are read from the
 /// environment; a daemon's own fields come from the file, because a daemon with
 /// forty settings has forty environment variables nobody documents.
 ///
@@ -342,12 +342,12 @@ mod tests {
 
     #[test]
     fn an_environment_reference_is_read_from_the_environment() {
-        let secret: Secret = toml::from_str::<Wrapper>("value = \"env:HEMS_TEST_SECRET\"")
+        let secret: Secret = toml::from_str::<Wrapper>("value = \"env:EMS_TEST_SECRET\"")
             .unwrap()
             .value;
         assert_eq!(
             secret
-                .resolve(|n| (n == "HEMS_TEST_SECRET").then(|| "from-the-env".to_owned()))
+                .resolve(|n| (n == "EMS_TEST_SECRET").then(|| "from-the-env".to_owned()))
                 .unwrap(),
             "from-the-env"
         );
@@ -358,7 +358,7 @@ mod tests {
         // The failure this refuses to have: a deployment that thinks it is
         // reading a mounted file and is in fact signing with the string
         // `file:/run/secrets/webhook`.
-        let secret = Secret::literal("env:HEMS_TEST_ABSENT");
+        let secret = Secret::literal("env:EMS_TEST_ABSENT");
         assert!(matches!(
             secret.resolve(|_| None),
             Err(ConfigError::UnresolvedSecret { .. })
@@ -386,8 +386,8 @@ mod tests {
             "Secret(<redacted>)"
         );
         assert_eq!(
-            format!("{:?}", Secret::literal("env:HEMS_X")),
-            "Secret(env:HEMS_X)"
+            format!("{:?}", Secret::literal("env:EMS_X")),
+            "Secret(env:EMS_X)"
         );
         // And it is redacted on the way *out* too, because a settings struct
         // that is serialised into a diagnostic bundle is the other way a
@@ -397,8 +397,8 @@ mod tests {
             "\"<redacted>\""
         );
         assert_eq!(
-            serde_json::to_string(&Secret::literal("env:HEMS_X")).unwrap(),
-            "\"env:HEMS_X\""
+            serde_json::to_string(&Secret::literal("env:EMS_X")).unwrap(),
+            "\"env:EMS_X\""
         );
     }
 
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn no_file_at_all_is_the_defaults_rather_than_an_error() {
-        let loaded: Example = load(None, "HEMS_TEST_NONE").unwrap();
+        let loaded: Example = load(None, "EMS_TEST_NONE").unwrap();
         assert_eq!(loaded.service, Settings::default());
     }
 
@@ -431,7 +431,7 @@ mod tests {
     fn a_path_that_is_not_there_is_also_the_defaults() {
         let loaded: Example = load(
             Some(Path::new("/nonexistent/hems.toml")),
-            "HEMS_TEST_MISSING",
+            "EMS_TEST_MISSING",
         )
         .unwrap();
         assert_eq!(loaded.service, Settings::default());
@@ -447,7 +447,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("broken.toml");
         std::fs::write(&path, "listen = \"not an address\"\nupstream = \"x\"\n").unwrap();
-        let err = load::<Example>(Some(&path), "HEMS_TEST_BROKEN").unwrap_err();
+        let err = load::<Example>(Some(&path), "EMS_TEST_BROKEN").unwrap_err();
         assert!(matches!(err, ConfigError::Invalid { .. }), "{err}");
         std::fs::remove_file(&path).ok();
     }
@@ -461,7 +461,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("typo.toml");
         std::fs::write(&path, "log_fitler = \"debug\"\nupstream = \"x\"\n").unwrap();
-        assert!(load::<Example>(Some(&path), "HEMS_TEST_TYPO").is_err());
+        assert!(load::<Example>(Some(&path), "EMS_TEST_TYPO").is_err());
         std::fs::remove_file(&path).ok();
     }
 
@@ -492,8 +492,8 @@ mod tests {
 
         let loaded: Example = load_from(
             Some(&path),
-            "HEMS_TARIFFD",
-            env(&[("HEMS_TARIFFD_LISTEN", "127.0.0.1:9999")]),
+            "EMS_TARIFFD",
+            env(&[("EMS_TARIFFD_LISTEN", "127.0.0.1:9999")]),
         )
         .unwrap();
         assert_eq!(loaded.service.listen.port(), 9999, "the environment wins");
@@ -508,11 +508,11 @@ mod tests {
     #[test]
     fn another_daemons_variables_are_not_read() {
         // The prefix is the whole of what separates six daemons sharing one
-        // environment, so a `HEMS_HISTD_LISTEN` must not move `tariffd`.
+        // environment, so a `EMS_HISTD_LISTEN` must not move `tariffd`.
         let loaded: Example = load_from(
             None,
-            "HEMS_TARIFFD",
-            env(&[("HEMS_HISTD_LISTEN", "127.0.0.1:9999")]),
+            "EMS_TARIFFD",
+            env(&[("EMS_HISTD_LISTEN", "127.0.0.1:9999")]),
         )
         .unwrap();
         assert_eq!(loaded.service.listen, Settings::default().listen);
@@ -522,8 +522,8 @@ mod tests {
     fn an_environment_variable_that_is_nonsense_is_an_error_rather_than_a_default() {
         let err = load_from::<Example>(
             None,
-            "HEMS_TARIFFD",
-            env(&[("HEMS_TARIFFD_SHUTDOWN_GRACE_S", "soon")]),
+            "EMS_TARIFFD",
+            env(&[("EMS_TARIFFD_SHUTDOWN_GRACE_S", "soon")]),
         )
         .unwrap_err();
         assert!(matches!(err, ConfigError::BadEnvironment { .. }), "{err}");

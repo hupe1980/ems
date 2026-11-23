@@ -1,47 +1,15 @@
 # ems-device
 
-What a wanted power becomes on real hardware — for
-[hems](https://github.com/hupe1980/ems).
+Translate a power request into a command a device can execute within the guard’s envelope. The crate operates on typed assets and commands. Protocol drivers handle the wire format.
 
-The planner and the arbiter think in watts, because watts are what the physics
-and the regulation are written in. **Almost no device does.**
+| Asset | Translation |
+|---|---|
+| EV charge point | Amperes per active conductor. Below the configured minimum current the port remains idle. |
+| SG Ready heat pump | A supported contact state within the allowed power interval. Check the power associated with each state on the configured unit. |
+| PV inverter | A production ceiling. The available sunlight determines actual output. |
+| On/off hot-water heater | Run at rated power while the slot needs heat and the guard allows it. |
 
-- 🔌 A charge point takes **amperes per conductor**, and refuses anything below
-  the 6 A of IEC 61851 by simply not charging — so hems asks for nothing rather
-  than for something the device will ignore.
-- 🔀 A phase count goes **before** a power, because changing it while current is
-  flowing is what damages contactors.
-- 🌡️ An SG Ready heat pump takes **one of three contact states**, keyed on
-  fractions of the unit's *own* rating. The states are not ordered by power: the
-  § 14a recommendation for state 1 is a *guaranteed minimum*, so a small heat
-  pump on a large connection has a state 1 that is its full rating — higher than
-  the half-load it draws in state 2.
-- ☀️ An inverter takes a **ceiling**, never a target.
-- 🚿 A **hot-water tank is on or off** — an immersion heater and a small
-  hot-water heat pump both have one power, and the only thing their driver
-  accepts is a contact state.
-- 🎯 And `realisable` says what a device will *actually* take, which is what the
-  arbiter commands. A charge point is off or above 6 A per conductor with nothing
-  in between; commanding 3,7 kW on three conductors commands nothing at all, and
-  until this existed every layer above counted it as delivered.
-
-  It takes the **guard's envelope**, because for an indivisible device "what may
-  it take" and "what can it hold" are one question. Answering them in sequence is
-  wrong whichever order you pick: narrowing a resolved value puts it back between
-  the device's steps, and resolving after narrowing can round *up* past the
-  ceiling the guard just imposed — which under a § 14a budget is an exceedance
-  rather than a rounding error.
-
-  `single_speed` is the other half. A device with a *range* can hold the average
-  power a slot still needs, so the arbiter's energy tracker asks for it. A device
-  with one *point* cannot, and a tank that waits until half its rating is due has
-  to run flat out for the rest of the slot — so it is run **early** instead, at
-  its rating while the slot still owes energy. That is what a thermostat behind a
-  relay does, and without it the § 9 EEG reference day emptied the tank.
-
-Emitting active power to all of them is the obvious first implementation, and it
-leaves most of a household undriveable. This crate is the translation, and it is
-a pure function of the asset and the decision.
+Use `realisable` for the achievable power and `commands_for` to translate the decision into device commands. For example, a three-phase port with a 6 A minimum requires about 4.14 kW at 230 V. A smaller site allowance must keep it idle.
 
 ## Use it
 
@@ -50,7 +18,7 @@ $ cargo add ems-device
 ```
 
 API reference on [docs.rs](https://docs.rs/ems-device); the design is explained in
-[Devices and drivers](https://hupe1980.github.io/ems/docs/devices/) on the hems site.
+[Devices and drivers](https://hupe1980.github.io/ems/docs/devices/).
 
 ## License
 

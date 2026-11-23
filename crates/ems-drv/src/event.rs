@@ -186,6 +186,17 @@ pub struct VehiclePresence {
     pub at: OffsetDateTime,
 }
 
+impl VehiclePresence {
+    /// A fresh, connected charge fraction for immediate charging. Two 30-second
+    /// EVSOC read intervals allow one missed reply before the request expires.
+    #[must_use]
+    pub fn current_soc(self, now: OffsetDateTime) -> Option<f64> {
+        (self.connected && self.at <= now && now - self.at <= time::Duration::minutes(1))
+            .then_some(self.soc?)
+            .filter(|soc| (0.0..=1.0).contains(soc))
+    }
+}
+
 /// How far the connection point says PV feed-in is curtailed `[MGCP-011]`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

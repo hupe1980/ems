@@ -507,6 +507,9 @@ mod tests {
         // conductors and believe a car is charging.
         let element = &plugged.sessions[0].1.system.actuators[0].operation_modes[0].elements[0];
         assert!(element.power_ranges[0].start_of_range > 4_000.0);
+        let min_w = element.power_ranges[0].start_of_range;
+        let expected_rate = min_w * 0.92 * crate::describe::KWH_PER_S_PER_W;
+        assert!((element.fill_rate.start_of_range - expected_rate).abs() < 1e-12);
     }
 
     /// Every description survives the standard's own wire format **exactly**.

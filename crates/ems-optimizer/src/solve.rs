@@ -1914,6 +1914,9 @@ fn charging<M: SolverModel>(
     let Some(e) = problem.ev else {
         return model;
     };
+    if let Some(draw) = problem.ev_draw.get(k) {
+        model = model.with(constraint!(vars.ev[k] == draw.get()));
+    }
     let previous: Expression = if k == 0 {
         Expression::from(e.energy_now.get())
     } else {
@@ -1952,7 +1955,11 @@ fn charging<M: SolverModel>(
 
     // Nothing goes into a car that is not plugged in — before it arrives as
     // well as after it leaves.
-    if problem.horizon.get(k).is_some_and(|s| !e.present_in(s)) {
+    if problem
+        .horizon
+        .get(k)
+        .is_some_and(|s| !e.present_in(s) || !problem.ev_price_allows(s))
+    {
         model = model.with(constraint!(vars.ev[k] == 0.0));
     }
     if let Some(target) = charging_target(problem, e, k) {
@@ -2531,7 +2538,10 @@ impl Unmanaged {
     ) -> f64 {
         let slot_k = problem.horizon.get(k);
         let ev = match problem.ev {
-            Some(e) if self.car_remaining > 0.0 && slot_k.is_some_and(|s| e.present_in(s)) => {
+            Some(e)
+                if self.car_remaining > 0.0
+                    && slot_k.is_some_and(|s| e.present_in(s) && problem.ev_price_allows(s)) =>
+            {
                 let p = e.max_charge.get().min(device_ceiling);
                 self.car_remaining = (self.car_remaining - p * e.efficiency * DT_HOURS).max(0.0);
                 p
@@ -2836,7 +2846,15 @@ fn slot_targets(
         });
     }
     if let Some(id) = &names.evse {
-        let max = problem.ev.map_or(f.ev_charge, |e| e.max_charge);
+        let max = if problem
+            .horizon
+            .get(k)
+            .is_some_and(|s| problem.ev_price_allows(s))
+        {
+            problem.ev.map_or(f.ev_charge, |e| e.max_charge)
+        } else {
+            Power::ZERO
+        };
         targets.push(AssetTarget {
             mode: ThermalMode::Heat,
             marginal_eur_per_kwh: value_of(id),

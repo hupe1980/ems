@@ -247,6 +247,7 @@ async fn a_box_with_a_fleet_plans_against_real_prices_and_a_real_sky() {
 
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
+            tariff_changed: Arc::default(),
             household: household.clone(),
             array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
@@ -397,6 +398,7 @@ async fn a_battery_whose_charge_nobody_reports_is_left_out_of_the_plan() {
 
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
+            tariff_changed: Arc::default(),
             household: household.clone(),
             array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
@@ -488,6 +490,7 @@ async fn a_box_installed_this_morning_plans_from_persistence() {
     let (signal, trigger) = Shutdown::channel();
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
+            tariff_changed: Arc::default(),
             household: household.clone(),
             array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
@@ -630,6 +633,7 @@ async fn plan_keeping(
     let (signal, trigger) = Shutdown::channel();
     tokio::spawn(hemsd::runtime::planner::run(
         Planner {
+            tariff_changed: Arc::default(),
             household: household.clone(),
             array: ems_forecast::ArrayModel::new(
                 Power::from_kw(9.8),
@@ -783,10 +787,12 @@ async fn a_goal_is_priced_by_solving_the_same_plan_with_it() {
     let by_minute =
         ems_core::prelude::Slot::containing(at + time::Duration::hours(14)).local_minute_of_day();
     let seventy = CarGoal {
+        price_cap_ct: None,
         target_soc: 0.7,
         by_minute,
     };
     let ninety = CarGoal {
+        price_cap_ct: None,
         target_soc: 0.9,
         by_minute,
     };
@@ -815,4 +821,105 @@ async fn a_goal_is_priced_by_solving_the_same_plan_with_it() {
         "twelve more kWh by the same time cost {extra} €"
     );
     assert!(extra > 0.0, "and buying them is not free");
+    let baseline = last.lock().await.as_ref().unwrap().clone();
+    let expected_cost = |inputs: hemsd::runtime::planner::Inputs| {
+        let cost = inputs.solve().unwrap().plan.expected_cost.unwrap();
+        cost.energy_eur + cost.wear_eur + cost.stored_eur
+    };
+    let target = CarGoal {
+        price_cap_ct: None,
+        target_soc: 0.8,
+        by_minute: 420,
+    };
+    let quote = hemsd::runtime::quote::car(&last, &car, target, at)
+        .await
+        .unwrap();
+    let proposed = baseline
+        .clone()
+        .with_car(Some(hemsd::home::session_for(&full, target, at)));
+    let expected_cents = ((expected_cost(proposed) - expected_cost(baseline)) * 100.0).round();
+    assert_eq!(quote.extra_eur, Some(expected_cents / 100.0));
+    // Fix the simulated press to the opening of the plan's current slot so
+    // wall-clock test timing cannot remove an affordable quarter.
+    let start = Slot::containing(at).start();
+    let priced = hemsd::runtime::quote::charge_now(&last, full, seventy, start)
+        .await
+        .expect("a priced immediate departure");
+    assert!(priced.extra_eur.is_some());
+    let capped = CarGoal {
+        price_cap_ct: Some(-1000),
+        ..seventy
+    };
+    assert!(
+        hemsd::runtime::quote::charge_now(&last, full, capped, start)
+            .await
+            .is_none()
+    );
+    let unchanged = hemsd::runtime::quote::car(&last, &car, seventy, at)
+        .await
+        .unwrap();
+    assert_eq!(
+        unchanged.extra_eur,
+        Some(0.0),
+        "preview must preserve the baseline"
+    );
+}
+
+/// End-to-end UI timing on the synthetic winter load and an attached 60 kWh EV.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "release performance trial requires Chromium and uv; run just quote-trial"]
+async fn browser_prices_twenty_departure_targets() {
+    use hemsd::runtime::access::LocalAccess;
+    use hemsd::runtime::api::{HomeSources, Local};
+
+    let (registry, household) = registry_with_a_battery_at(0.5);
+    let last = hemsd::runtime::planner::LastInputs::default();
+    let plan = plan_keeping(registry, &household, last.clone())
+        .await
+        .expect("ready planner");
+    let at = plan.created_at;
+    let session = ems_optimizer::model::EvSession {
+        energy_now: ems_core::prelude::Energy::from_kwh(20.0),
+        energy_target: ems_core::prelude::Energy::from_kwh(60.0),
+        capacity: ems_core::prelude::Energy::from_kwh(60.0),
+        max_charge: Power::from_kw(11.0),
+        min_charge: Power::from_kw(4.2),
+        efficiency: 0.9,
+        arrival: None,
+        departure: Slot::containing(at + time::Duration::hours(14)),
+    };
+    let name = household.site.id.to_string();
+    let token = uuid::Uuid::new_v4().to_string();
+    let access = LocalAccess::for_testing(&name, &token);
+    let local = Local::new(
+        Arc::default(),
+        name,
+        None,
+        Default::default(),
+        None,
+        access.clone(),
+        None,
+    )
+    .with_home(HomeSources {
+        car: Arc::new(Mutex::new(Some(session))),
+        last,
+        plan: Arc::new(RwLock::new(Some(plan))),
+        site: Some(Arc::new(household.site)),
+        ..HomeSources::default()
+    });
+    let app = hemsd::runtime::surfaces_over(local, None, access, false);
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = socket.local_addr().unwrap();
+    let service = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../xtask/quote_trial.py");
+    let result = std::process::Command::new("uv")
+        .args(["run", "--script"])
+        .arg(script)
+        .arg(format!("http://{address}"))
+        .env("HEMS_QUOTE_TRIAL_TOKEN", token)
+        .status()
+        .expect("run the UI timing fixture");
+    service.abort();
+    assert!(result.success());
 }

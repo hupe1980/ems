@@ -6,9 +6,8 @@
 //! comes from `GET /v1/home`, behind the same credential every other route is —
 //! so they are served **outside** the access layer, the way `/livez` is.
 
-use axum::http::{HeaderValue, header};
-use axum::response::IntoResponse;
 use axum::routing::get;
+use ems_service::edge::file;
 
 /// The page.
 pub const INDEX_HTML: &str = include_str!("../ui/index.html");
@@ -24,35 +23,6 @@ pub const MANIFEST: &str = include_str!("../ui/manifest.webmanifest");
 /// The service worker: shows a notification the box pushed, in browsers that
 /// do not show one on their own.
 pub const SW_JS: &str = include_str!("../ui/sw.js");
-
-/// A response with a fixed type and the page's security headers.
-fn file(body: &'static str, content_type: &'static str) -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
-            // Everything is served by the box itself; nothing may load from
-            // anywhere else, and the page may not be framed.
-            (
-                header::CONTENT_SECURITY_POLICY,
-                HeaderValue::from_static(
-                    "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; \
-                     style-src-attr 'unsafe-inline'; script-src 'self'; connect-src 'self'; \
-                     frame-ancestors 'none'; base-uri 'none'",
-                ),
-            ),
-            (
-                header::X_CONTENT_TYPE_OPTIONS,
-                HeaderValue::from_static("nosniff"),
-            ),
-            (
-                header::REFERRER_POLICY,
-                HeaderValue::from_static("no-referrer"),
-            ),
-            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
-        ],
-        body,
-    )
-}
 
 /// The page's routes: `/` and its four files.
 pub fn router<S: Clone + Send + Sync + 'static>() -> axum::Router<S> {

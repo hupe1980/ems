@@ -312,24 +312,18 @@ impl Outbox {
         if pending.is_empty() {
             return Ok(0);
         }
-        // The **registers** and not the box's own record of the roof beside
-        // them: `histd` holds what a settlement is computed from, and the
-        // production figure is a KPI the day report already carries (D124).
-        let registers: Vec<ems_grid::mispel::QuarterHour> =
-            pending.iter().map(|r| r.registers).collect();
-        if let Err(error) = self.put_quarter_hours(&registers).await {
+        if let Err(error) = self.put_quarter_hours(&pending).await {
             tracing::warn!(%error, "the fleet did not take the quarter-hour registers; keeping them");
             return Ok(0);
         }
-        let slots: Vec<ems_core::prelude::Slot> = registers.iter().map(|q| q.slot).collect();
-        store.lock().await.mark_forwarded(&[], &slots, now)?;
-        Ok(slots.len())
+        store.lock().await.mark_forwarded(&[], &pending, now)?;
+        Ok(pending.len())
     }
 
     /// One batch of registers, to the endpoint `histd` already serves.
     async fn put_quarter_hours(
         &self,
-        quarters: &[ems_grid::mispel::QuarterHour],
+        quarters: &[ems_grid::mispel::RegisterAssertion],
     ) -> anyhow::Result<()> {
         let response = self
             .client

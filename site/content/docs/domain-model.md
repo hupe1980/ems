@@ -1,10 +1,10 @@
 +++
-title = "The domain model"
-description = "One sign convention, a quarter-hour grid that survives both DST transitions, an electrical tree, and commands that cannot exist without a reason."
+title = "Energy units and site model"
+description = "Read power signs, quarter-hour intervals, electrical topology and device limits."
 weight = 5
 
 [extra]
-group = "The box"
+group = "Control and metering"
 +++
 
 `ems-core` is the vocabulary every other crate speaks. It holds **facts and no
@@ -32,36 +32,15 @@ flowing *into* the thing being measured.
 | Wallbox | charging the car | discharging it (V2H / V2G) |
 | Heat pump, hot-water tank, household load | consumption | — |
 
-The cost is that production is negative, which reads oddly the first time. What
-it buys is one invariant that holds everywhere and is testable:
+`Site::balance_residual` compares the connection reading with the sum of asset powers. A persistent discrepancy can indicate an unmetered load or a reversed sign.
 
 ```text
-grid connection power  ==  Σ (power of every asset behind it)
+grid connection power = sum of asset powers behind the connection
 ```
-
-`Site::balance_residual` is that equation. A residual that is not near zero means
-a meter is missing or mis-signed, and the arbiter reports it rather than
-optimising against a fiction — the failure that otherwise shows up as a house
-that keeps buying electricity it cannot account for.
 
 ## The quarter-hour grid, and the two days a year that are not 96 slots
 
-Fifteen minutes is the settlement grain of the German market and, since the SDAC
-move to 15-minute market time units on **1 October 2025**, also the grain of the
-day-ahead price. So it is the grain the planner works in.
-
-`Slot` is identified by its **UTC** start, and that is deliberate. Every offset
-Europe/Berlin has ever used is a whole number of hours, so a quarter-hour
-boundary in UTC is also one in local time and slot arithmetic stays plain UTC
-arithmetic across both transitions. Two questions genuinely need the time zone:
-
-- which **local day** a slot belongs to — a day has **92, 96 or 100** slots;
-- the **wall-clock** time a slot starts at, which is what a § 14a Modul 3 window
-  or a comfort schedule is written in.
-
-Both go through `metering::calendar`. On the long October day the repeated hour
-is inside the same Modul 3 window twice; on the short March day the skipped hour
-is inside none. Both are what the price sheet means.
+A `Slot` identifies a quarter-hour by its UTC start. Convert to Europe/Berlin when grouping receipts by local date or applying a wall-clock tariff. A local day can contain 92, 96 or 100 slots. In October, two observations labelled 02:15 can represent different instants and different prices.
 
 ## Assets, and what an asset is not
 
@@ -141,31 +120,18 @@ code path somebody has to remember to write — see
 
 ## A command cannot exist without a reason
 
-“Why did my wallbox stop at 17:04?” is the single most common question a home
-energy manager has to answer — to the customer, to the installer, and to the
-network operator, who may ask an operator to show that a § 14a reduction was
-actually carried out `[BK6-22-300 A1 7.2]`.
+Each setpoint carries a reason. Reasons identify the authority responsible for the request so a household can trace a command to its source.
 
-So `Setpoint::new` is the only constructor and it takes a `Reason`. There is no
-way to build a command that cannot say where it came from, and a `Reason` carries
-an `Authority`:
+| Authority | Example |
+|---|---|
+| `Guard` | A grid reduction or equipment limit |
+| `User` | A household pause or charging request |
+| `Cem` | An instruction from a named external energy manager |
+| `Plan` | The current slot’s battery target |
+| `Realtime` | Tracking the slot’s energy through a change in sunlight |
+| `Fallback` | Local self-consumption without a current plan |
 
-| Authority | Set by | Example |
-|---|---|---|
-| `Guard` | a grid rule or a safety limit | `GuardRule::Lpc` — a § 14a reduction |
-| `Realtime` | the arbiter, inside the guard's bounds | tracking the plan's energy through a cloud |
-| `Plan` | the planner | this slot's target for the battery |
-| `User` | the household | “charge now”, a holiday mode |
-
-`Authority` is what makes “the grid limit wins” a **checked property** rather
-than a convention: the ordering is a fact about the type, and the property test
-that asserts it over a thousand random households reads it rather than
-re-deriving it.
-
-`Command` is deliberately a small closed set — an active power, a consumption
-ceiling, a production ceiling, a charging current, a phase count, an operation
-mode, on/off. A ceiling is not a target: the asset is free to use less, which is
-what every § 14a and § 9 EEG limit actually says.
+A production ceiling lets an inverter generate any power up to the specified maximum. A target asks an asset to track a particular value. Drivers declare which forms they can deliver.
 
 ### Non-finite values stop at the boundary
 
@@ -187,8 +153,7 @@ explicit scheme gets the fast eigenvalue's *sign* wrong and the input gain 64 %
 too large, and is only conditionally stable. The exact step is a contraction at
 any step size, carries no discretisation error under the assumption a
 quarter-hour plan already makes, and is still linear in the heat input — which is
-what keeps the planner a linear program. [The planner](@/docs/optimizer.md#the-building-is-discretised-exactly-not-by-explicit-euler)
-has the numbers.
+what keeps the planner a linear program. [Planner thermal model](@/docs/optimizer.md#the-building-is-discretised-exactly-not-by-explicit-euler).
 
 The same `Rc2Discrete` serves the planner, the rule-based baseline it compares
 itself against, and the simulator that answers it. One model, and no way for the

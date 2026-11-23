@@ -1,9 +1,4 @@
-# cargo-deny — licences and advisories.
-#
-# Run with `just deny` or `cargo deny check`. CI runs it on every
-# change; a scheduled job re-runs the advisory half against the unchanged main
-# branch, because an advisory filed on a Wednesday concerns a dependency that
-# was clean on merge day.
+# Dependency policy for CI and scheduled advisory checks.
 
 [graph]
 all-features = true
@@ -16,8 +11,6 @@ targets = [
 ]
 
 [licenses]
-# Permissive only. A copyleft dependency in a crate an operator links into their
-# own product is a decision for them to take deliberately, not one to inherit.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -30,63 +23,22 @@ allow = [
     "MIT-0",
     "CC0-1.0",
     "0BSD",
-    # `webpki-roots`: Mozilla's CA root list, which is *data* rather than code
-    # and carries a data licence.
-    #
-    # It reaches this workspace through **`ems_service::db`**, which builds the
-    # `rustls::RootCertStore` a managed PostgreSQL instance is verified against.
-    # That is the fleet's database link and nothing else. It is *not* what the
-    # HTTP client verifies against — `reqwest` 0.13.0 removed its rustls root
-    # features in favour of `rustls-platform-verifier`, and this comment claimed
-    # otherwise for months. Where an outbound client's anchors come from is now
-    # `ems_service::http::TlsRoots`, written down by an operator.
+    # Mozilla CA root data used by the PostgreSQL TLS client.
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 
+# DataFusion enables Parquet compression through MeterStore.
+[[licenses.exceptions]]
+crate = "libbz2-rs-sys"
+allow = ["bzip2-1.0.6"]
+
 [bans]
-# A second major version of a serialisation or numeric crate is how two halves of
-# the workspace come to disagree about what a number is. Any new duplicate needs
-# an entry here with a reason.
 multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
 
-# One TLS crypto provider, named rather than inherited.
-#
-# `rustls` 0.23 defaults to `aws-lc-rs` and this workspace takes that default —
-# post-quantum key exchange, a FIPS mode if a network operator ever asks for one,
-# and pre-generated bindings for `aarch64-unknown-linux-musl`, which is the
-# gateway box. `ring` is the alternative and it is the one to reach for if a
-# target ever appears that `aws-lc` cannot be built for.
-#
-# Both at once is the state to avoid: `rustls` panics when two providers are
-# compiled in and neither is installed as the process default, and a household
-# box discovering that at the first fleet call is not where it should be found.
-# So the choice is a build failure to change rather than a resolution to notice.
-#
-# ## The rule is stated over the feature, not over the crate
-#
-# It used to be `deny = [{ name = "ring" }]`, and that is the wrong noun. `ring`
-# is a general cryptography library; it is a `rustls` **provider** only when
-# something turns on `rustls/ring`. Banning the crate bans every other use of it
-# in the graph, and the one that matters is real: `parquet` uses `ring` for
-# Parquet modular encryption, reached through `datafusion`'s default features,
-# which is how `meterstore` — the tiered metering store `histd`'s register half
-# is meant to move to — came to be refused by a rule whose stated reason
-# (a second TLS provider) was not true of it. Measured 2026-09-08 on
-# `meterstore` 0.12: `ring` v0.17 is in the tree and the only `rustls` provider
-# is `aws-lc-rs`.
-#
-# So the ban is on the feature that would actually produce the panic. It fails
-# on the state it names and on nothing else, which is the difference between a
-# rule and a proxy for one.
-#
-# The defence in depth is `ems_service::db`, which builds its `ClientConfig` on
-# an explicitly named `aws_lc_rs` provider rather than on whatever the process
-# default happens to be — so even a graph that acquired two would not panic
-# there.
-
+# Enforce aws-lc-rs for TLS. Other cryptographic uses of ring are permitted.
 [[bans.features]]
 crate  = "rustls"
 deny   = ["ring"]
@@ -101,12 +53,11 @@ reason = "the certificate verifier follows the same provider as rustls itself"
 version = 2
 yanked = "deny"
 ignore = [
-    # `chrono` is unmaintained (all versions; no safe upgrade). It is not a
-    # vulnerability, and it is not ours: hems uses `time` throughout, and chrono
-    # reaches the tree only through Apache Arrow under `chronix` (arrow-arith,
-    # arrow-array, arrow-cast, parquet), which neither hems nor chronix can swap.
-    # Revisit when Arrow moves off it; a *vulnerability* advisory against chrono
-    # would not be covered by this entry.
+    # Transitive maintenance notices in MeterStore's pinned DataFusion/Parquet stack.
+    { id = "RUSTSEC-2026-0555", reason = "DataFusion enables Arrow timezone support. Revisit on the next MeterStore Arrow major." },
+    { id = "RUSTSEC-2026-0542", reason = "DataFusion object_store uses humantime. Revisit when MeterStore updates object_store." },
+    { id = "RUSTSEC-2024-0436", reason = "Parquet 58 uses paste at compile time. Revisit when MeterStore updates Parquet." },
+    # Revisit when Arrow changes its time dependency.
     { id = "RUSTSEC-2026-0543", reason = "unmaintained, transitive via Apache Arrow under chronix; hems uses `time`" },
 ]
 

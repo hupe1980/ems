@@ -63,6 +63,29 @@ fn http_metrics() -> (&'static CounterVec, &'static HistogramVec) {
     (requests, duration)
 }
 
+/// A scrape-time gauge owned by one running gateway.
+pub struct RegisteredGauge(prometheus::PullingGauge);
+
+impl Drop for RegisteredGauge {
+    fn drop(&mut self) {
+        let _ = prometheus::unregister(Box::new(self.0.clone()));
+    }
+}
+
+/// Register a measurement until its owning runtime shuts down.
+///
+/// # Errors
+/// Returns the registry error if the gauge cannot be registered.
+pub fn publish_gauge(
+    name: &str,
+    help: &str,
+    read: Box<dyn Fn() -> f64 + Send + Sync>,
+) -> Result<RegisteredGauge, prometheus::Error> {
+    let gauge = prometheus::PullingGauge::new(name, help, read)?;
+    prometheus::register(Box::new(gauge.clone()))?;
+    Ok(RegisteredGauge(gauge))
+}
+
 /// Publish a daemon's connection pool.
 ///
 /// The series an operator needs after the fleet moved to PostgreSQL, and the one
@@ -91,11 +114,10 @@ pub fn publish_pool(pool: &crate::db::Db) {
     // (D196). The name is gone rather than used, because the metric was already
     // right.
     let gauge = |suffix: &str, help: &str, read: Box<dyn Fn() -> f64 + Send + Sync>| {
-        if let Ok(g) = prometheus::PullingGauge::new(format!("hems_db_pool_{suffix}"), help, read) {
-            // Ignored rather than fatal: a process that builds two daemons —
-            // which a test does — registers the same name twice, and a duplicate
-            // registration is not a reason to refuse to start.
-            let _ = prometheus::register(Box::new(g));
+        if let Ok(metric) =
+            prometheus::PullingGauge::new(format!("hems_db_pool_{suffix}"), help, read)
+        {
+            let _ = prometheus::register(Box::new(metric));
         }
     };
 

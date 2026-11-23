@@ -1,55 +1,12 @@
-//! `histd` — the fleet's record of what every box did.
+//! Fleet historian for settlement registers and § 14a control evidence.
 //!
-//! Two records with two different owners and two different reasons to exist, and
-//! keeping them apart is most of the design:
+//! PostgreSQL stores exact decimal register values. Each assertion identifies a
+//! producer revision of a site and quarter hour. The historian records its own
+//! knowledge time so a late correction leaves earlier settlements reproducible.
 //!
-//! **The evidence record.** `[A1 7.2]` says what a § 14a control event has to be
-//! documented with — the ceiling, when it arrived, what was done about it, and a
-//! trace of what the connection point actually drew — and `[A1 7.3]` says it is
-//! kept for **two years**. `ems-grid::evidence` builds it; until now it lived
-//! in memory and died with the process, which is the difference between a record
-//! and an intention.
-//!
-//! **The settlement record.** The quarter-hour meter registers MiSpeL's
-//! Abgrenzung and § 42c's allocation are computed from. Those are quantities
-//! that end on an invoice, so every one of them is stored as an exact decimal
-//! *string* and never as a float: a settlement that went through an `f64`
-//! is a settlement nobody can reproduce.
-//!
-//! # Where this runs, and why it is not on the box
-//!
-//! The edge is a **single** daemon: the § 14a failsafe is a sixty-second
-//! heartbeat and a two-hour minimum, and an IPC hop inside that path buys
-//! nothing. So a gateway runs `hemsd` and nothing else, and the box's own copy
-//! of these records belongs in *its* embedded stores (`chronix`, `redb`) behind
-//! a store-and-forward outbox. This
-//! daemon is the **fleet** side: everybody's two years, queryable, which is what
-//! a network operator's Nachweis and a Data Act export are asked for at scale.
-//!
-//! # PostgreSQL, and what it is a prototype of
-//!
-//! A fleet service needs a server for three reasons a file cannot give: writes
-//! that do not queue behind one lock, more than one replica, and an exact
-//! decimal a settlement quantity can be summed in (D156). Beyond this workspace,
-//! `meterstore` — PostgreSQL for the recent window, Apache Iceberg for history —
-//! is where a fleet holding millions of measuring points ends up; the schema is
-//! written in `mako`'s layout so that move is a second migration directory
-//! rather than a rewrite.
-//!
-//! # The schema is a `migrations/` directory, as in `mako`
-//!
-//! `migrations/NNNN_*.sql`, a new file per revision and never an edit to one
-//! already applied, applied by [`ems_service::db::migrate`] under an advisory
-//! lock so several replicas may start at once. An edited revision is refused by
-//! its checksum rather than used: two years of § 14a evidence is the last record
-//! in this workspace that should be repaired by guesswork.
-//!
-//! # Retention is a column, not a policy
-//!
-//! `[A1 7.3]`'s two years live in `control_event.expires_at`. A retention rule
-//! that is a `DELETE` somebody remembers to run is a rule nobody can query; one
-//! that is a column can be asked "what will you still have in eighteen months",
-//! which is the question a network operator's auditor actually asks.
+//! The separate control-event record includes the requested ceiling, the response
+//! and the connection-point trace `[A1 7.2]`. Its retention deadline follows
+//! `[A1 7.3]`. Gateways keep a local copy and forward it when connected.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::pedantic)]
@@ -67,6 +24,7 @@ pub mod api;
 pub mod config;
 pub mod export;
 pub mod mcp_server;
+mod registers;
 pub mod store;
 
 pub use config::Settings;

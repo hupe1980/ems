@@ -15,14 +15,14 @@ use tokio::sync::RwLock;
 #[command(name = "forecastd", version, about = "The hems weather service")]
 struct Cli {
     /// The configuration file. Absent, or absent from disk, means the defaults.
-    #[arg(long, env = "HEMS_FORECASTD_CONFIG")]
+    #[arg(long, env = "EMS_FORECASTD_CONFIG")]
     config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_FORECASTD")?;
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "EMS_FORECASTD")?;
     ems_service::init_tracing(
         ems_service::identity!(),
         &settings.service.log_filter,

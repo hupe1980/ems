@@ -26,15 +26,8 @@
 //! curtailment: it asks for 5 kW, reads 5 kW, and concludes the roof is doing
 //! its best.
 //!
-//! The common inverter models (101/103) have no way out of that — they publish
-//! what is flowing and nothing about what could. Model **701** does: `ThrotPct`
-//! is how much throttling is in effect, so `W / (1 − ThrotPct)` recovers what
-//! the array would deliver unthrottled. A device that publishes 701 therefore
-//! gets [`DriverCapabilities::reports_available_power`] and one that does not,
-//! does not — and `hemsd` falls back to the nameplate knowing that it is.
-//!
-//! That flag is the whole point of declaring capabilities rather than assuming
-//! them: a household is entitled to know which of the two its box is running on.
+//! Models 101–103 report production. Model 701 also reports a throttle
+//! percentage, enabling a labelled headroom estimate during curtailment.
 
 mod decode;
 pub mod frame;
@@ -301,6 +294,13 @@ impl SunSpec {
 impl Driver for SunSpec {
     fn asset(&self) -> &AssetId {
         &self.asset
+    }
+
+    fn can_limit_production(&self) -> bool {
+        !self.listens_only
+            && self.models.has(123)
+            && self.models.rating().is_some()
+            && self.models.curtail_scale_address().is_some()
     }
 
     fn capabilities(&self) -> DriverCapabilities {

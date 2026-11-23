@@ -1,31 +1,12 @@
-# histd — the fleet's record of what every box did.
-#
-#   histd --config /etc/hems/histd.toml
-#
-# Every value below is the default except the credentials, which have none:
-# what these routes serve is a household's whole consumption record and the
-# evidence a network operator settles on, so "nobody configured it" reads as
-# "nobody may".
-#
-# The environment overrides the file (`HEMS_HISTD_…`), because the file is what
-# somebody wrote down last month and the environment is what an operator reaches
-# for when something is on fire.
-#
-# This file is parsed by a test in `config.rs`, so an example that has drifted
-# from the struct it documents fails the build rather than misleading an
-# operator.
+# Fleet evidence and settlement. Run: histd --config /etc/hems/histd.toml
+# Supported EMS_HISTD_* environment overrides take precedence.
 
-# How often to delete what `[A1 7.3]`'s two years have released, seconds.
-# Daily: two years is not a deadline anybody is racing. It is a top-level key, so
-# it is above every table — in TOML a bare key after `[service]` belongs to
-# `service`.
+# How often to sweep expired evidence, in seconds.
 retention_sweep_s = 86400
 
 # The day the European Commission approved § 19 Abs. 3c EEG under state-aid
 # law. The MiSpeL Pauschaloption applies from the first day of the following
-# month and not at all before it (Tenorziffer 9 b). No approval had been
-# published when this was written, so it stays commented out until there is
-# one; a Pauschal site is refused with that reason meanwhile.
+# month and not at all before it (Tenorziffer 9 b). Set only when you can supply the published approval date.
 # mispel_state_aid_approved_on = "2027-02-10"
 
 # ── The shell ────────────────────────────────────────────────────────────────
@@ -47,7 +28,7 @@ shutdown_grace_s = 20
 # The **reference**, never the credential. A PostgreSQL URL carries a password,
 # and one in a configuration file is one in an image, in a backup, and
 # eventually in a repository.
-url = "env:HEMS_HISTD_DATABASE_URL"
+url = "env:EMS_HISTD_DATABASE_URL"
 # Per replica. `daemons × replicas × pool_size` has to fit inside the server's
 # own `max_connections`: PostgreSQL costs a backend process per connection.
 pool_size = 10
@@ -69,7 +50,7 @@ tls = true
 # One token per box, and a box may write only its **own** site. The token is a
 # reference to a secret for the same reason the database URL is.
 [site_tokens]
-"reference-household" = "env:HEMS_HISTD_TOKEN_REFERENCE_HOUSEHOLD"
+"reference-household" = "env:EMS_HISTD_TOKEN_REFERENCE_HOUSEHOLD"
 
 # Which households each tenant covers, for a shared deployment. An operator
 # scoped to a tenant reads that tenant's households and no others; the reach of
@@ -81,7 +62,7 @@ tls = true
 # household this daemon knows — correct for a single-tenant deployment and a
 # cross-tenant read in any other, which is why it has to be written down.
 [[operators]]
-token  = "env:HEMS_HISTD_OPERATOR_TOKEN"
+token  = "env:EMS_HISTD_OPERATOR_TOKEN"
 tenant = "*"
 
 # ── Which MiSpeL option each site settles under ──────────────────────────────
@@ -134,3 +115,8 @@ operator_consent = true
 # `/mcp` what the REST route would refuse it.
 [mcp]
 enabled = false
+
+# Commission before the site submits registers. Replace both example identifiers.
+# [register_meters.haus-1]
+# malo = "12345678905"
+# operator = "9900000000003"

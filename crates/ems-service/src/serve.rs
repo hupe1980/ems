@@ -115,6 +115,24 @@ impl Server {
     /// # Errors
     /// As [`Server::run`].
     pub async fn run_until(self, signal: Shutdown) -> Result<(), ServerError> {
+        let listener = tokio::net::TcpListener::bind(self.settings.listen)
+            .await
+            .map_err(|source| ServerError::Bind {
+                address: self.settings.listen,
+                source,
+            })?;
+        self.serve_on(listener, signal).await
+    }
+
+    /// Serve the configured HTTP or HTTPS routes on an already bound listener.
+    ///
+    /// # Errors
+    /// Returns an error if serving fails.
+    pub async fn serve_on(
+        self,
+        listener: tokio::net::TcpListener,
+        signal: Shutdown,
+    ) -> Result<(), ServerError> {
         let Self {
             settings,
             health: _,
@@ -123,12 +141,6 @@ impl Server {
             tls,
         } = self;
 
-        let listener = tokio::net::TcpListener::bind(settings.listen)
-            .await
-            .map_err(|source| ServerError::Bind {
-                address: settings.listen,
-                source,
-            })?;
         let bound = listener.local_addr().unwrap_or(settings.listen);
         tracing::info!(%bound, "listening");
 

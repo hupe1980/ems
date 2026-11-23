@@ -1,6 +1,6 @@
 [package]
 name        = "hemsd"
-description = "The hems edge daemon — the guard, arbiter and planner of one household, the page it shows the people who live there, and a simulated day to run them against"
+description = "Household energy gateway with local control, planning and a browser interface"
 publish     = false
 version.workspace      = true
 authors.workspace      = true
@@ -19,6 +19,9 @@ name = "hemsd"
 path = "src/lib.rs"
 
 [dependencies]
+uuid = { workspace = true }
+tokio-tungstenite = { version = "0.29", optional = true, default-features = false, features = ["connect"] }
+futures-util = { version = "0.3", optional = true, features = ["sink"] }
 ems-core      = { workspace = true }
 # Both protocols: this is the process that owns the sockets, so it is the one
 # place the transports are allowed to exist.
@@ -34,15 +37,7 @@ ems-optimizer = { workspace = true, features = ["highs"] }
 ems-realtime  = { workspace = true }
 ems-service   = { workspace = true, features = ["tls"] }
 
-# **The I/O half of EEBUS, which `ems-drv` may not have.** That crate is on the
-# purity list and owns the SPINE engine, so what crosses its edge is a datagram
-# (D88); everything under one — the node, TLS 1.2 with mutual authentication,
-# the SHIP handshake, the key the SKI follows, `_ship._tcp` — is the daemon's.
-# `aws-lc-rs` rather than `ring`, named rather than inherited: the provider is
-# process-global, so picking one is the binary's job (D84).
-# `conformance` carries the harness `tests/conformance.rs` drives over the seven
-# device-level procedures, and is named only because the workspace takes the
-# crate with `default-features = false`.
+# SHIP transport and mutual TLS run in the daemon. The conformance harness exercises the device procedures.
 eebus        = { workspace = true, features = ["runtime", "mdns", "aws-lc-rs", "conformance"] }
 if-addrs     = { workspace = true }
 ems-sim       = { workspace = true }
@@ -107,6 +102,7 @@ tokio-modbus = { workspace = true, optional = true }
 sunspec      = { workspace = true, optional = true }
 
 [features]
+matter = ["ems-drv/matter", "dep:tokio-tungstenite", "dep:futures-util"]
 # `hemsd house`: a simulated household on the wire — SunSpec devices over Modbus
 # TCP and a Steuerbox over SHIP — for a real `hemsd run` to manage.
 house = ["dep:tokio-modbus", "dep:sunspec"]
@@ -118,15 +114,6 @@ house = ["dep:tokio-modbus", "dep:sunspec"]
 # opinion about the wire — which is the whole reason `ems-flex` takes the
 # generated types in the first place.
 #
-# The **`tokio` feature** here and nowhere else: it carries `io::Driver` and
-# `io::WebSocket`, so the test's CEM is a real session driving a real socket. A
-# dev-dependency, so the daemon itself never links a WebSocket client — the box
-# is the *server* and axum already binds its socket. No TLS feature: the test
-# dials `ws://` on loopback, and asking for one would drag a second `rustls`
-# provider past `deny.toml`.
-#
-# No `tokio-tungstenite` edge either: the socket type has a name of its own,
-# `s2_kit::io::Dialled`. Spelling `MaybeTlsStream<TcpStream>` here instead would
-# tie this manifest to whatever version `s2-kit` resolves, and a drift shows up
-# as two distinct `MaybeTlsStream`s with an identical-looking type error.
+# Enable the S2 reference client's socket only in tests. Production S2 uses
+# the gateway's Axum listener. The optional Matter reader dials loopback.
 s2-kit   = { workspace = true, features = ["tokio"] }

@@ -1,6 +1,6 @@
 [package]
 name        = "histd"
-description = "The history service: the two years of § 14a evidence the Festlegung requires, the quarter-hour registers MiSpeL and § 42c settle from, and the Data Act export a household is entitled to"
+description = "Historian for meter registers, settlement evidence and site data exports"
 publish     = false
 version.workspace      = true
 authors.workspace      = true
@@ -11,6 +11,9 @@ homepage.workspace     = true
 rust-version.workspace = true
 
 [dependencies]
+meterstore = { version = "=0.18.1", default-features = false }
+datafusion-common = "54.1"
+url = "2"
 ems-core    = { workspace = true }
 ems-grid    = { workspace = true }
 metering     = { workspace = true }

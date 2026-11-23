@@ -93,24 +93,8 @@ pub struct EvSession {
     /// plan that trickles 500 W into a wallbox for six hours and is surprised
     /// when the car is empty in the morning.
     pub min_charge: Power,
-    // There is deliberately no single-phase range here, and the absence is a
-    // decision rather than an omission.
-    //
-    // A charge point that can drop to one conductor has two operating ranges —
-    // 4,14 to 11 kW on three, 1,38 to 3,7 kW on one — and modelling both needs a
-    // second binary per slot plus a variable per mode to carry the different
-    // efficiencies. It was built, measured, and removed: on the reference winter
-    // day it was worth **one cent** and cost **four times the solve time**
-    // (10 s → 40 s for a simulated day), because the extra integrality lands
-    // exactly in the slots a § 14a event makes hard.
-    //
-    // The conductor count is the arbiter's decision. It sees the measured
-    // surplus rather than a forecast, it decides in a pure function that costs
-    // nothing, and it can change its mind inside a slot — see
-    // `ems_realtime::phases`. What the planner loses is the ability to schedule
-    // a session under a ceiling too tight for three conductors, which is a real
-    // case and is on the roadmap as a reason to soften the charging deadline
-    // rather than to make every solve four times slower.
+    // The planner uses one charging range. The runtime arbiter selects the
+    // phase count from measured surplus and can switch within the slot.
     /// Charging efficiency.
     pub efficiency: f64,
     /// The first slot the car is plugged in for.
@@ -996,6 +980,10 @@ pub struct Problem<'a> {
     pub battery: Option<BatteryModel>,
     /// The car, if one is plugged in.
     pub ev: Option<EvSession>,
+    /// Highest known all-in import price at which the car may charge, ct/kWh.
+    pub ev_price_cap_ct: Option<i32>,
+    /// Fixed slot-average draws for a preview of charging immediately at full power.
+    pub ev_draw: &'a [Power],
     /// The building and its heat pump, if there is one to plan for.
     pub thermal: Option<ThermalModel>,
     /// The hot-water tank, if there is one.
@@ -1580,6 +1568,8 @@ impl<'a> Problem<'a> {
             load,
             battery: None,
             ev: None,
+            ev_price_cap_ct: None,
+            ev_draw: &[],
             thermal: None,
             dhw: None,
             dhw_target: None,
@@ -1655,6 +1645,13 @@ impl<'a> Problem<'a> {
         self.outdoor_c = outdoor_c;
         self.window_w_per_m2 = window_w_per_m2;
         self
+    }
+
+    /// Whether charging is allowed by the household’s price cap in this slot.
+    #[must_use]
+    pub fn ev_price_allows(&self, slot: Slot) -> bool {
+        self.ev_price_cap_ct
+            .is_none_or(|cap| self.prices.within_cap(slot, cap))
     }
 
     /// Add a hot-water tank and the heat the household will draw from it.

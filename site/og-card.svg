@@ -11,11 +11,11 @@
     <path d="M52 0 0 76h29.3l-8.7 54L76 72.6H45.6z" fill="#ff8a4c"/>
   </g>
   <text x="180" y="196" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
-        font-size="104" font-weight="700" fill="#ffffff" letter-spacing="-3">hems</text>
+        font-size="104" font-weight="700" fill="#ffffff" letter-spacing="-3">ems</text>
   <text x="88" y="316" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
-        font-size="42" font-weight="600" fill="#e7ebf1">Home energy management for the German grid</text>
+        font-size="42" font-weight="600" fill="#e7ebf1">Energy management for the German grid</text>
   <text x="88" y="382" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
-        font-size="30" fill="#95a1b2">§ 14a EnWG · § 9 EEG · MiSpeL · Modul 3 — executable, cited rules</text>
+        font-size="30" fill="#95a1b2">Household control · Building charging · Industrial peak demand</text>
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="26" fill="#ff8a4c">
     <text x="88" y="486">EEBUS</text>
     <text x="228" y="486">S2 / EN 50491-12-2</text>

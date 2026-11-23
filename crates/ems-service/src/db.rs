@@ -115,7 +115,7 @@ pub enum DbError {
 pub struct DbSettings {
     /// The connection string, as a reference to a credential.
     ///
-    /// `env:HEMS_HISTD_DATABASE_URL` in a deployment. A PostgreSQL URL carries a
+    /// `env:EMS_HISTD_DATABASE_URL` in a deployment. A PostgreSQL URL carries a
     /// password, so it is a [`Secret`] for the reason every other credential in
     /// this workspace is: one in a configuration file is one in an image, in a
     /// backup, and eventually in a repository (D82).

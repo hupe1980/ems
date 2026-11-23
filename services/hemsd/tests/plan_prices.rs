@@ -136,3 +136,42 @@ fn hot_water_asked_for_by_six_is_there_at_six() {
     assert_eq!(seventy.verdict, Verdict::Impossible);
     assert_eq!(seventy.reachable_c, Some(tank.t_max_c));
 }
+
+#[test]
+fn both_day_costs_include_heat_missing_at_the_deadline_once() {
+    use ems_core::prelude::Power;
+    use hemsd::scenario::HOT_WATER_SHORTFALL_EUR_PER_KWH as price;
+
+    let mut case = Scenario::winter_evening_deadline(HouseholdConfig::default());
+    case.config.dhw.as_mut().unwrap().heater = Power::from_kw(0.005);
+    case.config.dishwasher = None;
+    case.ev = None;
+    let free = hemsd::scenario::run(&case).expect("reference day");
+    case.tank_goal = Some(TankGoal {
+        target_c: 60.0,
+        by_minute: 15,
+    });
+    let (day, recording) = run_recorded(&case).expect("reference day with deadline");
+    let tank = recording
+        .site
+        .assets
+        .iter()
+        .find_map(|a| match a {
+            Asset::Dhw(t) => Some(t),
+            _ => None,
+        })
+        .unwrap();
+    // Each frame carries the state after its tick. The fifteenth tick closes 00:15.
+    let missing = tank.stored_heat(60.0).kwh() - tank_at(&recording, 14);
+    assert!(missing > 1.0);
+    assert!((day.cost.unserved_eur - (day.cold_water_kwh + missing) * price).abs() < 1e-6);
+    // This undersized thermostat is continuously on before and after setting
+    // the goal. Its additional cost is exactly the missed heat at 00:15.
+    // Even if one controller keeps the heater off for the entire quarter,
+    // its 5 W heater can deliver at most this much extra heat.
+    let max_difference = 0.005 * 0.25 * tank.cop * price;
+    assert!(
+        (day.baseline.unserved_eur - free.baseline.unserved_eur - missing * price).abs()
+            <= max_difference + 1e-6
+    );
+}

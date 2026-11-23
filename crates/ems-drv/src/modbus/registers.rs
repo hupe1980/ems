@@ -1,61 +1,13 @@
-//! A vendor's own register map, declared rather than discovered.
+//! Modbus driver for a vendor-specified register map.
 //!
-//! [`SunSpec`](super::SunSpec) works because SunSpec is a *standard*: a device
-//! publishes a model list and the driver walks it, so nothing has to be typed
-//! into a file and nothing can be typed wrongly. Most of the German market is
-//! not that. A Stiebel, Vaillant, Viessmann or Bosch heat pump answers Modbus
-//! all day and publishes no model list at all — the register numbers are in a
-//! PDF, and every unit's are different.
+//! A [`Point`] declares the register space (holding or input), address,
+//! word width and order, scale and destination measurement field. Use the
+//! manufacturer’s map for the exact model. The same numerical address can
+//! identify different values in the two register spaces.
 //!
-//! This is the driver for that case, and it exists because of one measurement.
-//! The planner models the building, learns it from the household's own record
-//! and can start the compressor over EEBUS OHPCF — and all of it is gated on an
-//! **indoor temperature**, which no EEBUS use case carries and which a heat pump
-//! has been measuring in a holding register the whole time.
-//!
-//! # What is declared, and why each part has to be
-//!
-//! A point is a register number, a width, a **space**, a scale and which field
-//! of a [`Measurement`] it becomes. None of the five is guessable:
-//!
-//! * the **space** because holding and input registers are separately addressed,
-//!   and most vendors put sensors in the input space that SunSpec never touches;
-//! * the **width and word order** because a 32-bit value spans two registers and
-//!   vendors disagree about which comes first — the same bytes read the other
-//!   way round are a plausible number several orders of magnitude out;
-//! * the **scale** because a temperature is published in tenths of a kelvin as
-//!   often as in kelvin, and a sign flip is how a vendor that reports generation
-//!   as positive is turned into this workspace's load convention.
-//!
-//! # What it writes
-//!
-//! Nothing, unless a household declares it. A register map that can write
-//! anything is one that can start a compressor from a number somebody typed into
-//! a configuration file, and the consequence of a typo is not a bad reading but
-//! a heat pump doing something nobody asked for — so commanding belongs to a
-//! protocol that says what a value *means*, which is
-//! [`eebus_heat_pump`](crate::eebus_heat_pump)'s job.
-//!
-//! One command has no such protocol: a **direction**. `eebus` 0.9's twelve HVAC
-//! use cases are temperature and system-function measurement and control, and
-//! none of them reverses a refrigerant circuit, so a reversible unit needs a
-//! vendor register or its plan cannot be carried out — the compressor runs
-//! whichever way its own thermostat last chose, the meter agrees with the
-//! commanded power, and the day report claims a saving nobody made.
-//!
-//! So a household may declare writes, under three rules:
-//!
-//! * **A separate declaration.** [`Write`] is its own list, not a flag on
-//!   [`Point`], so no typo in a read point can turn it into a write.
-//! * **Only declared values.** A write names its command and enumerates the raw
-//!   values it may take — `heat = 1, cool = 2`. Nothing is computed, so there is
-//!   no scale to get wrong.
-//! * **One register, sixteen bits.** A mode register is never 32-bit, and
-//!   refusing width removes the word-order trap.
-//!
-//! Continuous setpoints — a consumption ceiling in watts — are deliberately not
-//! writable: that is where a scale error is dangerous, and where EEBUS LPC and
-//! SunSpec 704/705 already work.
+//! Maps are read-only by default. A separate [`Write`] declaration can
+//! drive a thermal-mode register, using explicit 16-bit raw values for
+//! heating and cooling. Measurement scales never apply to those values.
 
 use ems_core::prelude::{AssetId, Measurement, Power, Soc};
 use ems_core::setpoint::Command;

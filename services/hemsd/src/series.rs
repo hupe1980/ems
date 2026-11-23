@@ -9,7 +9,7 @@
 //! # Two tiers, and the reader is told which
 //!
 //! Seconds are a *diagnostic* window measured in days; a store's worth of them
-//! is rolled into quarter-hour means kept for three years, which is what makes
+//! is rolled into quarter-hour summaries kept for three years, which is what makes
 //! "this January against last January" a question the box answers without a
 //! fleet behind it. [`Series::window`] picks the tier and **says which one
 //! answered**: a year at one second is 31 million readings nobody asked for, and
@@ -38,7 +38,7 @@
 //!
 //! # One measurement, one tag
 //!
-//! `power{point=…}` with a single `watts` field. A tag per *point of
+//! `power_observations{point=…}` with a single `watts` field. A tag per *point of
 //! measurement* rather than a field per asset, because a household adds and
 //! removes assets and a schema that grew a column for each would make the series
 //! of a site that changed unreadable against the series of one that did not.
@@ -63,11 +63,14 @@ use time::OffsetDateTime;
 fn nanos(at: OffsetDateTime) -> Timestamp {
     // Saturating rather than `as`: an instant outside `i64` nanoseconds is the
     // year 2262, and a silent wrap would put a reading in 1823.
-    i64::try_from(at.unix_timestamp_nanos()).unwrap_or(i64::MAX)
+    let ns = at.unix_timestamp_nanos();
+    i64::try_from(ns).unwrap_or(if ns < 0 { i64::MIN } else { i64::MAX })
 }
 
 /// The measurement every point is written under.
-const MEASUREMENT: &str = "power";
+// Before 0.8 the `power` series sampled the registry on every control tick.
+// Its rows cannot establish how many distinct observations reached the meter.
+const MEASUREMENT: &str = "power_observations";
 
 /// The tag naming the point of measurement.
 const POINT: &str = "point";
@@ -76,7 +79,7 @@ const POINT: &str = "point";
 const WATTS: &str = "watts";
 
 /// The measurement the quarter-hour tier is written to.
-const QUARTER_HOURS: &str = "power_15m";
+const QUARTER_HOURS: &str = "power_observations_15m_u64";
 
 /// The name the rollup is registered under.
 const ROLLUP: &str = "quarter-hours";
@@ -139,15 +142,24 @@ pub struct Reading {
     #[serde(with = "time::serde::rfc3339")]
     #[schemars(with = "String")]
     pub at: OffsetDateTime,
-    /// What was measured, watts, load convention.
+    /// Signed watts. At quarter-hour resolution this is the arithmetic sample mean.
     pub watts: f64,
+    /// Lowest observed power in the quarter, watts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_watts: Option<f64>,
+    /// Highest observed power in the quarter, watts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_watts: Option<f64>,
+    /// Number of observations contributing to the quarter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub samples: Option<u64>,
 }
 
 /// How closely spaced the readings in a window are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Resolution {
-    /// Every control tick, as the box measured it.
+    /// Individual timestamped observations.
     Seconds,
     /// The mean over a quarter hour — the grain everything in this workspace
     /// settles on, and the only one that survives past the raw retention.
@@ -217,9 +229,8 @@ impl Series {
     /// the alignment is a decision rather than a coincidence, and so a coarser
     /// tier declared here later inherits the right calendar.
     ///
-    /// The **mean**, because the field is a power: a quarter hour's average watt
-    /// is the energy it moved divided by its length, and summing an instantaneous
-    /// power over 900 samples would be a number in no unit at all.
+    /// The mean weights each observed power equally. The extrema preserve short
+    /// excursions and the count reports how many observations support the mean.
     ///
     /// Materialising is the store's own — compaction runs it, and retention will
     /// not drop raw data a tier has not yet aggregated — so there is no sweep for
@@ -232,61 +243,68 @@ impl Series {
             .every("15m")
             .timezone("Europe/Berlin")
             .aggregation(chronix::RollupAggFn::Avg)
+            .aggregation(chronix::RollupAggFn::Min)
+            .aggregation(chronix::RollupAggFn::Max)
+            .aggregation(chronix::RollupAggFn::Count)
             .group_by(POINT)
             .retention_ns(QUARTER_HOUR_YEARS * 365 * 24 * 3_600 * 1_000_000_000)
             .build()
             .map_err(|e| SeriesError::Store(e.to_string()))?;
 
-        // The declaration is persisted in the store, so every run after the
-        // first finds its own. Re-declaring is refused, which makes this a read
-        // rather than an error to swallow — and the comparison is what lets a
-        // *changed* tier take effect: a box upgraded to a different bucket or a
-        // longer retention would otherwise keep aggregating to the old one for
-        // three years with nothing to say so.
-        let existing = self
-            .db
-            .list_rollups()
-            .map_err(|e| SeriesError::Store(e.to_string()))?
-            .into_iter()
-            .find(|declared| declared.name == ROLLUP);
-        if let Some(declared) = existing {
-            if same(&declared, &wanted) {
-                return Ok(());
-            }
-            tracing::info!(
-                rollup = ROLLUP,
-                "the quarter-hour tier was declared differently by an earlier version; replacing it"
-            );
-            self.db
-                .delete_rollup(ROLLUP)
-                .map_err(|e| SeriesError::Store(e.to_string()))?;
-        }
         self.db
-            .create_rollup(wanted)
+            .ensure_rollup(wanted)
             .map_err(|e| SeriesError::Store(e.to_string()))
     }
 
-    /// Record one tick's worth of measurements.
-    ///
-    /// A **batch**, because they share an instant: written one at a time they
-    /// would be one WAL append each for readings that are one observation, and a
-    /// reader asking what the house was doing at 14:32:05 could see half of it.
+    /// Record simultaneous diagnostic observations.
     ///
     /// # Errors
-    /// [`SeriesError::Store`] where the write fails.
+    /// Returns an error if any observation was rejected.
     pub fn record(&self, at: OffsetDateTime, points: &[(&str, Power)]) -> Result<(), SeriesError> {
-        if points.is_empty() {
-            return Ok(());
+        self.record_points(points.iter().map(|&(point, power)| (point, power, at)))
+    }
+
+    /// Store driver reports at their observation times. The guard calculation
+    /// has no source meter and carries the time of the control decision.
+    pub(crate) fn record_events(
+        &self,
+        events: &[(AssetId, ems_drv::DriverEvent)],
+        grid_meter: Option<&AssetId>,
+        netzwirksam: Power,
+        now: OffsetDateTime,
+    ) -> Result<(), SeriesError> {
+        let observations = events.iter().filter_map(|(asset, event)| {
+            let ems_drv::DriverEvent::Measured(m) = event else {
+                return None;
+            };
+            let power = m.fresh_power(now, crate::drivers::SILENCE)?;
+            if m.at - now > crate::drivers::SILENCE {
+                return None;
+            }
+            let point = if Some(asset) == grid_meter {
+                GRID
+            } else {
+                asset.as_str()
+            };
+            Some((point, power, m.at))
+        });
+        self.record_points(observations.chain([(NETZWIRKSAM, netzwirksam, now)]))
+    }
+
+    fn record_points<'a>(
+        &self,
+        points: impl Iterator<Item = (&'a str, Power, OffsetDateTime)>,
+    ) -> Result<(), SeriesError> {
+        let batch = points
+            .map(|(name, power, at)| Self::point(name, power, nanos(at)))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !batch.is_empty() {
+            self.db
+                .insert_batch(&batch)
+                .and_then(chronix::InsertResult::into_complete)
+                .map_err(|e| SeriesError::Store(e.to_string()))?;
         }
-        let timestamp = nanos(at);
-        let mut batch = Vec::with_capacity(points.len());
-        for (point, power) in points {
-            batch.push(Self::point(point, *power, timestamp)?);
-        }
-        self.db
-            .insert_batch(&batch)
-            .map(|_| ())
-            .map_err(|e| SeriesError::Store(e.to_string()))
+        Ok(())
     }
 
     fn point(point: &str, power: Power, timestamp: Timestamp) -> Result<Point, SeriesError> {
@@ -328,9 +346,26 @@ impl Series {
         from: OffsetDateTime,
         to: OffsetDateTime,
     ) -> Result<Window, SeriesError> {
-        // Once: the rule reads the clock, so asking twice could label a window
-        // with a tier that did not answer it.
-        let resolution = self.resolution_for(from, to);
+        self.window_at_resolution(point, from, to, None)
+    }
+
+    /// Read a diagnostic window, optionally requesting quarter-hour summaries
+    /// for a short interval. The raw retention and maximum raw span still apply.
+    ///
+    /// # Errors
+    /// Returns a storage error if the query fails.
+    pub fn window_at_resolution(
+        &self,
+        point: &str,
+        from: OffsetDateTime,
+        to: OffsetDateTime,
+        requested: Option<Resolution>,
+    ) -> Result<Window, SeriesError> {
+        let resolution = if requested == Some(Resolution::QuarterHours) {
+            Resolution::QuarterHours
+        } else {
+            self.resolution_for(from, to)
+        };
         let readings = match resolution {
             Resolution::Seconds => self.raw(point, from, to)?,
             Resolution::QuarterHours => self.quarter_hours(point, from, to)?,
@@ -392,46 +427,28 @@ impl Series {
         Ok(readings(&batch, WATTS))
     }
 
-    /// The quarter-hour tier, through the store's **rollup view** rather than a
-    /// plain read of the target measurement.
-    ///
-    /// The materialised tier lags the newest write by the out-of-order window —
-    /// a couple of hours on this profile — because a bucket is aggregated only
-    /// once nothing can still land in it. Reading the target measurement
-    /// directly would therefore end a thirty-day chart two hours early, which a
-    /// household reads as an outage. The view splices the buckets above the
-    /// watermark on, computed from the raw data in the same pass with the same
-    /// accumulator, so the recent half and the stored half cannot disagree.
-    ///
-    /// The filter goes to the **store**, not to this loop.
-    ///
-    /// It used to answer for every point at once and the tag was matched here,
-    /// which was bounded — a house has a handful of points of measurement — and
-    /// was still the whole tag-group set materialised to read one series. 0.6's
-    /// `rollup_where` takes the filter, and it is worth taking for a reason
-    /// beyond the copying: it is refused by name if the key is not one of the
-    /// rollup's `group_by_tags`. A filter on any other key would narrow the live
-    /// half — read from the source, which still carries every tag — and match
-    /// nothing in the materialised half, so the answer would be short on one
-    /// side of the watermark and whole on the other. That is a defect this
-    /// daemon could not have detected in its own filtering, because both halves
-    /// arrive as one batch by the time it sees them. D198.
+    /// Read complete buckets from the materialised tier and its live tail.
     fn quarter_hours(
         &self,
         point: &str,
         from: OffsetDateTime,
         to: OffsetDateTime,
     ) -> Result<Vec<Reading>, SeriesError> {
+        // EMS windows exclude the end. Chronix includes both bucket starts.
+        let last = nanos(to).saturating_sub(1);
         let batch = self
             .db
-            .rollup_where(
-                ROLLUP,
-                nanos(from),
-                nanos(to).saturating_sub(1),
-                &[(POINT, point)],
-            )
+            .rollup_where(ROLLUP, nanos(from), last, &[(POINT, point)])
             .map_err(|e| SeriesError::Store(e.to_string()))?;
         Ok(readings(&batch, WATTS_MEAN))
+    }
+
+    /// Whether a stored quarter needs recomputing after its source data changed.
+    pub(crate) fn repair_pending(&self) -> Result<bool, SeriesError> {
+        self.db
+            .rollup_state(ROLLUP)
+            .map(|state| !state.invalid.is_empty())
+            .map_err(|error| SeriesError::Store(error.to_string()))
     }
 
     /// Flush and release the directory lock.
@@ -447,20 +464,6 @@ impl Series {
             .close()
             .map_err(|e| SeriesError::Store(e.to_string()))
     }
-}
-
-/// Whether a rollup already declared is the one this version wants.
-///
-/// Field by field rather than a derived comparison, because `RollupConfig` has
-/// none — and the name is deliberately not compared, since it is what identified
-/// the two as the same tier.
-fn same(declared: &chronix::RollupConfig, wanted: &chronix::RollupConfig) -> bool {
-    declared.source_measurement == wanted.source_measurement
-        && declared.target_measurement == wanted.target_measurement
-        && declared.bucket == wanted.bucket
-        && declared.aggregations == wanted.aggregations
-        && declared.group_by_tags == wanted.group_by_tags
-        && declared.retention_ns == wanted.retention_ns
 }
 
 /// Turn one Arrow batch into readings.
@@ -486,44 +489,28 @@ fn readings(batch: &RecordBatch, field: &str) -> Vec<Reading> {
     let Some(watts) = batch.column_by_name(field) else {
         return Vec::new();
     };
-    // Everything in the batch belongs to the caller. **Both** paths now filter
-    // in the store — the seconds tier through the query's own `.tag(…)` and the
-    // quarter-hour tier through `rollup_where` (D198) — so this took an
-    // `Option<&str>` that every call site passed `None`. A parameter nothing
-    // supplies is a filter nothing applies, and leaving it in would have left a
-    // reader believing the tag was still being checked here.
+    let minimum = batch.column_by_name("watts_min");
+    let maximum = batch.column_by_name("watts_max");
+    let count = batch
+        .column_by_name("watts_count")
+        .and_then(|c| c.as_any().downcast_ref::<arrow::array::UInt64Array>());
+    let number = |column: Option<&arrow::array::ArrayRef>, row| {
+        column.and_then(|c| chronix_query::extract_f64(c.as_ref(), row))
+    };
     (0..batch.num_rows())
         .filter_map(|row| {
             let value = chronix_query::extract_f64(watts.as_ref(), row)?;
             let at =
                 OffsetDateTime::from_unix_timestamp_nanos(i128::from(times.value(row))).ok()?;
-            Some(Reading { at, watts: value })
+            Some(Reading {
+                at,
+                watts: value,
+                min_watts: number(minimum, row),
+                max_watts: number(maximum, row),
+                samples: count.filter(|c| c.is_valid(row)).map(|c| c.value(row)),
+            })
         })
         .collect()
-}
-
-/// What one tick of the control loop measured, ready for [`Series::record`].
-///
-/// Assembled here rather than in the control loop so that what is written and
-/// what is read are decided in one place — the alternative is a caller that
-/// records `grid` and a reader that asks for `mains`.
-#[must_use]
-pub fn tick_points(
-    grid: Option<Power>,
-    netzwirksam: Option<Power>,
-    assets: &[(AssetId, Power)],
-) -> Vec<(&str, Power)> {
-    let mut points: Vec<(&str, Power)> = Vec::with_capacity(assets.len() + 2);
-    if let Some(grid) = grid {
-        points.push((GRID, grid));
-    }
-    if let Some(netzwirksam) = netzwirksam {
-        points.push((NETZWIRKSAM, netzwirksam));
-    }
-    for (asset, power) in assets {
-        points.push((asset.as_str(), *power));
-    }
-    points
 }
 
 #[cfg(test)]
@@ -825,6 +812,38 @@ mod tests {
         }
         let before = series.window(GRID, start, now).expect("a window");
 
+        let oldest = before.readings[0];
+        assert_eq!(
+            (oldest.min_watts, oldest.max_watts, oldest.samples),
+            (Some(0.), Some(1000.), Some(2))
+        );
+        let first_bucket = || {
+            series
+                .window_at_resolution(
+                    GRID,
+                    start,
+                    start + time::Duration::seconds(1),
+                    Some(Resolution::QuarterHours),
+                )
+                .expect("one quarter-hour start")
+                .readings
+        };
+        assert_eq!(first_bucket(), vec![oldest]);
+        let empty_schema = || {
+            let read = |point| {
+                series
+                    .db
+                    .rollup_where(ROLLUP, nanos(start), nanos(start), &[(POINT, point)])
+                    .unwrap()
+            };
+            let empty = read("absent");
+            assert_eq!(empty.num_rows(), 0);
+            let populated = read(GRID);
+            assert_eq!(populated.num_rows(), 1);
+            assert_eq!(empty.schema(), populated.schema());
+            empty.schema()
+        };
+        let schema = empty_schema();
         let written = series
             .db
             .materialise_rollups()
@@ -834,11 +853,35 @@ mod tests {
             "nothing was materialised, so this proves nothing about the stored half"
         );
 
+        assert_eq!(empty_schema(), schema);
+        assert_eq!(first_bucket(), vec![oldest]);
         let after = series.window(GRID, start, now).expect("a window");
         assert_eq!(
             after.readings, before.readings,
             "the stored half and the live half disagree about the same quarter hours"
         );
+        assert!(
+            !series.repair_pending().unwrap(),
+            "the live tail is healthy"
+        );
+        let late = Series::point(
+            GRID,
+            Power::new(2000.),
+            nanos(start + time::Duration::minutes(10)),
+        )
+        .unwrap();
+        series
+            .db
+            .backfill(&[late])
+            .unwrap()
+            .into_complete()
+            .unwrap();
+        assert!(series.repair_pending().unwrap());
+        assert!(series.db.materialise_rollups().unwrap() > 0);
+        assert!(!series.repair_pending().unwrap());
+        let repaired = first_bucket();
+        assert_eq!(repaired.len(), 1);
+        assert_eq!((repaired[0].samples, repaired[0].watts), (Some(3), 1000.));
         series.close().expect("a clean close");
     }
 
@@ -893,7 +936,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tier_declared_differently_is_replaced() {
+    fn conflicting_tier_blocks_startup() {
         // What an upgrade looks like: a box in the field carries the tier an
         // older version asked for, and the registry outlives the binary. Without
         // the comparison it would keep aggregating to the old bucket for three
@@ -915,31 +958,135 @@ mod tests {
             series.close().expect("a clean close");
         }
 
-        let series = Series::open(&dir.0, 7).expect("the new version starts");
-        let declared = series.db.list_rollups().expect("the registry");
-        assert_eq!(declared.len(), 1, "replaced, not added to: {declared:?}");
-        assert_eq!(
-            declared[0].bucket,
-            chronix::prelude::TimeBucket::parse("15m", Some("Europe/Berlin"))
-                .expect("a quarter hour"),
-            "the tier this version asks for"
-        );
-        series.close().expect("a clean close");
+        assert!(matches!(
+            Series::open(&dir.0, 7),
+            Err(SeriesError::Store(_))
+        ));
     }
 
     #[test]
-    fn the_points_of_one_tick_are_assembled_in_one_place() {
-        // `tick_points` exists so that what the control loop writes and what the
-        // API reads are decided together. A missing measurement is *absent*
-        // rather than zero: a box with no roof has not measured a dark one.
-        let asset = AssetId::new("hausspeicher").expect("a literal identifier");
-        let assets = vec![(asset.clone(), Power::from_kw(-1.5))];
-        let points = tick_points(Some(Power::from_kw(2.0)), None, &assets);
-        let names: Vec<&str> = points.iter().map(|(n, _)| *n).collect();
-        assert_eq!(
-            names,
-            vec![GRID, "hausspeicher"],
-            "no point for a quiet meter"
+    fn legacy_tick_history_requires_a_fresh_tier() {
+        let dir = Dir::new("legacy-observations");
+        let now = recently();
+        let old = now - time::Duration::hours(30);
+        let db = Chronix::open(ChronixConfig::small(&dir.0)).unwrap();
+        let legacy = chronix::RollupBuilder::new()
+            .name("quarter-hours")
+            .source("power")
+            .target("power_15m")
+            .every("15m")
+            .timezone("Europe/Berlin")
+            .aggregation(chronix::RollupAggFn::Avg)
+            .group_by(POINT)
+            .build()
+            .unwrap();
+        db.create_rollup(legacy).unwrap();
+        let key = SeriesKey::new("power", BTreeMap::from([(POINT.into(), GRID.into())])).unwrap();
+        for at in [old, now] {
+            db.insert(
+                &Point::new(
+                    key.clone(),
+                    BTreeMap::from([(WATTS.into(), FieldValue::F64(100.))]),
+                    nanos(at),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        assert!(db.materialise_rollups().unwrap() > 0);
+        db.close().unwrap();
+
+        assert!(
+            matches!(Series::open(&dir.0, 7), Err(SeriesError::Store(message)) if message.contains("target_measurement"))
         );
+    }
+
+    #[test]
+    fn a_spike_survives_a_control_tick_and_a_cached_reading_leaves_a_gap() {
+        use ems_core::prelude::Measurement;
+        use ems_drv::DriverEvent;
+
+        let dir = Dir::new("sample-count");
+        let series = Series::open(&dir.0, 7).unwrap();
+        let start = recently() - time::Duration::hours(1);
+        let meter = AssetId::new("meter").unwrap();
+        let event = |at, watts| {
+            (
+                meter.clone(),
+                DriverEvent::Measured(Measurement::power(at, Power::new(watts))),
+            )
+        };
+        let first = start + time::Duration::seconds(1);
+        let peak = first + time::Duration::milliseconds(100);
+        let later = start + time::Duration::minutes(30);
+        let still_idle = later + time::Duration::milliseconds(100);
+        series
+            .record_events(
+                &[event(first, -500.), event(peak, 900.)],
+                Some(&meter),
+                Power::ZERO,
+                peak,
+            )
+            .unwrap();
+        series
+            .record_events(
+                &[event(peak, 900.)],
+                Some(&meter),
+                Power::ZERO,
+                peak + time::Duration::seconds(1),
+            )
+            .unwrap();
+        series
+            .record_events(
+                &[],
+                Some(&meter),
+                Power::ZERO,
+                start + time::Duration::minutes(15),
+            )
+            .unwrap();
+        series
+            .record_events(
+                &[
+                    event(start + time::Duration::minutes(15), 8000.),
+                    event(later, 0.),
+                    event(still_idle, 0.),
+                ],
+                Some(&meter),
+                Power::ZERO,
+                still_idle,
+            )
+            .unwrap();
+
+        let end = later + time::Duration::seconds(1);
+        let summaries = series
+            .window_at_resolution(GRID, start, end, Some(Resolution::QuarterHours))
+            .unwrap()
+            .readings;
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(
+            summaries[0],
+            Reading {
+                at: start,
+                watts: 200.,
+                min_watts: Some(-500.),
+                max_watts: Some(900.),
+                samples: Some(2)
+            }
+        );
+        assert_eq!(summaries[1].at, later);
+        assert_eq!(summaries[1].samples, Some(2));
+        assert_eq!(summaries[1].watts, 0.);
+        let raw = series.window(GRID, start, end).unwrap().readings;
+        assert_eq!(raw.len(), 4);
+        assert_eq!(raw[1].at, peak);
+        assert_eq!(
+            serde_json::to_value(raw[1])
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        series.close().unwrap();
     }
 }

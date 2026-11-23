@@ -1620,6 +1620,12 @@ fn run_with(
         Some(Asset::Dhw(t)) => t.clone(),
         _ => unreachable!("the household always has a tank"),
     };
+    let tank_deadline = scenario.tank_goal.map(|g| {
+        (
+            crate::home::next_wall_clock(g.by_minute, start),
+            tank_asset.stored_heat(g.target_c),
+        )
+    });
     let mut tank = TankSim {
         cop: tank_asset.cop,
         standing_loss: tank_asset.standing_loss,
@@ -2421,6 +2427,7 @@ fn run_with(
         result.dhw_kwh += dhw_actual.kw() * step.as_seconds_f64() / 3600.0;
         result.cold_water_kwh += dhw_short.kwh();
         result.cost.unserved_eur += dhw_short.kwh() * HOT_WATER_SHORTFALL_EUR_PER_KWH;
+        result.cost.unserved_eur += missed_tank_goal(tank_deadline, now, step, tank.stored);
         result.tank_min_fill = result.tank_min_fill.min(tank.fill());
         result.minimum_power_kw = result
             .minimum_power_kw
@@ -2482,11 +2489,8 @@ fn run_with(
         // charge point here is one-way, so nothing ever comes back out of it.
         {
             let register = registers.entry(slot).or_insert_with(|| MispelQuarterHour {
-                anzulegender_wert: prices
-                    .at(slot)
-                    .filter(|p| !p.negative_price_hour)
-                    .map_or(Decimal::ZERO, |p| p.export_ct),
-                spot_price: prices.at(slot).map_or(Decimal::ZERO, |p| p.energy_ct),
+                anzulegender_wert: prices.at(slot).and_then(|p| p.support_ct),
+                spot_price: prices.at(slot).and_then(|p| p.market_ct),
                 ..MispelQuarterHour::empty(slot)
             });
             let kwh = |p: Power| Decimal::try_from(p.kw() * hours).unwrap_or_default();
@@ -3063,6 +3067,20 @@ fn unmanaged_wallbox_power(site: &Site) -> Power {
         .unwrap_or(Power::from_kw(11.0))
 }
 
+/// Price the missing heat once, at the tick that crosses the household's deadline.
+fn missed_tank_goal(
+    deadline: Option<(OffsetDateTime, Energy)>,
+    now: OffsetDateTime,
+    step: Duration,
+    stored: Energy,
+) -> f64 {
+    deadline
+        .filter(|(by, _)| now < *by && *by <= now + step)
+        .map_or(0.0, |(_, target)| {
+            (target - stored).max(Energy::ZERO).kwh() * HOT_WATER_SHORTFALL_EUR_PER_KWH
+        })
+}
+
 /// An unmanaged shiftable appliance: pressed at the first moment the household's
 /// own window allows.
 ///
@@ -3374,7 +3392,7 @@ fn baseline_cost(
     // equals the configuration, no test can tell one from the other. For any
     // *other* household it is a different appliance, and the difference between
     // two tanks was being reported as a saving (D183, R25).
-    let (mut tank, thermostat_set) = match site.assets.iter().find_map(|a| match a {
+    let (mut tank, thermostat_set, tank_deadline) = match site.assets.iter().find_map(|a| match a {
         Asset::Dhw(tank) => Some(tank),
         _ => None,
     }) {
@@ -3385,6 +3403,12 @@ fn baseline_cost(
                 ..TankSim::new(asset.usable_heat(), asset.heater)
             },
             asset.stored_heat(asset.t_set_c),
+            scenario.tank_goal.map(|g| {
+                (
+                    crate::home::next_wall_clock(g.by_minute, start),
+                    asset.stored_heat(g.target_c),
+                )
+            }),
         ),
         _ => (
             TankSim::new(
@@ -3394,6 +3418,7 @@ fn baseline_cost(
                 house.dhw.heater,
             ),
             Energy::ZERO,
+            None,
         ),
     };
     let tank_open = tank.stored;
@@ -3489,8 +3514,11 @@ fn baseline_cost(
         // heater unconditionally, so the baseline held its water at 60 °C where
         // the household asks for 55 — and every kilowatt-hour of the difference
         // was credited to the manager (D183).
+        let set = tank_deadline
+            .filter(|(by, _)| now < *by)
+            .map_or(thermostat_set, |(_, target)| thermostat_set.max(target));
         let (dhw, dhw_short) = tank.step(
-            if tank.stored < thermostat_set {
+            if tank.stored < set {
                 house.dhw.heater
             } else {
                 Power::ZERO
@@ -3499,6 +3527,7 @@ fn baseline_cost(
             step,
         );
         cost.unserved_eur += dhw_short.kwh() * HOT_WATER_SHORTFALL_EUR_PER_KWH;
+        cost.unserved_eur += missed_tank_goal(tank_deadline, now, step, tank.stored);
 
         let appliance = unmanaged_appliance(scenario, dishwasher.as_mut(), now, step);
 

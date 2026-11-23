@@ -50,7 +50,7 @@ jobs:
     # The fleet daemons deploy on PostgreSQL and their queries are tested against
     # PostgreSQL (D159). A **service container** rather than testcontainers here:
     # the runner has Docker either way, but a service is started once for the job
-    # instead of once per test binary, and `HEMS_TEST_POSTGRES` is the documented
+    # instead of once per test binary, and `EMS_TEST_POSTGRES` is the documented
     # way to point the suite at one. Pinned to the same major the fixture starts
     # locally, so a green CI and a green laptop mean the same thing.
     services:
@@ -66,7 +66,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      HEMS_TEST_POSTGRES: postgres://postgres:postgres@127.0.0.1:5432
+      EMS_TEST_POSTGRES: postgres://postgres:postgres@127.0.0.1:5432
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
@@ -161,6 +161,44 @@ jobs:
       # § 42c: the day the community term has a caller. A rule module nobody
       # invokes is not a feature, and no property test catches one.
       - run: cargo run -p hemsd -- simulate --day winter --sharing
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Exercise the three edge pages in Chrome
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          cargo build --locked -p hemsd -p bemsd -p cemsd
+          target/debug/hemsd demo --days 1 &
+          home_pid=$!
+          target/debug/bemsd demo &
+          building_pid=$!
+          target/debug/cemsd demo &
+          industrial_pid=$!
+          trap 'kill "$home_pid" "$building_pid" "$industrial_pid" 2>/dev/null || true' EXIT
+          node xtask/media.mjs release-preview
+
+      - name: Exercise the optional OpenADR request and withdrawal
+        run: |
+          cargo run --locked -p cemsd --features openadr -- openadr --json > "$RUNNER_TEMP/request.json"
+          cargo run --locked -p cemsd --features openadr -- openadr --cancel-before-dispatch --json > "$RUNNER_TEMP/withdrawn.json"
+          jq -e '.simulated and .requested_mean_kw == 1100 and .projected_early_mean_kw == 1100 and .projected_delayed_mean_kw == 1116 and .reported_meter_kwh == 285 and .original_meter_mean_kw == 1140' "$RUNNER_TEMP/request.json"
+          jq -e '.cancelled_before_dispatch and .requested_mean_kw == null and .projected_early_mean_kw == null and .projected_delayed_mean_kw == null and .reported_meter_kwh == null' "$RUNNER_TEMP/withdrawn.json"
+
+      - name: Verify building replay at the meter deadline
+        run: pipx run --spec uv==0.13.6 uv run --python 3.13 xtask/building_replay.py target/debug/bemsd
+        env:
+          CHROME: /usr/bin/google-chrome
+
+      - name: Verify member and coordinator views in separate browser sessions
+        run: pipx run --spec uv==0.13.6 uv run --python 3.13 xtask/community_replay.py target/debug/bemsd
+        env:
+          CHROME: /usr/bin/google-chrome
+
+      - name: Verify household history inspection and export
+        run: pipx run --spec uv==0.13.6 uv run --python 3.13 xtask/history_browser.py
+        env:
+          CHROME: /usr/bin/google-chrome
 
   house:
     name: Virtual house
@@ -172,7 +210,32 @@ jobs:
       # The box against far ends it did not write: a third-party Modbus server
       # and an EEBUS Energy Guard, over real sockets, in real time. Its own job
       # so a protocol failure is not one line among a thousand tests.
+      - run: cargo test -p hemsd --features house --test managed_by_a_cem a_manager_reads_the_virtual_house_battery_over_wss
       - run: cargo test -p hemsd --features house --test virtual_house
+      - run: cargo test -p hemsd --features house --lib matched_socket_costs_on_every_reference_day
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: flexiblepower/s2-analyzer
+          ref: 1a37ba6db52394bc02cad79be7226e78b8b60719
+          path: .s2-analyzer
+          persist-credentials: false
+      - name: Validate the live battery with S2 Analyzer
+        run: pipx run --spec uv==0.13.6 uv run --project .s2-analyzer/backend --frozen --no-dev --python 3.12 python xtask/s2_analyzer.py target/debug/hemsd
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.s2-analyzer/backend
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - run: python3 xtask/doctor.py target/debug/hemsd
+        env:
+          CHROME: /usr/bin/google-chrome
+      - run: python3 xtask/commissioning.py target/debug/hemsd
+        env:
+          CHROME: /usr/bin/google-chrome
+      - name: Verify appliance readings through peer loss and gateway restart
+        run: |
+          cargo build --locked -p hemsd --features house,matter
+          pipx run --spec uv==0.13.6 uv run --python 3.13 xtask/matter_recovery.py target/debug/hemsd
       # And the box's ordinary build does not carry the simulator's server.
       - run: "! cargo tree -p hemsd -e normal | grep -q tokio-modbus"
 
@@ -206,3 +269,17 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2
         with:
           command: check
+
+  home-assistant:
+    name: Home Assistant webhook example
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Load the documented automation and check its notification
+        run: |
+          docker run --rm --entrypoint python \
+            -v "$PWD/xtask/home_assistant.py:/test.py:ro" \
+            -v "$PWD/site/content/docs/api.md:/api.md:ro" \
+            ghcr.io/home-assistant/home-assistant@sha256:493a07e8f6530fc640223f4a0a5248f20a61ca2f718bb1d31efbf08a2c5ea28f \
+            /test.py /api.md

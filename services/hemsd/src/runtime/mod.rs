@@ -33,10 +33,15 @@
 
 pub mod access;
 pub mod api;
+pub mod authority;
 pub mod control;
 pub mod day;
+pub mod first_run;
 pub mod fleet;
 pub mod handover;
+pub mod installation;
+#[cfg(feature = "matter")]
+pub mod matter;
 pub mod outbox;
 pub mod overrides;
 pub mod planner;
@@ -162,6 +167,8 @@ pub struct Running {
     pub fingerprint: Option<String>,
     /// The household's car goal, shared between the page and the planner.
     pub goal: crate::home::Goals,
+    /// Wake the planner after accepting a signed tariff.
+    pub tariff_changed: Arc<tokio::sync::Notify>,
     /// The car as the planner last saw it.
     pub car: crate::home::CarFacts,
     /// The tank as the planner last saw it.
@@ -198,13 +205,51 @@ pub fn assemble(
     let config = settings.site.household()?;
     let household = Household::build(&config).map_err(|e| StartError::Build(e.to_string()))?;
 
-    let mut registry = Registry::new();
+    let shadow = settings.mode == crate::config::OperatingMode::Shadow;
+    if !shadow && settings.external_limit_controller.is_some() {
+        return Err(StartError::Build("external_limit_controller is configured: explicitly select shadow mode or complete handover before enabling managed mode".into()));
+    }
+    let mut registry = if shadow {
+        if settings
+            .external_limit_controller
+            .as_ref()
+            .is_none_or(|name| name.trim().is_empty())
+        {
+            return Err(StartError::Build("shadow mode requires the independently commissioned limit controller in external_limit_controller".into()));
+        }
+        if settings.ship.listen.is_some()
+            || settings.s2.enabled
+            || settings.drivers.iter().any(|driver| {
+                !matches!(
+                    driver,
+                    DriverSettings::Sunspec(_)
+                        | DriverSettings::Registers(_)
+                        | DriverSettings::EebusEv(_)
+                )
+            })
+        {
+            return Err(StartError::Build("shadow mode supports local meter reads and EV telemetry; remove the SHIP listener, S2 control and actuator-only EEBUS connections".into()));
+        }
+        Registry::new().observe_only()
+    } else {
+        Registry::new()
+    };
     let mut drivers = Vec::with_capacity(settings.drivers.len());
     for driver in &settings.drivers {
         let built = build_driver(driver, &household.site, kept, now)?;
         drivers.push(registry.register(built, &household.site)?);
     }
     registry.validate(&household.site, now)?;
+    if shadow && settings.store_path.is_none() {
+        return Err(StartError::Build(
+            "shadow mode requires store_path to retain household authorization".into(),
+        ));
+    }
+    if shadow && !registry.measures(&household.grid_meter) {
+        return Err(StartError::Build(
+            "shadow mode requires the configured connection meter".into(),
+        ));
+    }
     check_modul3(settings, now)?;
     if let Some(field) = settings.tariff.levies.refused() {
         return Err(StartError::Levies(field));
@@ -236,6 +281,7 @@ pub fn assemble(
         trust: None,
         fingerprint: None,
         goal: crate::home::Goals::default(),
+        tariff_changed: Arc::default(),
         car: crate::home::CarFacts::default(),
         tank: crate::home::TankFacts::default(),
         last: planner::LastInputs::default(),
@@ -245,7 +291,10 @@ pub fn assemble(
         store: None,
         household,
         registry: Arc::new(Mutex::new(registry)),
-        status: Arc::new(Mutex::new(Status::default())),
+        status: Arc::new(Mutex::new(Status {
+            shadow,
+            ..Status::default()
+        })),
     })
 }
 
@@ -778,6 +827,16 @@ pub async fn run(
     let store = open_store(settings)?;
     let mut running = assembled(settings, store.as_ref(), now).await?;
 
+    let transferring = {
+        let registry = running.registry.lock().await;
+        let ready = registry.measures(&running.household.grid_meter)
+            && registry.undriven(&running.household.site).next().is_none();
+        let held = match &store {
+            Some(store) => Some(store.lock().await),
+            None => None,
+        };
+        authority::enter(settings, held.as_deref(), now.unix_timestamp(), ready)?
+    };
     if settings.drivers.is_empty() {
         // Not an error and not a silence. A box with no drivers keeps the house
         // safe by assuming the worst about every device, for ever, and saying so
@@ -894,11 +953,17 @@ pub async fn run(
     // panicked leaves a process answering every request and managing nothing —
     // no guard, no arbiter, no evidence record — and `/livez` is what an
     // orchestrator restarts on.
+    if transferring && let Some(store) = &store {
+        store.lock().await.put_transfer(None)?;
+    }
     health.vital(
         "control",
         shutdown.clone(),
         control::run(
             control::Managed {
+                can_trace_storage: day::storage::supported(&running.household.site),
+                can_replay: day::replay::supported(&running.household.site),
+                shadow: settings.mode == crate::config::OperatingMode::Shadow,
                 site: running.household.site.clone(),
                 grid_meter: Some(running.household.grid_meter.clone()),
                 undriven,
@@ -925,6 +990,7 @@ pub async fn run(
                 store,
                 series: running.series.clone(),
                 overrides: overrides.clone(),
+                goals: running.goal.clone(),
                 cem: cem.clone(),
             },
             settings.control.clone(),
@@ -1235,9 +1301,8 @@ fn start_dialled(
 /// follows, the modelled production the corrector is taught against, and the
 /// learning itself.
 ///
-/// A box with no `forecastd` gets all three and no task, which is a working box
-/// rather than a broken one: the guard and the arbiter need nothing but
-/// measurements (G3). What it loses is the plan, and it says so.
+/// The pricing loop also runs on a box without a weather forecast. Such a box
+/// records known import and export terms while the arbiter follows measured surplus.
 type PlannerHandles = (
     Arc<tokio::sync::RwLock<Option<ems_core::prelude::Plan>>>,
     Arc<tokio::sync::RwLock<Option<ems_tariff::PriceStack>>>,
@@ -1298,7 +1363,7 @@ async fn start_planner(
             "planner",
             "no forecastd is configured, so the box cannot plan",
         );
-        return Ok((plan, prices, published, learned));
+        // Pricing runs without weather so metered receipts can still close.
     }
 
     // The other half of the same seam, and it was written and never asked. A
@@ -1346,6 +1411,7 @@ async fn start_planner(
             car: running.car.clone(),
             tank: running.tank.clone(),
             last: running.last.clone(),
+            tariff_changed: running.tariff_changed.clone(),
         },
         Arc::clone(&running.registry),
         fleet,

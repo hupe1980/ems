@@ -61,6 +61,85 @@ async fn until<T>(within: StdDuration, what: &str, mut check: impl AsyncFnMut() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_shadow_gateway_reads_the_meter_and_never_writes_a_setpoint() {
+    use ems_core::prelude::{Command, Power, Reason, Setpoint, UserOverride};
+    let scenario = Scenario::summer_surplus(HouseholdConfig::default());
+    let house = house::start(house::Options {
+        scenario: scenario.clone(),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        household: None,
+        at: Some(Duration::hours(12)),
+        identity: None,
+        exposed: false,
+    })
+    .await
+    .unwrap();
+    let config = house::configuration(&house, &scenario, None, free_port()).unwrap();
+    let mut settings: hemsd::Settings = toml::from_str(&config).unwrap();
+    let state = std::env::temp_dir().join(format!("hems-shadow-{}.redb", uuid::Uuid::new_v4()));
+    settings.store_path = Some(state.clone());
+    settings.mode = hemsd::config::OperatingMode::Shadow;
+    let now = OffsetDateTime::now_utc();
+    assert!(
+        hemsd::runtime::assemble(&settings, None, now)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("external_limit_controller")
+    );
+    settings.external_limit_controller = Some("Independent site PLC".into());
+    settings.ship.listen = Some(free_port().to_string());
+    assert!(hemsd::runtime::assemble(&settings, None, now).is_err());
+    settings.ship.listen = None;
+    let (signal, trigger) = Shutdown::channel();
+    let running = hemsd::runtime::run(&settings, &Health::new(), &signal)
+        .await
+        .unwrap();
+    until(
+        StdDuration::from_secs(30),
+        "shadow meter telemetry",
+        async || running.status.lock().await.grid,
+    )
+    .await;
+    let pv = running.household.pv.clone().unwrap();
+    for reason in [Reason::Cem, Reason::User(UserOverride::Boost)] {
+        let attempted = Setpoint::new(
+            pv.clone(),
+            Command::ProductionCeiling(Power::ZERO),
+            reason,
+            now,
+        )
+        .unwrap();
+        assert!(
+            running
+                .registry
+                .lock()
+                .await
+                .command(&attempted, now)
+                .is_err()
+        );
+    }
+    running
+        .overrides
+        .set(pv, UserOverride::Boost, None, OffsetDateTime::now_utc())
+        .await;
+    let tick = running.status.lock().await.at;
+    until(
+        StdDuration::from_secs(10),
+        "a subsequent shadow control tick",
+        async || {
+            let status = running.status.lock().await;
+            (status.at > tick && status.shadow && status.commanded.is_empty()).then_some(())
+        },
+    )
+    .await;
+    assert_eq!(house.write_requests(), 0);
+    trigger.trigger();
+    drop(running);
+    let _ = std::fs::remove_file(state);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn every_device_is_discovered_read_and_obeyed_over_modbus() {
     // A cloudless June noon: the roof offers well over what the household may
     // feed in, so a reading and a curtailment both mean something.
@@ -120,22 +199,14 @@ async fn every_device_is_discovered_read_and_obeyed_over_modbus() {
     // asserted is the running product's write: it arrives as model 123's
     // percentage at the register the model keeps it in, the simulated array
     // follows it, and the box's next read shows the result.
-    let ceiling = until(
-        StdDuration::from_secs(30),
-        "the box's ceiling is in force on the inverter",
-        async || {
-            let commanded = running.status.lock().await.commanded.get(&pv)?.outflow();
-            let fraction = house.curtailment()?;
-            ((fraction * rating.get() - commanded.get()).abs() <= 0.005 * rating.get() + 1.0)
-                .then_some(rating * fraction)
-        },
-    )
-    .await;
-    assert!(ceiling.get() > 0.0, "limited, not disconnected");
+    // The controller can revise its ceiling between reads. Compare the active
+    // register, the latest command and both power readings in the same poll.
     until(
         StdDuration::from_secs(30),
-        "the roof follows the ceiling and the box reads it",
+        "the roof follows the active ceiling and the box reads it",
         async || {
+            let commanded = running.status.lock().await.commanded.get(&pv)?.outflow();
+            let ceiling = rating * house.curtailment()?;
             let reading = house.reading();
             let state = running
                 .registry
@@ -143,7 +214,9 @@ async fn every_device_is_discovered_read_and_obeyed_over_modbus() {
                 .await
                 .state(None, OffsetDateTime::now_utc());
             let believed = state.assets.get(&pv)?.power?.outflow().get();
-            (reading.available_w > ceiling.get() * 1.05
+            (ceiling.get() > 0.0
+                && (ceiling.get() - commanded.get()).abs() <= 0.005 * rating.get() + 1.0
+                && reading.available_w > ceiling.get() * 1.05
                 && (reading.pv_w - ceiling.get()).abs() < 0.02 * ceiling.get()
                 && (believed - ceiling.get()).abs() < 0.02 * ceiling.get())
             .then_some(())

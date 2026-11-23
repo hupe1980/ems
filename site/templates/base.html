@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ config.default_language }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -13,20 +13,24 @@
   {%- set meta_desc = section.description | default(value=config.description) %}
   {%- set meta_type = "website" %}
   {%- set meta_url = section.permalink %}
-{%- else %}
+{%- elif section is defined %}
   {%- set meta_title = config.title ~ " — " ~ config.extra.tagline %}
   {%- set meta_desc = config.description %}
   {%- set meta_type = "website" %}
-  {%- set meta_url = config.base_url %}
+  {%- set meta_url = section.permalink %}
+{%- else %}
+  {%- set meta_title = "Page not found · " ~ config.title %}
+  {%- set meta_desc = "Find energy management guides, device setup and local demos in the ems documentation." %}
 {%- endif %}
 <title>{{ meta_title }}</title>
 <meta name="description" content="{{ meta_desc }}">
-<link rel="canonical" href="{{ meta_url }}">
+{% if meta_url is defined %}<link rel="canonical" href="{{ meta_url }}">{% endif %}
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d1116" media="(prefers-color-scheme: dark)">
 {% block robots %}<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">{% endblock %}
 
+{% if meta_url is defined %}
 <meta property="og:site_name" content="{{ config.title }}">
 <meta property="og:locale" content="en_GB">
 <meta property="og:type" content="{{ meta_type }}">
@@ -41,22 +45,19 @@
 <meta name="twitter:title" content="{{ meta_title }}">
 <meta name="twitter:description" content="{{ meta_desc }}">
 <meta name="twitter:image" content="{{ get_url(path='og.png') }}">
+<meta name="twitter:image:alt" content="ems — energy management for the German grid">
+{% endif %}
 
 <link rel="icon" href="{{ get_url(path='favicon.svg') }}" type="image/svg+xml">
 <link rel="sitemap" type="application/xml" href="{{ get_url(path='sitemap.xml') }}">
-<link rel="alternate" type="application/atom+xml" title="{{ config.title }}" href="{{ get_url(path='atom.xml') }}">
+<link rel="alternate" type="application/atom+xml" title="ems releases" href="{{ config.extra.repository }}/releases.atom">
 
-<!-- The two syntax sheets are matched on the media query by default; the theme
-     toggle in `hems.js` flips their `media` attribute so an explicit choice
-     reaches the code blocks too. They load *before* the site stylesheet so that
-     the site's own `pre` background wins the tie. -->
 <link id="syntax-light" rel="stylesheet" href="{{ get_url(path='giallo-light.css') }}" media="(prefers-color-scheme: light)">
 <link id="syntax-dark" rel="stylesheet" href="{{ get_url(path='giallo-dark.css') }}" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="{{ get_url(path='hems.css') }}">
+{% block styles %}{% endblock %}
 <script>
-/* Before first paint, so a reader who chose a theme never sees the other one.
-   The two syntax links are already parsed at this point, so their media queries
-   can be replaced here rather than after the stylesheet has painted. */
+/* Restore the saved theme before first paint. */
 (function () {
   try {
     var t = localStorage.getItem('hems-theme');
@@ -70,9 +71,6 @@
 })();
 </script>
 
-{#- The project, on every page. A documentation page adds its own article and
-    breadcrumb by overriding this block — see `page.html` — because a nested
-    search result is earned per page rather than per site. -#}
 {% block schema %}{% include "partials/schema.html" %}{% endblock %}
 </head>
 <body>
@@ -80,11 +78,11 @@
 
 <header class="site-header">
   <nav class="site-nav" aria-label="Site">
-    <a class="brand" href="{{ get_url(path='@/_index.md') }}"><span class="mark" aria-hidden="true">⚡</span>ems</a>
+    <a class="brand" href="{{ get_url(path='@/_index.md') }}"{% if section is defined and section.relative_path == "_index.md" %} aria-current="page"{% endif %}><span class="mark" aria-hidden="true">⚡</span>ems</a>
     <div class="links">
-      <a href="{{ get_url(path='@/docs/_index.md') }}">Documentation</a>
-      <a href="{{ get_url(path='@/docs/getting-started.md') }}">Get started</a>
-      <a href="{{ get_url(path='@/docs/background.md') }}">Background</a>
+      <a href="{{ get_url(path='@/docs/_index.md') }}"{% if section is defined and section.relative_path == "docs/_index.md" %} aria-current="page"{% endif %}>Documentation</a>
+      <a href="{{ get_url(path='@/docs/getting-started.md') }}"{% if page is defined and page.relative_path == "docs/getting-started.md" %} aria-current="page"{% endif %}>Get started</a>
+      <a href="{{ get_url(path='@/docs/background.md') }}"{% if page is defined and page.relative_path == "docs/background.md" %} aria-current="page"{% endif %}>Background</a>
     </div>
     <span class="spacer"></span>
     <button id="theme-toggle" class="icon-btn" type="button" hidden aria-label="Colour theme">◐</button>
@@ -94,7 +92,7 @@
   </nav>
 </header>
 
-<main id="content">{% block content %}{% endblock %}</main>
+<main id="content" tabindex="-1">{% block content %}{% endblock %}</main>
 
 <footer class="site-footer">
   <div class="footer-inner">
@@ -102,7 +100,7 @@
       <h2>Start</h2>
       <ul>
         <li><a href="{{ get_url(path='@/docs/getting-started.md') }}">Getting started</a></li>
-        <li><a href="{{ get_url(path='@/docs/background.md') }}">The German grid in ten minutes</a></li>
+        <li><a href="{{ get_url(path='@/docs/background.md') }}">German grid basics</a></li>
         <li><a href="{{ get_url(path='@/docs/architecture.md') }}">Architecture</a></li>
         <li><a href="{{ get_url(path='@/docs/domain-model.md') }}">Domain model</a></li>
       </ul>
@@ -136,14 +134,12 @@
       <ul>
         <li><a href="{{ config.extra.repository }}" rel="noopener">Source</a></li>
         <li><a href="{{ config.extra.repository }}/releases" rel="noopener">Releases</a></li>
-        <li><a href="{{ get_url(path='atom.xml') }}">Atom feed</a></li>
+        <li><a href="{{ config.extra.repository }}/releases.atom">Release feed</a></li>
       </ul>
     </div>
   </div>
   <div class="footer-legal">
-    <p>MIT OR Apache-2.0. ems is not affiliated with the Bundesnetzagentur, the
-    BDEW, the EEBus Initiative or the VDE. Regulatory documents are cited, never
-    redistributed.</p>
+    <p>Licensed under <a href="{{ config.extra.repository }}/blob/main/LICENSE-MIT">MIT</a> or <a href="{{ config.extra.repository }}/blob/main/LICENSE-APACHE">Apache-2.0</a>.</p>
   </div>
 </footer>
 

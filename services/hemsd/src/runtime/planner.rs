@@ -10,13 +10,9 @@
 //! A [`Problem`] has an `Option` for every store, and
 //! the planner fills in **exactly what the drivers can actually tell it**:
 //!
-//! | Modelled | Needs | State |
-//! |---|---|---|
-//! | grid, roof, load, § 14a and § 9 ceilings | prices, sky, measurements | ✅ |
-//! | the battery | a fresh state of charge off its own meter | ✅ |
-//! | the car | an arrival, a departure and a target — nothing reports them yet | ⏳ |
-//! | the building | an indoor temperature — no driver publishes one yet | ⏳ |
-//! | the hot-water tank | a tank temperature — likewise | ⏳ |
+//! Battery and hot-water models need measured charge or temperature. A car
+//! needs a charging session and departure goal. The thermal model needs an
+//! indoor temperature. Each resource also needs a driver that can command it.
 //!
 //! Leaving a store out is not the same as modelling it as absent, and the
 //! difference is [`AssetNames`]. A plan that *named* the charge point while
@@ -287,6 +283,8 @@ pub struct Planner {
     pub tank: crate::home::TankFacts,
     /// The last solve's inputs, for pricing a goal before it is set.
     pub last: LastInputs,
+    /// Replan when the household accepts a supply contract.
+    pub tariff_changed: Arc<tokio::sync::Notify>,
 }
 
 /// The charging settings with the household's goal, where it set one, in place
@@ -352,8 +350,9 @@ impl std::fmt::Display for Reason {
 /// no expiry, and what ages out is the *coverage*: prices run out at the end of
 /// the published day, and a horizon past them is priced by the tariff's own flat
 /// fallback, which is the honest shape for "nobody knows yet".
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Cached {
+    schedule: crate::price_sheet::Schedule,
     prices: Option<Prices>,
     sky: Option<Sky>,
     /// The grid's carbon intensity, where the household prices it.
@@ -417,6 +416,7 @@ pub async fn run(
     shutdown: Shutdown,
 ) {
     let mut cached = Cached::default();
+    let mut goals_changed = planner.goal.changes();
     // Which local day the building was last identified on. Once a day: the
     // search is a few hundred passes over a fortnight of quarter hours, which is
     // nothing on a schedule of days and is pure waste every five minutes — and
@@ -431,16 +431,20 @@ pub async fn run(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        tokio::select! {
+        let refresh_due = tokio::select! {
             biased;
             () = shutdown.clone().wait() => {
                 tracing::info!("the planner is stopping");
                 return;
             }
-            _ = ticker.tick() => {}
-        }
+            _ = ticker.tick() => true,
+            () = planner.tariff_changed.notified() => false,
+            _ = goals_changed.changed() => false,
+        };
         let now = OffsetDateTime::now_utc();
-        refresh(&fleet, &mut cached, carbon_matters, now).await;
+        if refresh_due {
+            refresh(&fleet, &mut cached, carbon_matters, now).await;
+        }
 
         let today = ems_core::calendar::local_day(now);
         if fitted_on != Some(today) {
@@ -458,12 +462,25 @@ pub async fn run(
             }
         }
 
+        cached.schedule = match &store {
+            Some(store) => match crate::price_sheet::Schedule::load(&*store.lock().await) {
+                Ok(schedule) => schedule,
+                Err(error) => {
+                    tracing::error!(%error, "cannot verify stored supply schedule");
+                    *prices.write().await = None;
+                    *plan.write().await = None;
+                    health.bad("planner", "stored supply schedule cannot be verified");
+                    continue;
+                }
+            },
+            None => crate::price_sheet::Schedule::default(),
+        };
         match attempt(
             &planner, &registry, &cached, &prices, &published, &learned, now,
         )
         .await
         {
-            Ok(solved) => {
+            Ok((solved, inputs, goals)) => {
                 let cost = solved
                     .plan
                     .expected_cost
@@ -474,7 +491,12 @@ pub async fn run(
                     expected_eur = cost,
                     "a plan was published"
                 );
-                *plan.write().await = Some(solved.plan);
+                {
+                    let mut active = plan.write().await;
+                    *planner.last.lock().await = Some(inputs);
+                    planner.goal.record_plan(solved.plan.id, goals);
+                    *active = Some(solved.plan);
+                }
                 health.good("planner", now);
                 // Kept here rather than on every slot boundary: the models are
                 // taught ninety-six times a day and written twenty-eight, which
@@ -498,7 +520,11 @@ async fn refresh(fleet: &Fleet, cached: &mut Cached, carbon_matters: bool, now: 
     // in the evening on one day of prices is told the whole of tomorrow costs
     // the flat fallback, and defers every flexible kilowatt-hour into it.
     let horizon = Horizon::new(now, 96 * 2);
-    match fleet.prices(horizon).await {
+    let hour = horizon
+        .first
+        .offset(-i64::from(horizon.first.start().minute() / 15));
+    let price_horizon = Horizon::new(hour.start(), horizon.len + 3);
+    match fleet.prices(price_horizon).await {
         Ok(Some(prices)) => {
             cached.prices_at = Some(now);
             cached.prices = Some(prices);
@@ -541,23 +567,12 @@ async fn attempt(
     published: &Published,
     learned: &Arc<Mutex<Learned>>,
     now: OffsetDateTime,
-) -> Result<ems_optimizer::solve::Solved, Reason> {
+) -> Result<(ems_optimizer::solve::Solved, Inputs, crate::home::GoalSet), Reason> {
     let site = &planner.household.site;
     let horizon = Horizon::new(now, planner.control.horizon_slots.max(4));
 
-    // ── What it costs ───────────────────────────────────────────────────────
-    //
-    // A fixed tariff needs nobody: its price is in the configuration, and a
-    // household on one has no spread to shift load for. A dynamic one without a
-    // curve is a plan optimised against a flat number, which is worse than
-    // useless — it would move the battery for a spread that does not exist — so
-    // it is refused.
-    let spot = match (&cached.prices, planner.tariff.fixed_ct_per_kwh) {
-        (Some(prices), _) => prices.spot(),
-        (None, Some(_)) => std::collections::BTreeMap::new(),
-        (None, None) => return Err(Reason::NoPrices),
-    };
-    let mut tariff = planner.tariff.tariff(site, spot);
+    let spot = cached.prices.as_ref().map(Prices::spot).unwrap_or_default();
+    let mut tariff = planner.tariff.tariff(site, spot.clone());
     // The last link of a chain that used to be dead end to end: the
     // Energy-Charts parser had no consumer, the poller dropped what it
     // fetched, `SlotPrice::co2_g_per_kwh` was hard-coded `None`, and the
@@ -565,13 +580,18 @@ async fn attempt(
     // annual constant — which makes a carbon price algebraically the same
     // thing as an autarky premium, because every hour is equally dirty.
     tariff.carbon_g_per_kwh = cached.carbon.clone();
-    let prices = PriceStack::build(&tariff, horizon);
+    let fallback =
+        rust_decimal::Decimal::try_from(planner.tariff.fallback_ct_per_kwh).unwrap_or_default();
+    let prices = cached.schedule.prices(&tariff, horizon, &spot, fallback);
     // Published for the control loop. The quarter-hour registers MiSpeL and
     // § 42c settle from carry two *prices* — the anzulegender Wert and the spot
     // price — and the loop that measures the quantities has no tariff of its
     // own. Sharing this one is what lets it write a whole register rather than
     // a register with two zeros in it.
     *prices_out.write().await = Some(prices.clone());
+    if !prices.slots.iter().any(|p| p.price_known) {
+        return Err(Reason::NoPrices);
+    }
 
     // ── What the roof will make ─────────────────────────────────────────────
     let sky = cached.sky.as_ref().ok_or(Reason::NoSky)?;
@@ -649,7 +669,7 @@ async fn attempt(
     // an instruction rather than an omission.
     let dhw = dhw_model(site, &observed, &planner.household);
     *planner.tank.lock().await = dhw;
-    let goals = planner.goal.get().await;
+    let goals = planner.goal.get();
     // The household's hot-water goal, in the tank's own heat. Asked of the
     // installation's arithmetic, like the fill level, so a degree is worth the
     // same in the goal as in the reading.
@@ -672,7 +692,7 @@ async fn attempt(
         series.window_w_per_m2_over(horizon, site.location, planner.facade_azimuth_deg);
     let charging = with_goal(planner.charging.as_ref(), goals.car);
     let ev = ev_session(
-        site,
+        now,
         &observed,
         &planner.household,
         charging.as_ref(),
@@ -684,7 +704,7 @@ async fn attempt(
     *planner.car.lock().await = charging.as_ref().and_then(|c| {
         let mut full = c.clone();
         full.target_soc = 1.0;
-        ev_session(site, &observed, &planner.household, Some(&full), horizon)
+        ev_session(now, &observed, &planner.household, Some(&full), horizon)
     });
     // The same prior the reference days plan against, and deliberately the same
     // one: a box that planned its tank against a different shape from the day
@@ -733,6 +753,7 @@ async fn attempt(
         draw,
         dhw_target,
         ev,
+        ev_price_cap_ct: goals.car.and_then(|g| g.price_cap_ct),
         thermal,
         outdoor,
         window,
@@ -742,11 +763,12 @@ async fn attempt(
     };
     // Kept for a quote: what a goal would cost is this same problem solved
     // again with the goal changed, not a second model of the house.
-    *planner.last.lock().await = Some(inputs.clone());
-    tokio::task::spawn_blocking(move || inputs.solve())
-        .await
-        .map_err(|e| Reason::Unsolvable(format!("the solve panicked: {e}")))?
-        .map_err(|e| Reason::Unsolvable(e.to_string()))
+    let (inputs, solved) =
+        tokio::task::spawn_blocking(move || inputs.solve().map(|solved| (inputs, solved)))
+            .await
+            .map_err(|e| Reason::Unsolvable(format!("the solve panicked: {e}")))?
+            .map_err(|e| Reason::Unsolvable(e.to_string()))?;
+    Ok((solved, inputs, goals))
 }
 
 /// Everything one solve needs, owned.
@@ -768,6 +790,7 @@ pub struct Inputs {
     draw: Vec<f64>,
     dhw_target: Option<ems_optimizer::model::DhwTarget>,
     ev: Option<ems_optimizer::model::EvSession>,
+    ev_price_cap_ct: Option<i32>,
     thermal: Option<ems_optimizer::model::ThermalModel>,
     outdoor: Vec<f64>,
     window: Vec<f64>,
@@ -782,6 +805,14 @@ impl Inputs {
     /// # Errors
     /// The solver's refusal.
     pub fn solve(&self) -> Result<ems_optimizer::solve::Solved, ems_optimizer::solve::SolveError> {
+        self.solve_with_ev_draw(&[])
+    }
+
+    /// Solve the same installation with a fixed charging schedule for the boost preview.
+    pub(super) fn solve_with_ev_draw(
+        &self,
+        draw: &[Power],
+    ) -> Result<ems_optimizer::solve::Solved, ems_optimizer::solve::SolveError> {
         let mut problem = Problem::new(self.horizon, &self.prices, &self.pv, &self.load)
             .with_limits(self.limits.clone())
             .with_objective(self.objective)
@@ -800,6 +831,8 @@ impl Inputs {
         if let Some(target) = self.dhw_target {
             problem = problem.with_dhw_target(target);
         }
+        problem.ev_price_cap_ct = self.ev_price_cap_ct;
+        problem.ev_draw = draw;
         if let Some(session) = self.ev {
             problem = problem.with_ev(session);
         }
@@ -817,6 +850,19 @@ impl Inputs {
             ev: session,
             ..self.clone()
         }
+    }
+
+    /// Judge a proposed cap against the prices used by the solve.
+    #[must_use]
+    pub fn prices(&self) -> &PriceStack {
+        &self.prices
+    }
+
+    /// Replace the household price constraint along with its proposed car goal.
+    #[must_use]
+    pub fn with_price_cap(mut self, cap: Option<i32>) -> Self {
+        self.ev_price_cap_ct = cap;
+        self
     }
 
     /// The same problem with the tank's goal replaced.
@@ -1096,7 +1142,7 @@ fn slots_of(duration: time::Duration) -> usize {
 /// arbiter spends the afternoon failing to follow, so the energy has to be found
 /// again in whatever hours are left, which are the expensive ones.
 fn ev_session(
-    site: &Site,
+    now: OffsetDateTime,
     observed: &crate::drivers::Observed,
     household: &Household,
     charging: Option<&crate::config::EebusEvSettings>,
@@ -1105,19 +1151,22 @@ fn ev_session(
     use ems_core::prelude::{Energy, PhaseMode};
 
     let evse_id = household.evse.as_ref()?;
-    let Some(Asset::Evse(evse)) = site.asset(evse_id) else {
+    let Some(Asset::Evse(evse)) = household.site.asset(evse_id) else {
         return None;
     };
     drivable(observed, evse_id)?;
     let charging = charging?;
     let present = observed.vehicles.get(evse_id)?;
-    if !present.connected {
+    if observed.silent.contains(evse_id) {
         return None;
     }
     // Both halves or nothing. A percentage says nothing about how long charging
     // takes and a capacity says nothing about how much is needed, so a planner
     // given one of them would be planning a charge for a battery it invented.
-    let (soc, capacity_wh) = (present.soc?, present.capacity_wh?);
+    let soc = present.current_soc(now)?;
+    let capacity_wh = present
+        .capacity_wh
+        .filter(|wh| wh.is_finite() && *wh > 0.0)?;
     let capacity = Energy::from_kwh(capacity_wh / 1000.0);
     let energy_now = capacity * soc;
     let energy_target = capacity * charging.target_soc.clamp(0.0, 1.0);
@@ -1201,6 +1250,104 @@ mod tests {
     /// asset the problem does not model emits a target of zero with an envelope
     /// pinned at zero, which the arbiter obeys as an instruction, so an unread
     /// tank must be absent from *both*.
+    #[tokio::test]
+    async fn winter_departure_quote_matches_the_independently_solved_cost_difference() {
+        use crate::{forecasting, home, runtime::quote};
+        use ems_core::prelude::Energy;
+
+        let day = crate::Scenario::winter_with_grid_event(crate::HouseholdConfig::default());
+        let now = day.start();
+        let horizon = Horizon::new(now, 96);
+        let house = Household::build(&day.config).unwrap();
+        let spot = horizon
+            .slots()
+            .zip(
+                day.prices_ct
+                    .iter()
+                    .copied()
+                    .map(rust_decimal::Decimal::from),
+            )
+            .collect();
+        let prices = PriceStack::build(
+            &TariffSettings::default().tariff(&house.site, spot),
+            horizon,
+        );
+        let weather = crate::Weather::new(day.weather, day.cloudiness, day.outdoor_c);
+        let roof = day.config.pv.as_ref().unwrap();
+        let array = ArrayModel::new(roof.kwp, roof.ac_nominal, roof.tilt_deg, roof.azimuth_deg);
+        let learned = forecasting::warm_up(
+            day.warm_up_days,
+            &weather,
+            &array,
+            day.config.location,
+            now,
+            crate::scenario::household_load,
+            None,
+        );
+        let ev = day.ev.unwrap();
+        let car = ems_optimizer::model::EvSession {
+            energy_now: ev.energy_now,
+            energy_target: ev.energy_target,
+            capacity: Energy::from_kwh(60.0),
+            max_charge: Power::from_kw(11.0),
+            min_charge: Power::from_kw(4.14),
+            efficiency: 0.9,
+            arrival: None,
+            departure: Slot::containing(now + ev.departure),
+        };
+        let inputs = Inputs {
+            horizon,
+            prices,
+            pv: forecasting::pv_forecast(&learned, &weather, &array, day.config.location, horizon),
+            load: forecasting::load_forecast(&learned.load, None, horizon, None).unwrap(),
+            limits: ems_optimizer::model::PlanningLimits::default(),
+            objective: day.objective,
+            risk: day.risk,
+            battery: None,
+            dhw: None,
+            draw: Vec::new(),
+            dhw_target: None,
+            ev: Some(car),
+            ev_price_cap_ct: None,
+            thermal: None,
+            outdoor: Vec::new(),
+            window: Vec::new(),
+            names: AssetNames {
+                evse: house.evse,
+                pv: house.pv,
+                ..AssetNames::none()
+            },
+            budget: 20.0,
+            now,
+        };
+        let goal = home::CarGoal {
+            target_soc: 0.8,
+            by_minute: 420,
+            price_cap_ct: None,
+        };
+        let baseline = Arc::new(Mutex::new(Some(inputs.clone())));
+        let facts = Arc::new(Mutex::new(Some(car)));
+        let started = std::time::Instant::now();
+        let answer = quote::car(&baseline, &facts, goal, now).await.unwrap();
+        eprintln!(
+            "winter reference EV quote: {:.1} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        let cost = |inputs: &Inputs| {
+            let cost = inputs.solve().unwrap().plan.expected_cost.unwrap();
+            cost.energy_eur + cost.wear_eur + cost.stored_eur
+        };
+        let proposed = inputs
+            .clone()
+            .with_car(Some(ems_optimizer::model::EvSession {
+                energy_target: Energy::from_kwh(48.0),
+                ..car
+            }));
+        let expected_ct = ((cost(&proposed) - cost(&inputs)) * 100.0).round();
+        assert!(expected_ct > 0.0);
+        assert_eq!(answer.extra_eur, Some(expected_ct / 100.0));
+    }
+
     /// The three different `None`s, and why the planner treats them alike.
     #[test]
     fn a_car_nobody_can_see_is_not_a_car_to_plan_for() {
@@ -1223,16 +1370,7 @@ mod tests {
         // Nothing reported anything at all — a Modbus wallbox reports power and
         // has no idea what is on the end of the cable.
         let observed = crate::drivers::Observed::default();
-        assert!(
-            ev_session(
-                &household.site,
-                &observed,
-                &household,
-                Some(&charging),
-                horizon
-            )
-            .is_none()
-        );
+        assert!(ev_session(now, &observed, &household, Some(&charging), horizon).is_none());
 
         // A charge point that *can* tell, saying there is no car.
         let evse = household.evse.clone().expect("the reference wallbox");
@@ -1246,16 +1384,7 @@ mod tests {
                 at: now,
             },
         );
-        assert!(
-            ev_session(
-                &household.site,
-                &observed,
-                &household,
-                Some(&charging),
-                horizon
-            )
-            .is_none()
-        );
+        assert!(ev_session(now, &observed, &household, Some(&charging), horizon).is_none());
 
         // A car that is there but cannot say how full it is — IEC 61851, a pilot
         // wire and nothing else. Left out rather than charged against an
@@ -1270,14 +1399,7 @@ mod tests {
             },
         );
         assert!(
-            ev_session(
-                &household.site,
-                &observed,
-                &household,
-                Some(&charging),
-                horizon
-            )
-            .is_none(),
+            ev_session(now, &observed, &household, Some(&charging), horizon).is_none(),
             "half a battery is not a battery"
         );
     }
@@ -1314,14 +1436,8 @@ mod tests {
             },
         );
 
-        let session = ev_session(
-            &household.site,
-            &observed,
-            &household,
-            Some(&charging),
-            horizon,
-        )
-        .expect("a session");
+        let session =
+            ev_session(now, &observed, &household, Some(&charging), horizon).expect("a session");
 
         assert!(
             (session.energy_now.kwh() - 20.3).abs() < 1e-6,
@@ -1336,6 +1452,16 @@ mod tests {
         assert_eq!(session.departure.local_minute_of_day(), 7 * 60);
         assert!(session.deadline() < session.departure);
 
+        assert!(
+            ev_session(
+                now + time::Duration::seconds(61),
+                &observed,
+                &household,
+                Some(&charging),
+                horizon
+            )
+            .is_none()
+        );
         // …and a car already at its target is not a session at all: a named
         // asset the problem does not move is a target of zero the arbiter obeys.
         observed.vehicles.insert(
@@ -1347,16 +1473,7 @@ mod tests {
                 at: now,
             },
         );
-        assert!(
-            ev_session(
-                &household.site,
-                &observed,
-                &household,
-                Some(&charging),
-                horizon
-            )
-            .is_none()
-        );
+        assert!(ev_session(now, &observed, &household, Some(&charging), horizon).is_none());
     }
 
     /// A store whose driver cannot take a command is not planned as one.

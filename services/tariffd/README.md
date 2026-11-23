@@ -1,71 +1,16 @@
 # tariffd
 
-The price service of [hems](https://github.com/hupe1980/ems): fetch, reconcile,
-serve.
+Reconciles public day-ahead prices by source trust, resolution and publication time. The API returns net wholesale prices and cache coverage.
 
-`ems-tariff::source` parses what the five published sources publish and
-`ems-tariff::cache` decides what to do when two of them disagree. Both are pure
-functions and neither has ever made a request. This is the process that does.
-
-## Three jobs
-
-**Fetch.** Ask each configured source on a schedule, and keep asking after a
-failure with a backoff that does not turn one outage into a denial of service
-against somebody else's free API.
-
-**Reconcile.** A curve arrives twice and the two disagree, so the order is
-**written down**: a more trusted source always wins, then a finer publication,
-then the later observation. “Last write wins” gets the first one wrong, and a
-Tibber curve arriving after an ENTSO-E one would overwrite it.
-
-**Serve.** Answer the box's question — *what do you have for this horizon* — and
-say honestly how much of it is covered, so a household with no prices plans
-against a flat default **knowingly** rather than being told nothing is wrong.
-
-| | |
+| Endpoint | Result |
 |---|---|
 | `GET /v1/prices?from=…&slots=96` | the resolved quarter-hourly curve |
 | `GET /v1/prices/coverage` | how much of a window it can price |
 | `GET /v1/modul3` | which operators the curated Modul 3 catalogue covers |
 | `GET /v1/modul3/{netzbetreiber}` | one operator's transcribed calendars |
-| `GET /livez`, `/readyz`, `/version` | as every daemon here |
+| `GET /livez`, `/readyz`, `/version` | health and build information |
 
-**Unauthenticated on purpose**: a day-ahead curve and a network operator's
-price sheet are published figures. That is a decision rather than an oversight,
-which is why it is written down.
-
-## The curated Modul 3 catalogue
-
-There is no machine-readable national format for a Zählzeitdefinition — a PDF
-or an Excel sheet per network operator — so somebody transcribes each one,
-**once per Netzgebiet** rather than once per household. `[[modul3]]` entries
-carry the identical `ems_grid::modul3::Transcription` a box takes as
-`[tariff.modul3]`, keyed by the operator's BDEW-Codenummer; every one is
-checked against the BDEW Anwendungshilfe at start-up, and a violation refuses
-the daemon — a fleet serving windows nobody may sell prices a whole Netzgebiet
-against a tariff nobody may be billed on.
-
-## The fetching is behind a trait
-
-`Upstream` is the seam. In production it is `Http`, which is `reqwest`. In every
-test it is a table of captured responses, so the whole daemon — schedule,
-backoff, reconciliation, readiness, the HTTP surface — is covered without a
-network, in milliseconds, on a machine that is offline. A test that needs the
-internet is a test that is skipped.
-
-## A store beats a passthrough
-
-It holds two days each way and computes readiness from what it still **covers**
-rather than from when the last request returned, so a WAN outage shorter than the
-horizon costs the household nothing at all.
-
-## Configuration
-
-A `--config` file and `HEMS_TARIFFD_*` in the environment, which wins. Every
-credential may be written as `env:NAME` or `file:/run/secrets/x` rather than as
-itself, and an unresolvable reference **stops the daemon** rather than being taken
-literally — a `tariffd` sending the literal string `env:ENTSOE_TOKEN` as a
-security token looks exactly like one whose source has started rejecting it.
+Configure source credentials as environment or file references. Modul 3 calendars are keyed by operator BDEW code and validated on startup. See [tariffd.example.toml](tariffd.example.toml). [Fleet services guide](https://hupe1980.github.io/ems/docs/services/)
 
 ## License
 

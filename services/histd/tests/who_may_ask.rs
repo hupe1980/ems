@@ -6,6 +6,8 @@
 //! which fortnight nobody was in. Authorisation is therefore part of what the
 //! service *is*, and every rule below is checked over a real socket.
 
+mod common;
+
 use std::collections::BTreeMap;
 
 use ems_core::prelude::{GuardRule, Power};
@@ -51,6 +53,12 @@ fn event() -> ControlEvent {
 }
 
 async fn start() -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
+    start_with_register_meter(false).await
+}
+
+async fn start_with_register_meter(
+    commissioned: bool,
+) -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigger) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let bound = listener.local_addr().unwrap();
     drop(listener);
@@ -59,6 +67,23 @@ async fn start() -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigge
     // rather than an empty answer that happens to look like one.
     let fixture = ems_service::testdb::Postgres::start(histd::store::MIGRATIONS).await;
     let store = histd::Store::new(fixture.db.clone());
+    let store = if commissioned {
+        store
+            .with_register_meters(
+                &common::database(&fixture),
+                BTreeMap::from([(
+                    "haus-1".into(),
+                    histd::config::RegisterMeter {
+                        malo: "12345678905".parse().unwrap(),
+                        operator: "9900000000003".parse().unwrap(),
+                    },
+                )]),
+            )
+            .await
+            .unwrap()
+    } else {
+        store
+    };
     store
         .put_control_event("haus-1", &event())
         .await
@@ -82,7 +107,13 @@ async fn start() -> (std::net::SocketAddr, ems_service::shutdown::ShutdownTrigge
         ems_service::identity!(),
         settings,
         ems_service::Health::new(),
-        router(History::new(store.clone(), credentials())),
+        router(History::new(store, credentials()).settling(
+            BTreeMap::from([(
+                "haus-1".to_owned(),
+                histd::config::MispelSettings::Ausschliesslichkeit,
+            )]),
+            None,
+        )),
     );
     tokio::spawn(async move { server.run_until(signal).await.unwrap() });
     for _ in 0..200 {
@@ -102,6 +133,16 @@ async fn request(
     token: Option<&str>,
     body: Option<&str>,
 ) -> u16 {
+    exchange(address, method, path, token, body).await.0
+}
+
+async fn exchange(
+    address: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Option<&str>,
+) -> (u16, String) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
     let auth = token.map_or_else(String::new, |t| format!("Authorization: Bearer {t}\r\n"));
@@ -116,10 +157,9 @@ async fn request(
     stream.write_all(head.as_bytes()).await.unwrap();
     let mut raw = String::new();
     stream.read_to_string(&mut raw).await.unwrap();
-    raw.split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
+    let (head, body) = raw.split_once("\r\n\r\n").unwrap();
+    let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    (status, body.to_owned())
 }
 
 #[tokio::test]
@@ -200,6 +240,87 @@ async fn a_box_reads_and_writes_its_own_record() {
         .await,
         201
     );
+    trigger.trigger();
+}
+
+#[tokio::test]
+async fn register_revisions_retry_conflict_or_correct_over_http() {
+    use ems_grid::mispel::RegisterAssertion;
+    let (address, trigger) = start_with_register_meter(true).await;
+    let path = "/v1/sites/haus-1/quarter-hours";
+    let mut value = RegisterAssertion {
+        registers: QuarterHour::empty(ems_core::prelude::Slot::containing(NOW)),
+        recorded_at: NOW + time::Duration::seconds(1),
+    };
+    let post = async |body: String| request(address, "POST", path, Some(HAUS_1), Some(&body)).await;
+    let batch = |assertions: &[RegisterAssertion]| serde_json::to_string(assertions).unwrap();
+
+    assert_eq!(post(batch(&[value, value])).await, 204);
+    assert_eq!(post(batch(&[value])).await, 204);
+    let original = value;
+    value.registers.grid_draw = rust_decimal::Decimal::ONE;
+    assert_eq!(post(batch(&[value])).await, 409);
+    assert_eq!(post(batch(&[original, value])).await, 409);
+    assert_eq!(
+        request(address, "POST", path, Some(HAUS_2), Some(&batch(&[value]))).await,
+        403
+    );
+    value.recorded_at += time::Duration::microseconds(1);
+    assert_eq!(post(batch(&[value])).await, 204);
+
+    let mut malformed = serde_json::to_value([value]).unwrap();
+    malformed[0]["registers"]["slot"] = serde_json::json!("2026-01-15T17:03:00Z");
+    assert_eq!(post(malformed.to_string()).await, 422);
+    value.recorded_at += time::Duration::nanoseconds(1);
+    assert_eq!(post(batch(&[value])).await, 422);
+    trigger.trigger();
+}
+
+#[tokio::test]
+async fn the_first_receipt_supplies_a_replayable_cutoff_even_for_a_future_request() {
+    let (address, trigger) = start().await;
+    let url = "/v1/sites/haus-1/mispel?year=2026&month=11";
+    let receipt = async |path: String| {
+        let (status, body) = exchange(address, "GET", &path, Some(HAUS_1), None).await;
+        assert_eq!(status, 200, "{body}");
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()
+    };
+    let slot = ems_core::prelude::Slot::containing(datetime!(2026-11-03 14:00 UTC));
+    let submit = async |value: ems_grid::mispel::RegisterAssertion| {
+        let batch = serde_json::to_string(&[value]).unwrap();
+        assert_eq!(
+            request(
+                address,
+                "POST",
+                "/v1/sites/haus-1/quarter-hours",
+                Some(HAUS_1),
+                Some(&batch)
+            )
+            .await,
+            204
+        );
+    };
+    let mut value = ems_grid::mispel::RegisterAssertion {
+        registers: QuarterHour::empty(slot),
+        recorded_at: slot.start(),
+    };
+    submit(value).await;
+    let first = receipt(url.to_owned()).await;
+    let future = receipt(format!("{url}&as_of=2099-01-01T00:00:00Z")).await;
+    value.recorded_at += time::Duration::microseconds(1);
+    value.registers.grid_draw = rust_decimal::Decimal::ONE;
+    value.registers.device_consumption = rust_decimal::Decimal::ONE;
+    submit(value).await;
+    let now = receipt(url.to_owned()).await;
+    assert_eq!(now["held"], false);
+    assert_eq!(now["quarter_hours"]["present"], 1);
+    for old in [first, future] {
+        let cutoff = old["as_of"].as_str().unwrap();
+        assert!(cutoff.ends_with('Z'));
+        assert_eq!(old["quarter_hours"]["present"], 1);
+        assert_eq!(old["held"], true);
+        assert_eq!(receipt(format!("{url}&as_of={cutoff}")).await, old);
+    }
     trigger.trigger();
 }
 

@@ -1,28 +1,26 @@
 base_url = "https://hupe1980.github.io/ems"
 title = "ems"
-description = "Open-source energy management for the German grid — hems, for households: § 14a, § 9 EEG and MiSpeL as cited code, a grid guard nothing overrides, and honest savings."
+description = "Energy management for the German grid. Run a household gateway, replay building charging limits or reconcile industrial meter readings."
 default_language = "en"
 compile_sass = false
 build_search_index = true
-generate_feeds = true
-feed_filenames = ["atom.xml"]
+
+[link_checker]
+# These URLs are served by the reader’s local demo processes.
+skip_prefixes = ["http://127.0.0.1:8081/", "http://127.0.0.1:8082/", "http://127.0.0.1:8083/"]
 
 [markdown]
 smart_punctuation = true
-# Deep links to every heading: a documentation page whose sections cannot be
-# linked to is one nobody links to.
 insert_anchor_links = "heading"
-# GitHub-style callouts: `> [!NOTE]` becomes a styled aside.
 github_alerts = true
 
-# `css` rather than a baked-in theme, so the same page can be highlighted for a
-# reader in light mode and a reader in dark mode without shipping two of it.
 [markdown.highlighting]
 style = "class"
 light_theme = "ayu-light"
 dark_theme = "ayu-dark"
 
 [search]
+index_format = "elasticlunr_json"
 include_title = true
 include_description = true
 include_path = true
@@ -30,22 +28,12 @@ include_path = true
 [extra]
 repository = "https://github.com/hupe1980/ems"
 author     = "hupe1980"
-# The documentation sidebar's groups, in order; each page names its own in
-# `[extra] group`.
-doc_groups = ["Start", "The box", "Running it"]
+doc_groups = ["Start", "Control and metering", "Integration and operations"]
 tagline    = "open-source energy management for the German grid"
 
-# The landing page's five numbers. They are here rather than in the template so
-# that changing one is a one-line diff against the thing that produced it, and
-# `cargo xtask check-stats` fails the build when the first three drift — the
-# citations, the tests and the pure crates are all counted from the tree. A
-# figure on a landing page that nothing compares is a figure that is wrong
-# within a fortnight; the last two are set by hand and are properties of the
-# reference days rather than of the tree.
-stat_rules   = "469"
-stat_tests   = "1367"
+# check-stats verifies the citation, test and domain-crate counts.
+stat_rules   = "465"
+stat_tests   = "1445"
 stat_crates  = "10"
 stat_days    = "7"
 stat_horizon = "192"
-
-keywords = "HEMS, home energy management, § 14a EnWG, EEBUS, S2, EN 50491-12-2, Rust, model predictive control, § 9 EEG, Solarspitzengesetz, MiSpeL, § 42c EnWG, dynamic tariff, § 41a EnWG, SunSpec, Modbus"

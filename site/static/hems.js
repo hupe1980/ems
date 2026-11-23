@@ -1,10 +1,5 @@
-/* hems — theme toggle, copy buttons, mermaid.
-   Everything here is progressive: the page is complete without it. */
-
 (function () {
   "use strict";
-
-  /* ── Theme ────────────────────────────────────────────────────────────── */
 
   var root = document.documentElement;
   var LABEL = { light: "☀", dark: "☾", system: "◐" };
@@ -14,8 +9,7 @@
     if (choice === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", choice);
 
-    // The syntax stylesheets are picked by media query, so an explicit choice
-    // has to move the query rather than a class.
+    // Syntax highlighting follows the selected theme as well.
     var light = document.getElementById("syntax-light");
     var dark = document.getElementById("syntax-dark");
     if (light && dark) {
@@ -37,7 +31,10 @@
   }
 
   function stored() {
-    try { return localStorage.getItem("hems-theme") || "system"; } catch (e) { return "system"; }
+    try {
+      var saved = localStorage.getItem("hems-theme");
+      return ORDER.includes(saved) ? saved : "system";
+    } catch { return "system"; }
   }
 
   var current = stored();
@@ -53,8 +50,6 @@
     });
   }
 
-  /* ── Wide tables scroll inside their own box ──────────────────────────── */
-
   document.querySelectorAll("article table").forEach(function (table) {
     if (table.parentElement.classList.contains("table-wrap")) return;
     var wrap = document.createElement("div");
@@ -63,20 +58,20 @@
     wrap.appendChild(table);
   });
 
-  /* ── Copy buttons ─────────────────────────────────────────────────────── */
-
   if (navigator.clipboard) {
-    document.querySelectorAll("pre:not(.mermaid)").forEach(function (pre) {
+    document.querySelectorAll("pre:not(.mermaid) > code").forEach(function (code) {
+      var pre = code.parentElement;
       var btn = document.createElement("button");
       btn.className = "copy-btn";
       btn.type = "button";
       btn.textContent = "Copy";
       btn.addEventListener("click", function () {
-        // A console block is written with its prompt; what a reader wants on the
-        // clipboard is the command, not the `$`.
-        var text = pre.innerText.replace(/^\$ ?/gm, "");
+        var text = code.textContent.replace(/^\$ /gm, "");
         navigator.clipboard.writeText(text).then(function () {
           btn.textContent = "Copied";
+        }, function () {
+          btn.textContent = "Copy unavailable";
+        }).finally(function () {
           setTimeout(function () { btn.textContent = "Copy"; }, 1400);
         });
       });
@@ -84,89 +79,110 @@
     });
   }
 
-  /* ── Search ───────────────────────────────────────────────────────────── */
-
-  // Progressive to the last: the box stays hidden until an index has actually
-  // loaded and parsed, so a failure here is invisible rather than broken.
-  var box = document.getElementById("search");
+  const box = document.getElementById("search");
   if (box) {
-    (function () {
-      var input = document.getElementById("search-input");
-      var list = document.getElementById("search-results");
-      var index = null;
+    const input = document.getElementById("search-input");
+    const list = document.getElementById("search-results");
+    const status = document.getElementById("search-status");
+    let pendingIndex;
 
-      function load(then) {
-        if (index) return then();
-        var lunr = document.createElement("script");
-        lunr.src = base("elasticlunr.min.js");
-        lunr.onload = function () {
-          var data = document.createElement("script");
-          data.src = base("search_index.en.js");
-          data.onload = function () {
-            try {
-              index = window.elasticlunr.Index.load(window.searchIndex);
-              then();
-            } catch (e) { /* no search, and no broken box either */ }
-          };
-          document.head.appendChild(data);
-        };
-        document.head.appendChild(lunr);
-      }
-
-      function base(file) {
-        var css = document.querySelector('link[href$="hems.css"]');
-        return css ? css.getAttribute("href").replace(/hems\.css$/, file) : file;
-      }
-
-      function render(term) {
-        list.innerHTML = "";
-        if (!index || term.length < 2) return;
-        var hits = index.search(term, {
-          bool: "AND",
-          expand: true,
-          fields: { title: { boost: 3 }, description: { boost: 2 }, body: { boost: 1 } }
-        }).slice(0, 8);
-        if (!hits.length) {
-          var none = document.createElement("li");
-          none.className = "search-empty";
-          none.textContent = "Nothing for “" + term + "”";
-          list.appendChild(none);
-          return;
-        }
-        hits.forEach(function (hit) {
-          var doc = index.documentStore.getDoc(hit.ref);
-          var li = document.createElement("li");
-          var a = document.createElement("a");
-          a.href = hit.ref;
-          var t = document.createElement("strong");
-          t.textContent = doc.title || hit.ref;
-          var d = document.createElement("span");
-          d.textContent = (doc.description || doc.body || "").slice(0, 110);
-          a.appendChild(t);
-          a.appendChild(d);
-          li.appendChild(a);
-          list.appendChild(li);
+    function loadIndex() {
+      if (!pendingIndex) {
+        const library = new Promise((resolve, reject) => {
+          if (window.elasticlunr) return resolve();
+          const script = document.createElement("script");
+          script.src = box.dataset.library;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
         });
+        const data = fetch(box.dataset.index).then(response => {
+          if (!response.ok) throw new Error("Search index unavailable");
+          return response.json();
+        });
+        pendingIndex = Promise.all([library, data])
+          .then(([, raw]) => window.elasticlunr.Index.load(raw))
+          .catch(error => {
+            pendingIndex = undefined;
+            throw error;
+          });
       }
+      return pendingIndex;
+    }
 
-      input.addEventListener("input", function () {
-        var term = input.value.trim();
-        if (!term) { list.innerHTML = ""; return; }
-        load(function () { render(term); });
-      });
-      input.addEventListener("keydown", function (e) {
-        if (e.key === "Escape") { input.value = ""; list.innerHTML = ""; input.blur(); }
-      });
-      document.addEventListener("click", function (e) {
-        if (!box.contains(e.target)) list.innerHTML = "";
-      });
+    function clearResults() {
+      list.replaceChildren();
+      status.textContent = "";
+    }
 
-      // Only now is there something that works.
-      box.hidden = false;
-    })();
+    function message(text) {
+      const item = document.createElement("li");
+      item.className = "search-empty";
+      item.textContent = text;
+      list.replaceChildren(item);
+      status.textContent = text;
+    }
+
+    async function search() {
+      const term = input.value.trim();
+      clearResults();
+      if (term.length < 2) return;
+      try {
+        const index = await loadIndex();
+        // Focus and the query can both change while the index downloads.
+        if (input.value.trim() !== term || !box.contains(document.activeElement)) return;
+        const hits = index.search(term, {
+          bool: "AND", expand: true,
+          fields: { title: { boost: 3 }, description: { boost: 2 }, body: { boost: 1 } }
+        });
+        if (!hits.length) return message("No matching guides");
+
+        const results = hits.slice(0, 8).map(hit => {
+          const doc = index.documentStore.getDoc(hit.ref);
+          const link = document.createElement("a");
+          link.href = hit.ref;
+          const title = document.createElement("strong");
+          title.textContent = doc.title;
+          const description = document.createElement("span");
+          description.textContent = doc.description;
+          link.append(title, description);
+          const item = document.createElement("li");
+          item.appendChild(link);
+          return item;
+        });
+        list.replaceChildren(...results);
+        status.textContent = hits.length > results.length
+          ? "Showing the first " + results.length + " of " + hits.length + " results"
+          : hits.length + (hits.length === 1 ? " result" : " results");
+      } catch {
+        if (input.value.trim() === term && box.contains(document.activeElement)) {
+          message("Search unavailable. Browse the guides below.");
+        }
+      }
+    }
+
+    input.addEventListener("focus", search);
+    input.addEventListener("input", search);
+    box.addEventListener("focusout", event => {
+      if (!box.contains(event.relatedTarget)) clearResults();
+    });
+    box.addEventListener("keydown", event => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        input.value = "";
+        input.focus();
+        clearResults();
+      }
+      if (event.key === "ArrowDown" && event.target === input) {
+        const first = list.querySelector("a");
+        if (first) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+    box.hidden = false;
   }
-
-  /* ── "/" focuses search; the TOC follows the reader ─────────────────── */
 
   document.addEventListener("keydown", function (e) {
     if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -176,6 +192,13 @@
     if (input && !document.getElementById("search").hidden) { e.preventDefault(); input.focus(); }
   });
 
+  const toc = document.querySelector(".toc details");
+  if (toc) {
+    const compact = window.matchMedia("(max-width: 75rem)");
+    toc.open = !compact.matches;
+    compact.addEventListener("change", event => { toc.open = !event.matches; });
+  }
+
   var tocLinks = document.querySelectorAll("aside.toc a[href*='#']");
   if (tocLinks.length && "IntersectionObserver" in window) {
     var byId = {};
@@ -183,82 +206,54 @@
     var heads = Array.prototype.filter.call(
       document.querySelectorAll("article h2[id], article h3[id]"),
       function (h) { return byId[h.id]; });
-    var current = null;
+    var activeHeading = null;
     var spy = new IntersectionObserver(function (entries) {
       entries.forEach(function (en) {
         if (!en.isIntersecting) return;
-        if (current) current.classList.remove("active");
-        current = byId[en.target.id];
-        current.classList.add("active");
+        if (activeHeading) {
+          activeHeading.classList.remove("active");
+          activeHeading.removeAttribute("aria-current");
+        }
+        activeHeading = byId[en.target.id];
+        activeHeading.classList.add("active");
+        activeHeading.setAttribute("aria-current", "location");
       });
     }, { rootMargin: "0px 0px -75% 0px" });
     heads.forEach(function (h) { spy.observe(h); });
   }
 
-  /* ── Mermaid ──────────────────────────────────────────────────────────── */
-
-  var diagrams = document.querySelectorAll("pre.mermaid");
+  const diagrams = Array.from(document.querySelectorAll("pre.mermaid"));
   if (!diagrams.length) return;
+  const sources = diagrams.map(element => {
+    const copy = element.cloneNode(true);
+    copy.querySelectorAll("br").forEach(br => br.replaceWith("<br/>"));
+    return copy.textContent;
+  });
 
-  function dark() {
-    var choice = root.getAttribute("data-theme");
-    if (choice === "dark") return true;
-    if (choice === "light") return false;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
-  }
-
-  var sources = [];
-  diagrams.forEach(function (el) { sources.push(el.textContent); });
-
-  var script = document.createElement("script");
-  script.type = "module";
-  script.textContent = [
-    "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';",
-    "window.__hemsMermaid = mermaid;",
-    "document.dispatchEvent(new Event('hems:mermaid-ready'));"
-  ].join("\n");
-
-  function render() {
-    var mermaid = window.__hemsMermaid;
-    if (!mermaid) return;
-    var css = getComputedStyle(document.body);
-    diagrams.forEach(function (el, i) {
-      el.removeAttribute("data-processed");
-      el.textContent = sources[i];
-    });
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: dark() ? "dark" : "neutral",
-      fontFamily: css.getPropertyValue("--font-sans") || "sans-serif",
-      themeVariables: {
-        primaryColor: css.getPropertyValue("--bg-sunk").trim(),
-        primaryTextColor: css.getPropertyValue("--fg").trim(),
-        primaryBorderColor: css.getPropertyValue("--line").trim(),
-        lineColor: css.getPropertyValue("--fg-subtle").trim(),
-        secondaryColor: css.getPropertyValue("--accent-weak").trim(),
-        tertiaryColor: css.getPropertyValue("--bg-soft").trim(),
-        background: css.getPropertyValue("--bg-soft").trim()
+  // The source remains readable offline or when a graph fails to render.
+  import("https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs").then(({ default: mermaid }) => {
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
+    let revision = 0;
+    async function render() {
+      const version = ++revision;
+      const dark = root.dataset.theme ? root.dataset.theme === "dark" : system.matches;
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "neutral" });
+      for (const [i, element] of diagrams.entries()) {
+        if (version !== revision) return;
+        try {
+          const { svg } = await mermaid.render("diagram-" + version + "-" + i, sources[i]);
+          if (version !== revision) return;
+          element.innerHTML = svg;
+          element.dataset.processed = "true";
+        } catch {
+          if (version !== revision) return;
+          element.textContent = sources[i];
+          delete element.dataset.processed;
+        }
       }
-    });
-    mermaid.run({ nodes: diagrams });
-  }
-
-  // If the renderer never arrives, show the graph source rather than nothing.
-  var revealed = setTimeout(function () {
-    diagrams.forEach(function (el) {
-      if (!el.hasAttribute("data-processed")) el.classList.add("source-fallback");
-    });
-  }, 4000);
-
-  document.addEventListener("hems:mermaid-ready", function () {
-    clearTimeout(revealed);
+    }
     render();
-  });
-  document.addEventListener("hems:theme", function () { if (window.__hemsMermaid) render(); });
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
-    if (window.__hemsMermaid) render();
-  });
-
-  document.head.appendChild(script);
+    document.addEventListener("hems:theme", render);
+    system.addEventListener("change", render);
+  }).catch(() => {});
 })();

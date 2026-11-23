@@ -1,0 +1,14 @@
+main.shift { max-width: 38rem; }
+.shift .cap { color: var(--subtle); }
+.shift { --subtle: #505b66; --edge: #879aa7; --paper: #f0f5f8; }
+.shift h1 { margin: .4rem 0 1.4rem; }
+.shift p { margin: .55rem 0; }
+.shift .forecast { margin: 1.2rem 0; padding: .8rem 1rem; border-inline-start: .3rem solid var(--edge); background: var(--paper); }
+.shift .forecast h2 { margin: 0; font-variant-numeric: tabular-nums; }
+.shift .choices { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+.shift .choices a { padding: .5rem .75rem; border: 1px solid var(--edge); border-radius: .35rem; }
+.shift [aria-current="step"] { font-weight: 700; background: var(--paper); }
+.shift :focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+@media (prefers-color-scheme: dark) {
+  .shift { --subtle: #b4c3ce; --edge: #9cafbe; --paper: #222e36; }
+}

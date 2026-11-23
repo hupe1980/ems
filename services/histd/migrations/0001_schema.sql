@@ -49,35 +49,35 @@ CREATE TABLE IF NOT EXISTS quarter_hour (
     -- settlement claiming the battery stood still.
     storage_consumption_kwh NUMERIC,
     storage_generation_kwh  NUMERIC,
-    anzulegender_wert_ct   NUMERIC     NOT NULL,
-    spot_price_ct          NUMERIC     NOT NULL,
-    -- **Transaction time**, and it is part of the key.
-    --
-    -- A register is restated — an Ersatzwert replaced by a real reading, a
-    -- correction from the metering point operator — weeks after the MiSpeL
-    -- Nachweis was computed and handed over. "What was known on the day" is then
-    -- a question somebody actually asks, and a table keyed
-    -- `(site_id, slot_start)` cannot answer it whatever it keeps in a column
-    -- beside the value: the upsert overwrites. So the version is in the key and
-    -- the table is append-only; `Store::quarter_hours` reads the newest version
-    -- at or before an `as_of`, which is the current value when that is `None`.
-    -- The cost is a row per restatement rather than per quarter hour.
-    recorded_at            TIMESTAMPTZ NOT NULL
+    anzulegender_wert_ct   NUMERIC,
+    spot_price_ct          NUMERIC,
+    -- Producer revision identifies a correction. The historian assigns its own
+    -- knowledge time on first acceptance, including for delayed deliveries.
+    assertion_at           TIMESTAMPTZ NOT NULL,
+    recorded_at            TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (site_id, assertion_at, slot_start)
 );
 
--- The key. A `UNIQUE INDEX` rather than a `PRIMARY KEY` because **`recorded_at`
--- is descending** and a primary key cannot say so — every read is
--- `DISTINCT ON (slot_start) … ORDER BY slot_start, recorded_at DESC`, which read
--- forwards is this index's own order. `ON CONFLICT (site_id, slot_start,
--- recorded_at)` still infers it: inference matches the column set, not the
--- direction.
---
--- The settlement read wants eight payload columns, so it cannot be index-only
--- and PostgreSQL sorts the window instead — measured at 4 ms for 800 rows, and
--- an in-memory sort for a two-year export. `tests/query_plans.rs` asserts what
--- matters, which is that all four bounds stay in the `Index Cond`.
-CREATE UNIQUE INDEX IF NOT EXISTS quarter_hour_version
-    ON quarter_hour (site_id, slot_start, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS quarter_hour_version
+    ON quarter_hour (site_id, slot_start, assertion_at DESC, recorded_at);
+
+-- A retry compares all columns (including nullable prices and registers).
+-- Skipping an identical UPDATE preserves the first acceptance time and avoids
+-- writing a dead tuple; a mismatch aborts the complete INSERT batch.
+CREATE FUNCTION histd_immutable_assertion() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW IS DISTINCT FROM OLD THEN
+        RAISE EXCEPTION USING
+            ERRCODE = 'HS001',
+            MESSAGE = format('slot %s already has different registers at producer revision %s',
+                             OLD.slot_start, OLD.assertion_at);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER immutable_assertion BEFORE UPDATE ON quarter_hour
+    FOR EACH ROW EXECUTE FUNCTION histd_immutable_assertion();
 
 -- Retention, which is a sweep over `slot_start` across every site.
 CREATE INDEX IF NOT EXISTS quarter_hour_by_slot ON quarter_hour (slot_start);
@@ -137,4 +137,11 @@ CREATE TABLE IF NOT EXISTS compliance_sample (
     netzwirksam_w DOUBLE PRECISION NOT NULL,
     ceiling_w     DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (event_id, at)
+);
+
+-- A site's storage identity survives restarts and is immutable after commissioning.
+CREATE TABLE register_meter (
+    site_id TEXT PRIMARY KEY,
+    malo TEXT NOT NULL,
+    operator_id TEXT NOT NULL
 );

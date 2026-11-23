@@ -245,6 +245,19 @@ async fn a_write_on_the_cookie_needs_a_json_body() {
         .expect("the box to answer");
     assert_eq!(as_a_form.status(), reqwest::StatusCode::UNAUTHORIZED);
 
+    assert_eq!(
+        client
+            .delete(format!("{base}/v1/overrides"))
+            .header(reqwest::header::COOKIE, &cookie)
+            .header(reqwest::header::CONTENT_TYPE, "text/plain")
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+
     let bare = client
         .delete(format!("{base}/v1/overrides"))
         .header(reqwest::header::COOKIE, &cookie)
@@ -298,6 +311,19 @@ async fn a_manager_reaches_nothing_of_commissioning() {
         .expect("a manager can be connected");
     let client = reqwest::Client::new();
     for (what, request) in [
+        (
+            "the household goal quote",
+            client
+                .post(format!("{base}/v1/goals/wallbox/quote"))
+                .json(&serde_json::json!({"target_soc": 0.8, "by_minute": 420})),
+        ),
+        ("the supply contract", client.get(format!("{base}/v1/tariff"))),
+        ("previewing a supply contract", client.post(format!("{base}/v1/tariff/preview"))),
+        ("activating a supply contract", client.put(format!("{base}/v1/tariff"))),
+        ("immediate car charging", client.put(format!("{base}/v1/goals/wallbox/boost")).json(&serde_json::json!({"goal":{"target_soc":0.8, "by_minute":420}, "extra_eur":0.23,"until":0}))),
+        ("cancelling immediate car charging", client.delete(format!("{base}/v1/goals/wallbox/boost"))),
+        ("setting a household goal",client.put(format!("{base}/v1/goals/wallbox")).json(&serde_json::json!({"target_soc":0.75,"by_minute":420}))),
+        ("removing a household goal",client.delete(format!("{base}/v1/goals/wallbox"))),
         ("the SHIP code", client.get(format!("{base}/v1/qr/ski"))),
         (
             "the fingerprint code",
@@ -312,6 +338,9 @@ async fn a_manager_reaches_nothing_of_commissioning() {
             client.get(format!("{base}/v1/handover")),
         ),
         ("the trust check", client.get(format!("{base}/v1/trust"))),
+        ("the installation outcome", client.get(format!("{base}/v1/commissioning/change"))),
+        ("confirming an installation", client.post(format!("{base}/v1/commissioning/change")).json(&serde_json::json!({"id": "unissued"}))),
+
         (
             "a discovery",
             client
@@ -854,6 +883,12 @@ async fn quotes_come_one_at_a_time() {
             .json(&serde_json::json!({ "target_soc": 0.8, "by_minute": 420 }))
             .send()
     };
+    let held = hemsd::runtime::quote::slot().expect("free quote slot");
+    assert_eq!(
+        ask().await.unwrap().status(),
+        reqwest::StatusCode::TOO_MANY_REQUESTS
+    );
+    drop(held);
     // Nothing planned on this box: the first quote takes the slot and says so…
     assert_eq!(ask().await.unwrap().status().as_u16(), 503);
     // …and the next, within the second, is turned away before any solve.

@@ -12,14 +12,14 @@ use obsd::api::{Observed, router};
 #[command(name = "obsd", version, about = "The hems observability service")]
 struct Cli {
     /// The configuration file. Absent, or absent from disk, means the defaults.
-    #[arg(long, env = "HEMS_OBSD_CONFIG")]
+    #[arg(long, env = "EMS_OBSD_CONFIG")]
     config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let settings: Settings = ems_service::load(cli.config.as_deref(), "HEMS_OBSD")?;
+    let settings: Settings = ems_service::load(cli.config.as_deref(), "EMS_OBSD")?;
     ems_service::init_tracing(
         ems_service::identity!(),
         &settings.service.log_filter,
