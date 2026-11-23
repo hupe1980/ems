@@ -220,9 +220,9 @@ jobs:
           path: .s2-analyzer
           persist-credentials: false
       - name: Validate the live battery with S2 Analyzer
-        run: pipx run --spec uv==0.13.6 uv run --project .s2-analyzer/backend --frozen --no-dev --python 3.12 python xtask/s2_analyzer.py target/debug/hemsd
-        env:
-          PYTHONPATH: ${{ github.workspace }}/.s2-analyzer/backend
+        run: |
+          pipx run --spec uv==0.13.6 uv run --project .s2-analyzer/backend --frozen --no-dev --python 3.12 \
+            env PYTHONPATH="$PWD/.s2-analyzer/backend" python xtask/s2_analyzer.py target/debug/hemsd
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
