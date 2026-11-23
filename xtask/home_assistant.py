@@ -33,6 +33,16 @@ async def exercise(config):
             "grant_type": "authorization_code", "code": code, "client_id": base + "/",
         }) as response:
             token = (await response.json())["access_token"]
+        # Onboarding accepts requests before Home Assistant attaches its automations.
+        headers = {"Authorization": "Bearer " + token}
+        for _ in range(60):
+            async with client.get("/api/config", headers=headers) as response:
+                if (await response.json())["state"] == "RUNNING":
+                    break
+            await asyncio.sleep(0.5)
+        else:
+            raise RuntimeError("Home Assistant did not finish startup")
+
         async with client.ws_connect("/api/websocket") as ws:
             assert (await ws.receive_json())["type"] == "auth_required"
             await ws.send_json({"type": "auth", "access_token": token})
