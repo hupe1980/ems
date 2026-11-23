@@ -63,16 +63,16 @@ fn main() -> Result<()> {
                 let phase = i32::try_from((index + i64::try_from(channel)?) % 97)?;
                 let level = f64::from(phase + 100);
                 let (mean, min, max, samples) = match (channel, index) {
-                    (0, 0) => (1_000., -500., 2_500., 2.),
-                    (0, 1) => (0., 0., 0., 1.),
-                    (3, _) => (-level, -level, -level, 1.),
-                    _ => (level, level, level, 1.),
+                    (0, 0) => (1_000., -500., 2_500., 2),
+                    (0, 1) => (0., 0., 0., 1),
+                    (3, _) => (-level, -level, -level, 1),
+                    _ => (level, level, level, 1),
                 };
                 let fields = BTreeMap::from([
                     ("watts_avg".into(), FieldValue::F64(mean)),
                     ("watts_min".into(), FieldValue::F64(min)),
                     ("watts_max".into(), FieldValue::F64(max)),
-                    ("watts_count".into(), FieldValue::F64(samples)),
+                    ("watts_count".into(), FieldValue::U64(samples)),
                 ]);
                 batch.push(Point::new(key.clone(), fields, start + index * QUARTER_NS)?);
             }

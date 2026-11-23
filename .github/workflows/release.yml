@@ -21,15 +21,12 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  # ── 1. The tag says what it is, and the tree passes the same gate main does ──
-  #
-  # A tag can be pushed at any commit, including one that never went through the
-  # pull-request lane. Re-running the whole gate here costs a few minutes and is
-  # the only thing standing between "somebody tagged the wrong SHA" and a
-  # published crate.
   verify:
     name: Verify
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -59,8 +56,18 @@ jobs:
         with:
           tool: cargo-deny
 
-      # fmt · clippy · purity · tests · workspace guards · licences · docs.
-      - run: just ci
+      - name: Verify the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs"
+          if [[ "$(gh api --method GET "$runs" -f branch=main -f event=push -f head_sha="$sha" -F per_page=1 \
+                    --jq '.workflow_runs[0].conclusion')" == success ]]; then
+            echo "CI passed for $sha on main."
+          else
+            just ci
+          fi
       - name: Exercise household release simulations
         env:
           CHROME: /usr/bin/google-chrome
