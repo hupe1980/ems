@@ -53,6 +53,14 @@
   </div>
 </section>
 
+<div class="home-simulators" id="simulators">
+  {% set embedded = true %}
+  {% set scenario = get_page(path="solar-charging.md") %}
+  {% include "partials/solar-charging.html" %}
+  {% set scenario = get_page(path="peak-challenge.md") %}
+  {% include "partials/peak-challenge.html" %}
+</div>
+
 <section class="band" aria-labelledby="systems">
   <div class="band-inner">
     <h2 id="systems">Choose your edge system</h2>
@@ -76,14 +84,6 @@
     </div>
   </div>
 </section>
-
-<div class="home-simulators" id="simulators">
-  {% set embedded = true %}
-  {% set scenario = get_page(path="solar-charging.md") %}
-  {% include "partials/solar-charging.html" %}
-  {% set scenario = get_page(path="peak-challenge.md") %}
-  {% include "partials/peak-challenge.html" %}
-</div>
 
 <section class="band faq-band" id="faq">
   <div class="band-inner faq-layout">

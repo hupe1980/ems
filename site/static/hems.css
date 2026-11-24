@@ -559,3 +559,21 @@ h2:hover .zola-anchor, h3:hover .zola-anchor, h4:hover .zola-anchor,
   line-height: 1.08;
   letter-spacing: -.045em;
 }
+.home-simulators { background: var(--bg-soft); border-bottom: 1px solid var(--line); }
+.home-simulators article {
+  width: min(100%, var(--shell)); margin: 0 auto;
+  padding: clamp(2rem, 5vw, 4.5rem) clamp(1rem, 4vw, 3rem);
+}
+.home-simulators article + article { border-top: 1px solid var(--line); }
+.home-simulators :is(.solar-panel, .peak-console) {
+  background: var(--bg); box-shadow: var(--shadow); border-top: 3px solid var(--accent);
+}
+@media (min-width: 62rem) {
+  .home-simulators article { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.4fr); column-gap: clamp(2rem, 5vw, 5rem); align-content: start; }
+  .home-simulators article > header { grid-area: 1 / 1; }
+  .home-simulators article > :is(.solar-panel, .peak-console, #peak-example, #solar-example) {
+    grid-column: 2; grid-row: 1 / span 3; align-self: start; margin: 0;
+  }
+  .home-simulators article > :is(.solar-panel, .peak-console):not([hidden]) ~ details:not([hidden], .solar-assumptions) { grid-row: 4; }
+  .home-simulators article > :is(.solar-assumptions, .peak-guide, a) { grid-column: 1; align-self: start; }
+}

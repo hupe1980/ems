@@ -15,11 +15,13 @@
     </fieldset>
 
     <div class="peak-projection">
-      <div class="peak-timing" aria-hidden="true">
-        <span>Minutes until meter close</span>
-        <ol reversed>
-          {% for minute in [5, 4, 3, 2, 1] %}<li data-minute="{{ minute }}">{{ minute }}</li>{% endfor %}
+      <div class="peak-timing">
+        <span>Quarter-hour dispatch</span>
+        <ol aria-hidden="true">
+          {% for minute in range(start=0, end=15) %}<li data-elapsed="{{ minute }}"></li>{% endfor %}
         </ol>
+        <div class="peak-axis" aria-hidden="true"><span>0 min</span><span>15 min</span></div>
+        <p id="peak-window"></p>
       </div>
       <div id="peak-result" aria-live="polite" aria-atomic="true">
         <span class="peak-label">Projected quarter-hour mean</span>

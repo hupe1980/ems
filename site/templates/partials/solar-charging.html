@@ -1,14 +1,18 @@
 <article id="solar-charging" class="solar-lab">
   <header><p class="context">Household simulation</p>
     {% if embedded %}<h2>Can the car charge on sunshine?</h2>{% else %}<h1>Can the car charge on sunshine?</h1>{% endif %}
-    <p>The house has taken its share of the rooftop solar. Move the surplus to see how much an 11 kW wallbox can offer the car on one phase or three.</p>
+    <p>Slide the surplus past each charging threshold. See when the car can start and how much sunshine each phase setting can use.</p>
   </header>
   <div id="solar-controls" class="solar-panel" hidden>
     <label for="solar-surplus">Surplus solar power</label>
     <output id="solar-available" for="solar-surplus"></output>
     <input type="range" id="solar-surplus" min="0" max="12000" step="10" value="2000" aria-describedby="solar-unit">
     <div class="solar-scale" aria-hidden="true"><span>0 kW</span><span>12 kW</span></div>
-    <p id="solar-unit">Power available after household use, with no grid import for charging.</p>
+    <p id="solar-unit">Solar power left after the house has taken its share.</p>
+    <div class="solar-presets" role="group" aria-label="Try a charging threshold">
+      <button type="button" data-watts="1380">One-phase start · 1.38 kW</button>
+      <button type="button" data-watts="4140">Three-phase start · 4.14 kW</button>
+    </div>
     <div class="solar-modes" aria-live="polite" aria-atomic="true">
       {% for label in ["One phase", "Three phases"] %}
       <section>{% if embedded %}<h3>{{ label }}</h3>{% else %}<h2>{{ label }}</h2>{% endif %}
@@ -23,7 +27,7 @@
     <p id="solar-failed" hidden>The interactive model couldn’t load. Compare the four solar levels below.</p>
     {{ scenario.content | safe }}
   </details>
-  <p>Each active phase needs at least 6 A at 230 V. The model allows up to 16 A per phase and caps the whole wallbox at 11 kW. The figures show steady-state charging setpoints with the car ready to charge. A real phase change also takes time.</p>
+  <details class="solar-assumptions"><summary>Wallbox assumptions</summary><p>The car is ready to charge. Each active phase draws 6–16 A at 230 V, up to 11 kW in total. The display shows the setpoint after phase switching completes.</p></details>
   <a href="{{ get_url(path='@/docs/household.md') }}">Explore the household gateway →</a>
 </article>
 <script type="module" src="{{ get_url(path='solar/charging.js') }}"></script>

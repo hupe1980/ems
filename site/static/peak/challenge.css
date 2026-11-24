@@ -59,27 +59,18 @@
   font-variant-numeric: tabular-nums;
 }
 .peak-timing ol {
-  list-style: none;
-  margin: .7rem 0 0;
-  padding: 0;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: .28rem;
+  grid-template-columns: repeat(15, minmax(0, 1fr));
+  gap: 2px;
+  list-style: none;
+  padding: 0;
+  margin: .75rem 0 .25rem;
 }
-.peak-timing li {
-  text-align: center;
-  font: .85rem/1.55 var(--font-mono);
-  color: var(--fg-muted);
-}
-.peak-timing li::before {
-  content: "";
-  display: block;
-  height: .9rem;
-  border: 1px solid var(--fg-subtle);
-  border-radius: 2px;
-  margin-bottom: .3rem;
-}
-.peak-timing li.supplying::before { background: var(--accent); border-color: var(--accent); }
+.peak-timing li { height: 1.6rem; background: var(--fg-subtle); border-radius: 2px; }
+.peak-timing li.waiting { border: 1px solid var(--fg-subtle); background: repeating-linear-gradient(135deg, transparent 0 3px, var(--fg-subtle) 3px 4px); }
+.peak-timing li.supplying { background: var(--accent); }
+.peak-axis { display: flex; justify-content: space-between; font: .75rem var(--font-mono); color: var(--fg-muted); }
+#peak-window { margin: .85rem 0 0; font-size: .875rem; }
 #peak-mean {
   margin: .2rem 0;
   font-size: clamp(1.9rem, 4.5vw, 2.8rem);
@@ -117,7 +108,6 @@
   #peak-result { grid-row: 1; }
   .peak-projection { grid-template-columns: 1fr; gap: .75rem; margin-top: 1rem; }
   .peak-timing ol { margin-top: .4rem; }
-  .peak-timing li::before { height: .55rem; }
   #peak-example th, #peak-example td { padding: .4rem .2rem; font-size: .88rem; }
 }
 #peak-example th { white-space: normal; }

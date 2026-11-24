@@ -15,6 +15,11 @@ from threading import Thread
 from playwright.sync_api import expect, sync_playwright
 
 
+class PreviewServer(ThreadingHTTPServer):
+    # Chrome opens parallel connections for the homepage styles and modules.
+    request_queue_size = 64
+
+
 class StaticFiles(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -34,6 +39,8 @@ def verify(browser, base):
     delayed = page.get_by_role("button", name="Wait two minutes", exact=True)
     reveal = page.get_by_role("button", name="Reveal the meter close", exact=True)
     result, meter = page.locator("#peak-result"), page.locator("#peak-meter")
+    expect(early).to_have_attribute("aria-pressed", "true")
+    expect(result).to_contain_text("1,100")
     early.focus()
     page.keyboard.press("Enter")
     expect(early).to_have_attribute("aria-pressed", "true")
@@ -46,6 +53,8 @@ def verify(browser, base):
     expect(delayed).to_have_attribute("aria-pressed", "true")
     expect(result).to_contain_text("1,116")
     expect(result).to_contain_text("6 kWh")
+    expect(page.locator(".peak-timing li.waiting")).to_have_count(2)
+    expect(page.locator(".peak-timing li.supplying")).to_have_count(3)
     page.keyboard.press("Tab")
     expect(reveal).to_be_focused()
     page.keyboard.press("Enter")
@@ -102,6 +111,12 @@ def verify_solar(browser, base):
     slider = page.get_by_role("slider", name="Surplus solar power")
     readings = page.locator(".solar-reading")
     expect(readings).to_have_text(["2.00 kW", "Paused"])
+    for label, expected in [
+        ("One-phase start", ["1.38 kW", "Paused"]),
+        ("Three-phase start", ["3.68 kW", "4.14 kW"]),
+    ]:
+        page.get_by_role("button", name=label).press("Enter")
+        expect(readings).to_have_text(expected)
     slider.focus()
     page.keyboard.press("Home")
     expect(readings).to_have_text(["Paused", "Paused"])
@@ -129,7 +144,7 @@ def verify_solar(browser, base):
 def main():
     chrome = os.environ.get("CHROME")
     mac = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-    with TemporaryDirectory() as root, ThreadingHTTPServer(
+    with TemporaryDirectory() as root, PreviewServer(
         ("127.0.0.1", 0), partial(StaticFiles, directory=root)
     ) as server:
         base = f"http://127.0.0.1:{server.server_port}/ems"

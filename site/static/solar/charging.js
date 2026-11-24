@@ -34,7 +34,13 @@ async function start() {
   }
   update();
   slider.addEventListener("input", () => { try { update(); } catch { fallback(); } });
+  for (const preset of controls.querySelectorAll("[data-watts]")) {
+    preset.addEventListener("click", () => {
+      slider.value = preset.dataset.watts;
+      slider.dispatchEvent(new Event("input"));
+    });
+  }
   controls.hidden = false;
-  example.hidden = true;
+  if (!example.open) example.hidden = true;
 }
 start().catch(fallback);

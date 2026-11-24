@@ -15,3 +15,13 @@
 #solar-example table { width: 100%; white-space: normal; }
 #solar-example th { white-space: normal; }
 #solar-example :is(th, td) { padding: .45rem .25rem; }
+.solar-panel output { color: var(--accent); font-size: 1.35rem; line-height: 1; }
+.solar-presets { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: 1rem; }
+.solar-presets button {
+  min-height: 44px; padding: .35rem .7rem; font: inherit; font-size: .875rem;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--fg); cursor: pointer;
+}
+.solar-presets button:hover, .solar-presets button:focus-visible { border-color: var(--accent); }
+.solar-assumptions { margin-bottom: .75rem; }
+.solar-assumptions summary { cursor: pointer; }

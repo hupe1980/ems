@@ -33,22 +33,28 @@ async function start() {
   }
   document.getElementById("peak-target").textContent = format(target) + " kW";
   document.getElementById("peak-capacity").textContent = format(outcomes[0].power) + " kW";
-  for (const [index, button] of buttons.entries()) {
-    button.addEventListener("click", () => {
-      const result = outcomes[index];
-      for (const option of buttons) option.setAttribute("aria-pressed", String(button === option));
-      for (const mark of controls.querySelectorAll("[data-minute]")) {
-        mark.classList.toggle("supplying", Number(mark.dataset.minute) <= result.minutes);
-      }
-      document.getElementById("peak-mean").textContent = format(result.mean) + " kW";
-      const verdict = document.getElementById("peak-verdict");
-      verdict.textContent = result.excess > 0 ? format(result.excess) + " kW over target" : "Target met";
-      verdict.className = result.excess > 0 ? "peak-over" : "peak-met";
-      document.getElementById("peak-equation").textContent =
-        format(result.power) + " kW for " + result.minutes + " minutes delivers " + format(result.energy) + " kWh.";
-      reveal.hidden = false;
-    });
+  function select(index) {
+    const button = buttons[index];
+    const result = outcomes[index];
+    for (const option of buttons) option.setAttribute("aria-pressed", String(button === option));
+    const waiting = outcomes[0].minutes - result.minutes;
+    for (const mark of controls.querySelectorAll("[data-elapsed]")) {
+      const remaining = 15 - Number(mark.dataset.elapsed);
+      mark.classList.toggle("supplying", remaining <= result.minutes);
+      mark.classList.toggle("waiting", remaining > result.minutes && remaining <= outcomes[0].minutes);
+    }
+    document.getElementById("peak-window").textContent =
+      (15 - outcomes[0].minutes) + " min elapsed · " + waiting + " min waiting · " + result.minutes + " min on battery";
+    document.getElementById("peak-mean").textContent = format(result.mean) + " kW";
+    const verdict = document.getElementById("peak-verdict");
+    verdict.textContent = result.excess > 0 ? format(result.excess) + " kW over target" : "Target met";
+    verdict.className = result.excess > 0 ? "peak-over" : "peak-met";
+    document.getElementById("peak-equation").textContent =
+      format(result.power) + " kW for " + result.minutes + " minutes delivers " + format(result.energy) + " kWh.";
+    reveal.hidden = false;
   }
+  buttons.forEach((button, index) => button.addEventListener("click", () => select(index)));
+  select(0);
   disclosure.addEventListener("click", () => {
     const opening = meter.hidden;
     disclosure.setAttribute("aria-expanded", String(opening));
