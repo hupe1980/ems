@@ -1,9 +1,9 @@
 // Exercise the same read-only rehearsal a shift engineer opens on the gateway.
 export async function verifyIndustrialReplay(base, send, js) {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-  async function visible(text, hash = "") {
+  async function visible(text, hash = "", { focused = false } = {}) {
     for (let i = 0; i < 100; i++) {
-      const ready = await js(`location.origin === ${JSON.stringify(base)} && location.hash === ${JSON.stringify(hash)} && document.body.innerText.includes(${JSON.stringify(text)}) && document.documentElement.scrollWidth <= innerWidth`);
+      const ready = await js(`document.readyState === "complete" && (!${focused} || document.activeElement === document.querySelector(":target")) && location.origin === ${JSON.stringify(base)} && location.hash === ${JSON.stringify(hash)} && document.body.innerText.includes(${JSON.stringify(text)}) && document.documentElement.scrollWidth <= innerWidth`);
       if (ready) return;
       await wait(30);
     }
@@ -34,11 +34,11 @@ export async function verifyIndustrialReplay(base, send, js) {
   await send("Page.navigate", {url:base+"/?moment=early"});
   await visible("1100 kW mit Batterie");
   await activate("Zwei Minuten warten");
-  await visible("1116 kW mit Batterie", "#entscheidung");
-  if (!await js('document.activeElement.id === "entscheidung" && !document.querySelector("#abschluss")')) throw Error("Decision lost focus or disclosed a future close");
+  await visible("1116 kW mit Batterie", "#entscheidung", { focused: true });
+  if (await js('!!document.querySelector("#abschluss")')) throw Error("Decision disclosed a future close");
   await activate("Zählerabschluss aufdecken");
-  await visible("1140 kW im abgeschlossenen Intervall", "#abschluss");
-  if (!await js('document.activeElement.id === "abschluss" && document.body.innerText.includes("1116 kW mit Batterie")')) throw Error("Reveal lost the selected branch");
+  await visible("1140 kW im abgeschlossenen Intervall", "#abschluss", { focused: true });
+  if (!await js('document.body.innerText.includes("1116 kW mit Batterie")')) throw Error("Reveal lost the selected branch");
   await send("Page.reload");
   await visible("1140 kW im abgeschlossenen Intervall", "#abschluss");
   await js("history.back()");
