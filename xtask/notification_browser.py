@@ -6,6 +6,7 @@
 import json
 import os
 import subprocess
+import time
 from functools import partial
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -21,31 +22,40 @@ def exercise(browser, base, documents):
     context = browser.new_context(permissions=["notifications"])
     page = context.new_page()
     page.goto(base + "/icon.svg")
-    cdp = context.new_cdp_session(page)
-    registrations = {}
-    def registration_updated(event):
-        for item in event["registrations"]:
-            if not item["isDeleted"]:
-                registrations[item["scopeURL"]] = item["registrationId"]
-    cdp.on("ServiceWorker.workerRegistrationUpdated", registration_updated)
-    cdp.send("ServiceWorker.enable")
     with context.expect_event("serviceworker") as installed:
         page.evaluate("navigator.serviceWorker.register('/sw.js')")
     worker = installed.value
     page.evaluate("navigator.serviceWorker.ready")
     for document in documents:
         expected = document["notification"]
-        cdp.send("ServiceWorker.deliverPushMessage", {
-            "origin": base, "registrationId": registrations[base + "/"], "data": json.dumps(document),
-        })
-        actual = page.wait_for_function("""async tag => {
-            const registration = await navigator.serviceWorker.ready;
-            const [n] = await registration.getNotifications({tag});
-            return n && {title: n.title, body: n.body, data: n.data, lang: n.lang};
-        }""", arg=expected["tag"], timeout=5000).json_value()
-        assert actual == {k: expected[k] for k in ("title", "body", "lang")} | {
+        # Deliver the decrypted payload at the worker boundary and await the
+        # real showNotification operation before inspecting the browser store.
+        worker.evaluate("""async document => {
+            const push = new PushEvent("push", {data: JSON.stringify(document)});
+            let shown;
+            push.waitUntil = promise => { shown = promise };
+            self.dispatchEvent(push);
+            if (!shown) throw Error("Worker did not handle the push");
+            await shown;
+        }""", document)
+        # Await each browser query before testing its result. A pending Promise
+        # is truthy even when getNotifications eventually returns an empty list.
+        deadline = time.monotonic() + 5
+        while True:
+            actual = page.evaluate("""async tag => {
+                const registration = await navigator.serviceWorker.ready;
+                const [n] = await registration.getNotifications({tag});
+                return n && {title: n.title, body: n.body, data: n.data, lang: n.lang};
+            }""", expected["tag"])
+            if actual and actual.get("data", {}).get("event_id") == expected["data"]["event_id"]:
+                break
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"Notification not displayed: expected {expected!r}, observed {actual!r}")
+            time.sleep(0.05)
+        wanted = {k: expected[k] for k in ("title", "body", "lang")} | {
             "data": {**expected["data"], "navigate": expected["navigate"]}
         }
+        assert actual == wanted, (actual, wanted)
         worker.evaluate("""async tag => {
             const [notification] = await self.registration.getNotifications({tag});
             const event = new Event("notificationclick");
