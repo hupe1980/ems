@@ -308,6 +308,9 @@ impl Registers {
     fn absorb(&mut self, response: &Response, now: OffsetDateTime) {
         // A write's answer first, because it is the one that arrives with no
         // read outstanding and would otherwise fall through every branch below.
+        if response.unit != self.unit {
+            return;
+        }
         if let Some(i) = self.written.iter().position(|t| *t == response.transaction) {
             self.written.remove(i);
             let (accepted, detail) = match &response.body {

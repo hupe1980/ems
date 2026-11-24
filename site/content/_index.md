@@ -19,5 +19,5 @@ a = "The guard, arbiter and planner run locally. The fleet supplies prices and w
 
 [[extra.faq]]
 q = "How are household savings calculated?"
-a = "The simulator prices scheduled and default controls against the same weather and grid limits. On a running gateway, a receipt includes a savings figure only when measured intervals are complete, both alternatives deliver equal service and the difference exceeds the replay error."
+a = "Day shows the electricity bill and checks whether the alternative delivered equivalent service. A missed departure or comfort requirement explains an excluded day. Month counts savings only when the difference exceeds the replay error."
 +++

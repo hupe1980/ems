@@ -26,7 +26,10 @@ fn free_port() -> SocketAddr {
 }
 
 /// A house at `at` of `scenario`'s day, and the box that manages it.
-async fn pair(scenario: Scenario, at: Duration) -> (House, hemsd::Running, ShutdownTrigger) {
+async fn pair(
+    scenario: Scenario,
+    at: Duration,
+) -> (House, hemsd::Running, Health, ShutdownTrigger) {
     let (ship, api) = (free_port(), free_port());
     let house = house::start(house::Options {
         scenario: scenario.clone(),
@@ -39,13 +42,15 @@ async fn pair(scenario: Scenario, at: Duration) -> (House, hemsd::Running, Shutd
     .await
     .expect("the house starts");
 
-    let written = house::configuration(&house, &scenario, Some(ship), api).expect("a config");
+    let written =
+        house::configuration(&house, &scenario, Some(ship), api, false).expect("a config");
     let settings: hemsd::Settings = toml::from_str(&written).expect("the box reads what it wrote");
     let (signal, trigger) = Shutdown::channel();
-    let running = hemsd::runtime::run(&settings, &Health::new(), &signal)
+    let health = Health::new();
+    let running = hemsd::runtime::run(&settings, &health, &signal)
         .await
         .expect("the box starts on the house's own configuration");
-    (house, running, trigger)
+    (house, running, health, trigger)
 }
 
 /// Poll `check` every 200 ms until it answers or `within` passes.
@@ -74,7 +79,7 @@ async fn a_shadow_gateway_reads_the_meter_and_never_writes_a_setpoint() {
     })
     .await
     .unwrap();
-    let config = house::configuration(&house, &scenario, None, free_port()).unwrap();
+    let config = house::configuration(&house, &scenario, None, free_port(), true).unwrap();
     let mut settings: hemsd::Settings = toml::from_str(&config).unwrap();
     let state = std::env::temp_dir().join(format!("hems-shadow-{}.redb", uuid::Uuid::new_v4()));
     settings.store_path = Some(state.clone());
@@ -146,7 +151,7 @@ async fn every_device_is_discovered_read_and_obeyed_over_modbus() {
     let mut scenario = Scenario::summer_surplus(HouseholdConfig::default());
     scenario.cloudiness = 0.0;
     let rating = scenario.config.pv.expect("the reference roof").ac_nominal;
-    let (house, running, trigger) = pair(scenario, Duration::hours(12)).await;
+    let (house, running, _, trigger) = pair(scenario, Duration::hours(12)).await;
     let pv = running.household.pv.clone().expect("the reference roof");
     let battery = running.household.battery.clone().expect("a battery");
     let meter = running.household.grid_meter.clone();
@@ -239,7 +244,7 @@ async fn the_steuerbox_reduces_the_household_and_its_silence_is_a_failsafe() {
     // Twenty seconds before the winter day's 17:00 reduction.
     let scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
     let limit = scenario.grid_event.expect("a reduction").2;
-    let (house, running, trigger) =
+    let (house, running, health, trigger) =
         pair(scenario, Duration::hours(17) - Duration::seconds(20)).await;
 
     // Paired over SHIP, and nothing required yet.
@@ -273,6 +278,7 @@ async fn the_steuerbox_reduces_the_household_and_its_silence_is_a_failsafe() {
 
     // The control box falls silent. `[LPC-911]`: after 120 s without a
     // heartbeat the household restrains itself.
+    assert!(health.readiness().probes["grid"].ready);
     house.silence_steuerbox();
     until(
         StdDuration::from_secs(200),
@@ -289,5 +295,7 @@ async fn the_steuerbox_reduces_the_household_and_its_silence_is_a_failsafe() {
     )
     .await;
 
+    let grid = &health.readiness().probes["grid"];
+    assert!(!grid.ready && grid.last_good.is_some());
     trigger.trigger();
 }

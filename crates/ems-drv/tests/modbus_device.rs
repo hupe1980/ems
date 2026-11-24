@@ -684,3 +684,106 @@ fn the_frame_codec_and_the_device_agree() {
         "the device says SunS"
     );
 }
+
+#[test]
+fn a_read_only_inverter_refuses_the_write_at_the_driver_boundary() {
+    let mut d = driver().with_rating(Power::from_kw(10.0)).listening_only();
+    let mut device = Inverter::new();
+    d.on_link(LinkState::Up, T0);
+    exchange(&mut d, &mut device, T0, 60);
+    assert_eq!(d.kind(), Some(Kind::Inverter));
+    assert!(matches!(
+        d.command(&Command::ProductionCeiling(Power::ZERO), T0),
+        Err(DriverError::Unsupported(_))
+    ));
+    assert!(d.poll_transmit().is_none());
+}
+
+#[test]
+fn a_new_walk_invalidates_the_previous_control_registers() {
+    let mut d = driver().with_rating(Power::from_kw(10.0));
+    let mut device = Inverter::new();
+    d.on_link(LinkState::Up, T0);
+    exchange(&mut d, &mut device, T0, 60);
+    assert!(d.can_limit_production());
+
+    // Replace the unit with one advertising only a prefix of model 123.
+    device.map.insert(40_123, 2);
+    device.map.insert(40_126, 0xffff);
+    let ceiling = Command::ProductionCeiling(Power::from_kw(4.0));
+    for state in [LinkState::Down, LinkState::Up] {
+        d.on_link(state, T0);
+        assert_eq!(d.kind(), None);
+        assert!(!d.can_limit_production());
+        assert!(matches!(
+            d.command(&ceiling, T0),
+            Err(DriverError::NotConnected)
+        ));
+    }
+    exchange(&mut d, &mut device, T0, 60);
+    assert!(d.models().has(123));
+    assert!(!d.can_limit_production());
+    assert!(matches!(
+        d.command(&ceiling, T0),
+        Err(DriverError::Unsupported(_))
+    ));
+    assert!(d.poll_transmit().is_none());
+}
+
+#[test]
+fn a_write_echo_must_name_the_requested_registers() {
+    for (address, count) in [(40_128_u16, 5_u16), (40_127, 4)] {
+        let mut d = driver().with_rating(Power::from_kw(10.0));
+        let mut device = Inverter::new();
+        d.on_link(LinkState::Up, T0);
+        exchange(&mut d, &mut device, T0, 60);
+        d.command(&Command::ProductionCeiling(Power::from_kw(6.0)), T0)
+            .unwrap();
+        let scale = d.poll_transmit().unwrap();
+        d.on_bytes(&device.answer(&scale), T0).unwrap();
+        let write = d.poll_transmit().unwrap();
+        let mut echo = device.answer(&write);
+        echo[8..10].copy_from_slice(&address.to_be_bytes());
+        echo[10..12].copy_from_slice(&count.to_be_bytes());
+        d.on_bytes(&echo, T0).unwrap();
+        let outcome = command_outcome(&mut d).unwrap();
+        assert!(!outcome.accepted && outcome.confirmed.is_none());
+        assert!(d.poll_transmit().is_none());
+    }
+}
+
+#[test]
+fn each_integer_meter_model_reports_both_energy_registers() {
+    use sunspec::Group as _;
+    use sunspec::models::model203::Model203;
+    for model in 201..=204 {
+        let mut device = Inverter::new();
+        let header = 40_070;
+        let body = header + 2;
+        device.map.insert(header, model);
+        device.map.insert(header + 1, Model203::LEN);
+        for offset in 0..Model203::LEN {
+            device.map.insert(body + offset, 0);
+        }
+        device
+            .map
+            .insert(body + Model203::TOT_WH_IMP.offset + 1, 2137);
+        device
+            .map
+            .insert(body + Model203::TOT_WH_EXP.offset + 1, 134);
+        device.map.insert(body + Model203::LEN, 0xffff);
+        device.map.insert(body + Model203::LEN + 1, 0);
+        let mut d = driver().listening_only();
+        d.on_link(LinkState::Up, T0);
+        exchange(&mut d, &mut device, T0, 60);
+        let m = std::iter::from_fn(|| d.poll_event())
+            .find_map(|event| match event {
+                DriverEvent::Measured(m) => Some(m),
+                _ => None,
+            })
+            .expect("meter telemetry");
+        assert_eq!(d.kind(), Some(Kind::Meter));
+        assert_eq!(m.energy_in.unwrap().get(), 2137.0);
+        assert_eq!(m.energy_out.unwrap().get(), 134.0);
+    }
+}

@@ -9,20 +9,13 @@ silent_after_s = 172800
 # covers the timestamp, so a captured report stops working.
 webhook_tolerance_s = 300
 
-# ── The shell ────────────────────────────────────────────────────────────────
 [service]
 listen = "0.0.0.0:7780"
 log_filter = "info"
 log_json = true
 shutdown_grace_s = 20
 
-# ── Where the fleet's days live ──────────────────────────────────────────────
-#
-# In memory this was a map that died with the process — and with it every day
-# report the service had ever accepted, including the named list of households
-# that did not respect a reduction. A box sends a day once and keeps no second
-# copy, so what was lost was lost, and the fleet view came back saying
-# `sites: 0` with no error anywhere.
+# PostgreSQL stores site reports and signed departure evidence.
 [database]
 url = "env:EMS_OBSD_DATABASE_URL"
 pool_size = 10
@@ -30,34 +23,21 @@ acquire_timeout_s = 5
 statement_timeout_s = 30
 tls = true
 
-# ── Which box signed which day ───────────────────────────────────────────────
-#
-# **One key per household**, and that is the whole point: a signature over a
-# shared secret says the bytes were not edited and nothing about who sent them,
-# so any holder could attribute a day to any site. Two sites configured with the
-# same key is a start-up failure rather than a report attributed to whichever
-# one the fold happened to see last.
-#
-# A **signature** and not a bearer token: what this service holds is the list of
-# households that did not respect a network operator's reduction, so an
-# unauthenticated write can put a compliant site on it. A token says who is
-# asking; a signature says what was said.
+# Assign a distinct signing key to each site. Reusing a key across sites prevents startup.
 [webhook_secrets]
 "reference-household" = ["env:EMS_OBSD_SECRET_REFERENCE_HOUSEHOLD"]
 
-# ── Who may read the fleet view ──────────────────────────────────────────────
-#
-# The summary carries a named list of households, so only a credential that
-# reaches a whole fleet may read it — and only the households in *its* scope. A
-# tenant's scope reaches the query rather than filtering the answer, so one
-# tenant's rows never leave the database on another tenant's request.
+# Scope each operator to a tenant. "*" grants fleet-wide access.
 [[operators]]
 token  = "env:EMS_OBSD_OPERATOR_TOKEN"
 tenant = "*"
 
+# Server-side portal grant for one household’s daily history and departure receipt.
+# [customer_tokens]
+# reference-household = "env:EMS_OBSD_CUSTOMER_TOKEN"
+
 # [tenants]
 # stadtwerke-nord = ["reference-household"]
 
-# ── The agent surface ────────────────────────────────────────────────────────
 [mcp]
 enabled = false

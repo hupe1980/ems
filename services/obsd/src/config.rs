@@ -80,6 +80,9 @@ pub struct Settings {
     /// loud rather than arrived at by omission (D112).
     #[serde(default)]
     pub tenants: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// Site-specific tokens accepted only by the customer receipt endpoint.
+    #[serde(default)]
+    pub customer_tokens: std::collections::BTreeMap<String, ems_service::Secret>,
     /// The operator credentials, each scoped to a tenant.
     #[serde(default)]
     pub operators: Vec<ems_service::OperatorCredential>,
@@ -108,6 +111,7 @@ impl Default for Settings {
             webhook_secrets: std::collections::BTreeMap::new(),
             tenants: std::collections::BTreeMap::new(),
             operators: Vec::new(),
+            customer_tokens: std::collections::BTreeMap::new(),
             webhook_tolerance_s: ems_events::webhook::DEFAULT_TOLERANCE
                 .whole_seconds()
                 .unsigned_abs(),

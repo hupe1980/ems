@@ -63,6 +63,8 @@ def test(binary, directory):
             subprocess.run(["node", str(Path(__file__).with_name("media.mjs")), "commissioning-review", base],
                            check=True, env=env, timeout=50)
             assert config.read_text() == original
+            subprocess.run(["node", str(Path(__file__).with_name("media.mjs")), "price-sheet", base],
+                           check=True, env=env, timeout=60)
             assert all(device["asset"] != "pv" for device in json.loads(request("/v1/trust"))["devices"])
             # The reviewed unit disappears between confirmation and supervised startup.
             restore_id = discover(1)["review"]["proposal"]

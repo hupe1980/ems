@@ -32,7 +32,12 @@ enum Command {
         json: bool,
     },
     /// Compare one import register with closed RLM quarter hours, offline.
-    Reconcile { trace: std::path::PathBuf },
+    Reconcile {
+        trace: std::path::PathBuf,
+        /// Write machine-readable JSON or a standalone offline review.
+        #[arg(long, value_enum, default_value = "json")]
+        format: reconcile::Format,
+    },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -44,6 +49,6 @@ async fn main() -> anyhow::Result<()> {
             cancel_before_dispatch,
             json,
         } => openadr::run(cancel_before_dispatch, json).await,
-        Command::Reconcile { trace } => reconcile::run(&trace),
+        Command::Reconcile { trace, format } => reconcile::run(&trace, format),
     }
 }

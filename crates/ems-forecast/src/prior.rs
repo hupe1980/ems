@@ -1,81 +1,17 @@
-//! What a box assumes about a household before it has measured one.
+//! Cold-start demand for the uncontrolled part of a household.
 //!
-//! A box on its first evening has one meter reading, and persistence from it is
-//! the wrong shape for the one quantity that matters: a household's demand has a
-//! strong daily shape, and the reading a box starts from is usually the night
-//! trough. Planned against a flat line at the trough, the first evening defers
-//! flexible load into hours it believes are quiet and cheap, and a box that
-//! knows nothing comes out worse than no box at all.
-//!
-//! The shape to hang that reading on is published: BDEW's **H25** household
-//! profile, the 2025 revision of the standard load profiles that every German
-//! network operator may balance households on (BDEW, *Hinweise zu den
-//! aktualisierten Standardlastprofilen Strom*, 17.03.2025). Twelve months, three
-//! day types — Werktag, Samstag, Sonn- und Feiertag on the Bundesland's own
-//! calendar — and 96 quarter hours, normalised to one million kWh a year and
-//! dynamised over the year by BDEW's quartic. `metering` holds that model
-//! ([`DynamicSlpProfile`]); this module supplies the table and scales it to one
-//! household.
-//!
-//! # Why H25 and not P25, on a house with a roof
-//!
-//! BDEW balances a household **with** photovoltaics on P25, whose values are the
-//! metered net draw with the roof already taken off. This forecast is the
-//! opposite quantity — what the house uses that nobody controls, before the roof
-//! — and the planner subtracts its own PV forecast. P25 would count the roof
-//! twice. H25 describes the gross household load, which is what is wanted here.
-//!
-//! # How it is scaled
-//!
-//! Two ways, in order of preference:
-//!
-//! * a **declared** household consumption, kWh a year — the household's own
-//!   *Haushaltsstrom*, without heat pump, car or battery. Not the figure on a
-//!   bill that meters a heat pump or a wallbox on the same register: H25
-//!   describes household appliances, and scaling it by a bill that includes a
-//!   heat pump would overstate the base load several times over;
-//! * once the box has metered **one whole day** of any day type, **fitted**:
-//!   the household's own learned energy for that day against H25's for a day of
-//!   the same type this month. A day is the unit because the shape is what the
-//!   prior supplies and the level is what the household does; a whole day
-//!   averages away the kettle and the shower that one reading cannot;
-//! * before that, **anchored** on the box's own first reading: the scale at which
-//!   H25's value for that quarter hour equals what the meter says — but never
-//!   below a typical family house ([`TYPICAL_HOUSE_KWH_PER_YEAR`]), and never
-//!   above a plausible ceiling.
-//!
-//! # Why the anchor has a floor
-//!
-//! One reading is a weak signal, and the two ways it can be wrong do not cost
-//! the same. A box that plans for **more** household load than there is spends
-//! a little on energy it did not need; a box that plans for **less** defers its
-//! flexible load into hours it believes are quiet and cheap, which is exactly
-//! how a cold box came to be worse than none. And the reading a box starts from
-//! is usually the night trough, which is the direction that under-scales. So the
-//! anchor errs high, by the same rule the guard follows for a silent device: the
-//! conservative number, said out loud. The asymmetry is measured on the
-//! reference household rather than assumed, and is held by a test.
-//!
-//! The band is wide on purpose ([`PRIOR_SPREAD`]): a standard profile is the
-//! average of very many households, and one household's quarter hour scatters
-//! far more than an average does. A planner handed a narrow band from a
-//! population average would bet a battery on somebody else's evening.
-
-use ems_core::calendar::Bundesland;
-use ems_core::prelude::{Power, Slot};
-use metering::slp::strom::{DynamicSlpProfile, Dynamization, LoadProfile as Slp, SlpDayType};
-use metering::time::holiday::SlpCalendar;
-use rust_decimal::prelude::ToPrimitive;
+//! The project-owned synthetic shape combines background use, a morning peak
+//! and a wider evening peak. It shifts breakfast on non-workdays and raises
+//! daily energy in winter. These are modelling assumptions. The wide initial
+//! band narrows as the household supplies measurements for each quarter.
 
 use crate::load::LoadProfile;
 use crate::quantile::Band;
-use ems_core::prelude::DayType;
+use ems_core::calendar::{Bundesland, FIRST_YEAR, LAST_YEAR, to_berlin};
+use ems_core::prelude::{DayType, Power, SLOT_HOURS, Slot};
 
-/// The H25 table, as BDEW publishes it. Provenance is in the file's header.
-const H25_CSV: &str = include_str!("../data/h25.csv");
-
-/// The annual consumption BDEW normalises every profile to, kWh.
-pub const NORMALISED_KWH_PER_YEAR: f64 = 1_000_000.0;
+/// Reference consumption for estimating the scale from metered demand.
+const REFERENCE_KWH_PER_YEAR: f64 = 1_000.0;
 
 /// The relative half-width of a band answered from the prior alone.
 ///
@@ -99,63 +35,55 @@ pub const TYPICAL_HOUSE_KWH_PER_YEAR: f64 = 4_175.0;
 /// [`TYPICAL_HOUSE_KWH_PER_YEAR`].
 pub const ANCHOR_RANGE_KWH: (f64, f64) = (800.0, 9_000.0);
 
-/// BDEW's H25 household profile, loaded and dynamised.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StandardProfile {
-    table: DynamicSlpProfile,
-    calendar: SlpCalendar,
+fn local_time(slot: Slot) -> Option<time::OffsetDateTime> {
+    if !(FIRST_YEAR - 1..=LAST_YEAR).contains(&slot.start().year()) {
+        return None;
+    }
+    let local = to_berlin(slot.start());
+    (FIRST_YEAR..=LAST_YEAR)
+        .contains(&local.year())
+        .then_some(local)
 }
 
-impl StandardProfile {
-    /// H25 on `land`'s holiday calendar.
-    ///
-    /// # Panics
-    ///
-    /// Never at run time: the table is compiled in and its shape is a test.
+/// Share of annual energy assigned to a nominal 96-quarter local day.
+fn daily_share(date: time::Date) -> f64 {
+    let days = f64::from(time::util::days_in_year(date.year()));
+    let phase = std::f64::consts::TAU * (f64::from(date.ordinal()) - 15.0) / days;
+    (1.0 + 0.16 * phase.cos()) / days
+}
+
+/// Synthetic gross household demand on the site's local holiday calendar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HouseholdProfile {
+    land: Bundesland,
+}
+
+impl HouseholdProfile {
+    /// Construct the initial shape for a household in this federal state.
     #[must_use]
-    pub fn h25(land: Bundesland) -> Self {
-        let mut table = DynamicSlpProfile::new(Slp::H25).dynamization(Dynamization::BDEW);
-        for line in H25_CSV
-            .lines()
-            .filter(|l| !l.starts_with('#') && !l.is_empty())
-        {
-            let mut fields = line.split(',');
-            let month: u8 = fields
-                .next()
-                .and_then(|m| m.parse().ok())
-                .expect("H25 row: a month");
-            let day_type = match fields.next() {
-                Some("WT") => SlpDayType::Werktag,
-                Some("SA") => SlpDayType::Samstag,
-                Some("FT") => SlpDayType::SonnFeiertag,
-                other => panic!("H25 row: unknown day type {other:?}"),
-            };
-            let values = fields
-                .map(|v| v.parse().expect("H25 row: a decimal value"))
-                .collect();
-            table
-                .insert(month, day_type, values)
-                .expect("H25 row: a 96-value day table");
-        }
-        debug_assert!(table.is_complete(), "H25 holds all 12 × 3 day tables");
-        Self {
-            table,
-            calendar: SlpCalendar::new(land),
-        }
+    pub fn new(land: Bundesland) -> Self {
+        Self { land }
     }
 
-    /// The profile's power in `slot` for a household of `kwh_per_year`.
-    ///
-    /// `None` only outside the calendar's supported years.
+    /// Quarter-hour mean demand for the given annual household consumption.
     #[must_use]
     pub fn power_at(&self, slot: Slot, kwh_per_year: f64) -> Option<Power> {
-        let quarter_kwh = self
-            .table
-            .value_at(slot.start(), &self.calendar)?
-            .to_f64()?;
-        // kWh in a quarter hour, ×4 is the mean kW over it.
+        if !kwh_per_year.is_finite() || kwh_per_year < 0.0 {
+            return None;
+        }
+        let local = local_time(slot)?;
+        let hour = f64::from(local.hour()) + f64::from(local.minute()) / 60.0 + SLOT_HOURS / 2.0;
+        let breakfast = match DayType::of(slot, self.land) {
+            DayType::Workday => 7.0,
+            DayType::Saturday => 9.0,
+            DayType::Sunday => 10.0,
+        };
+        let triangle = |center: f64, width: f64| (1.0 - (hour - center).abs() / width).max(0.0);
+        let shape = 0.55 + 0.9 * triangle(breakfast, 3.0) + 1.9 * triangle(19.0, 4.0);
+        // A unit-height triangular peak has area equal to its half-width.
+        let daily_mean = 0.55 + (0.9 * 3.0 + 1.9 * 4.0) / 24.0;
         Some(Power::from_kw(
-            quarter_kwh * 4.0 * kwh_per_year / NORMALISED_KWH_PER_YEAR,
+            kwh_per_year * daily_share(local.date()) / 24.0 * shape / daily_mean,
         ))
     }
 
@@ -172,21 +100,21 @@ impl StandardProfile {
     /// Scale to the household's own whole days, where it has any.
     ///
     /// For each day type `learned` has seen through all of its quarter hours,
-    /// the ratio of the household's learned energy for that day to H25's for
+    /// the ratio of the household's learned energy for that day to the profile's for
     /// the nearest day of the same type up to `at`; the mean of those ratios,
     /// held to [`ANCHOR_RANGE_KWH`]. `None` until one whole day has been seen.
     #[must_use]
-    pub fn fitted(self, learned: &LoadProfile, at: Slot, land: Bundesland) -> Option<Prior> {
+    pub fn fitted(self, learned: &LoadProfile, at: Slot) -> Option<Prior> {
         let mut implied = Vec::new();
         for day_type in [DayType::Workday, DayType::Saturday, DayType::Sunday] {
             let Some(own_kwh) = learned.day_kwh(day_type) else {
                 continue;
             };
-            let Some(published) = self.day_kwh_like(day_type, at, land) else {
+            let Some(reference) = self.day_kwh_like(day_type, at) else {
                 continue;
             };
-            if published > 0.0 {
-                implied.push(own_kwh / published * NORMALISED_KWH_PER_YEAR);
+            if reference > 0.0 {
+                implied.push(own_kwh / reference * REFERENCE_KWH_PER_YEAR);
             }
         }
         if implied.is_empty() {
@@ -200,20 +128,17 @@ impl StandardProfile {
         })
     }
 
-    /// H25's energy, normalised, on the most recent day of `day_type` up to
-    /// and including the day `at` falls in — every quarter hour that day has,
-    /// so 23 and 25 hours on the days the clocks change.
-    fn day_kwh_like(&self, day_type: DayType, at: Slot, land: Bundesland) -> Option<f64> {
-        let mut date = at.local_date();
+    /// Match the 96 wall-clock cells summed by `LoadProfile::day_kwh`, even
+    /// when the latest day of that type had a missing or repeated hour.
+    fn day_kwh_like(&self, day_type: DayType, at: Slot) -> Option<f64> {
+        let mut date = local_time(at)?.date();
         for _ in 0..14 {
-            let mut s = Slot::containing(ems_core::calendar::day_start_utc(date));
-            if DayType::of(s, land) == day_type {
-                let mut kwh = 0.0;
-                while s.local_date() == date {
-                    kwh += self.power_at(s, NORMALISED_KWH_PER_YEAR)?.get() / 1_000.0 * 0.25;
-                    s = s.next();
-                }
-                return Some(kwh);
+            if date.year() < FIRST_YEAR {
+                return None;
+            }
+            let first = Slot::containing(ems_core::calendar::day_start_utc(date));
+            if DayType::of(first, self.land) == day_type {
+                return Some(REFERENCE_KWH_PER_YEAR * daily_share(date));
             }
             date = date.previous_day()?;
         }
@@ -226,10 +151,10 @@ impl StandardProfile {
     #[must_use]
     pub fn anchored(self, slot: Slot, reading: Power) -> Prior {
         let unit = self
-            .power_at(slot, NORMALISED_KWH_PER_YEAR)
+            .power_at(slot, REFERENCE_KWH_PER_YEAR)
             .map_or(0.0, Power::get);
-        let implied = if unit > 0.0 {
-            reading.get() / unit * NORMALISED_KWH_PER_YEAR
+        let implied = if unit > 0.0 && reading.is_finite() {
+            reading.get() / unit * REFERENCE_KWH_PER_YEAR
         } else {
             TYPICAL_HOUSE_KWH_PER_YEAR
         };
@@ -255,16 +180,16 @@ pub enum PriorBasis {
     Anchored,
 }
 
-/// H25, scaled to one household.
+/// Gross load, scaled to one household.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prior {
-    profile: StandardProfile,
+    profile: HouseholdProfile,
     kwh_per_year: f64,
     basis: PriorBasis,
 }
 
 impl Prior {
-    /// The band the prior gives `slot`: H25's value as the median, widened by
+    /// The band the prior gives `slot`: the profile's value as the median, widened by
     /// [`PRIOR_SPREAD`].
     #[must_use]
     pub fn band_at(&self, slot: Slot) -> Band {
@@ -298,32 +223,37 @@ mod tests {
     }
 
     #[test]
-    fn the_table_is_whole_and_sums_to_the_household_it_is_scaled_to() {
-        // Every day of 2026, every quarter hour: a profile normalised to one
-        // million kWh scaled to 4 000 must deliver about 4 000 over the year.
-        // "About" because BDEW normalises before the Dynamisierung and the
-        // holidays move days between tables; a transcription error — a
-        // missing column, a month shifted by one — moves it by far more.
-        let h25 = StandardProfile::h25(Bundesland::Be);
-        let mut s = slot(datetime!(2025-12-31 23:00 UTC));
-        let end = datetime!(2026-12-31 23:00 UTC);
-        let mut kwh = 0.0;
-        while s.start() < end {
-            kwh += h25.power_at(s, 4_000.0).expect("2026 is supported").get() / 1_000.0 * 0.25;
-            s = s.next();
+    fn the_year_sums_to_the_declared_household_energy() {
+        let profile = HouseholdProfile::new(Bundesland::Be);
+        for (start, end) in [
+            (
+                datetime!(2025-12-31 23:00 UTC),
+                datetime!(2026-12-31 23:00 UTC),
+            ),
+            (
+                datetime!(2023-12-31 23:00 UTC),
+                datetime!(2024-12-31 23:00 UTC),
+            ),
+        ] {
+            let mut s = slot(start);
+            let mut kwh = 0.0;
+            while s.start() < end {
+                kwh += profile.power_at(s, 4_000.0).unwrap().get() / 1_000.0 * SLOT_HOURS;
+                s = s.next();
+            }
+            assert!((kwh - 4_000.0).abs() < 1.0, "{kwh} kWh");
         }
-        assert!((3_950.0..4_050.0).contains(&kwh), "{kwh:.0} kWh");
     }
 
     #[test]
     fn a_winter_workday_peaks_in_the_evening_and_bottoms_out_at_night() {
         // The shape the prior exists for: the night trough a cold box starts
         // from is a fraction of the evening it has to plan for.
-        let h25 = StandardProfile::h25(Bundesland::Be);
-        let night = h25
+        let profile = HouseholdProfile::new(Bundesland::Be);
+        let night = profile
             .power_at(slot(datetime!(2026-01-15 02:00 UTC)), 4_000.0)
             .unwrap();
-        let evening = h25
+        let evening = profile
             .power_at(slot(datetime!(2026-01-15 17:45 UTC)), 4_000.0)
             .unwrap();
         assert!(
@@ -333,14 +263,14 @@ mod tests {
     }
 
     #[test]
-    fn a_holiday_reads_the_sunday_table_in_the_land_that_keeps_it() {
+    fn a_holiday_uses_the_local_sunday_shape() {
         // Fronleichnam 2026 is a Thursday: a holiday in Bayern, a workday in
-        // Berlin. The same instant reads two different tables.
+        // Berlin. The same instant has two different morning peaks.
         let at = slot(datetime!(2026-06-04 10:00 UTC));
-        let by = StandardProfile::h25(Bundesland::By)
+        let by = HouseholdProfile::new(Bundesland::By)
             .power_at(at, 4_000.0)
             .unwrap();
-        let be = StandardProfile::h25(Bundesland::Be)
+        let be = HouseholdProfile::new(Bundesland::Be)
             .power_at(at, 4_000.0)
             .unwrap();
         assert_ne!(by, be);
@@ -349,38 +279,35 @@ mod tests {
     #[test]
     fn an_anchor_believes_a_large_household_and_never_scales_below_a_typical_house() {
         let at = slot(datetime!(2026-01-15 02:00 UTC));
-        let h25 = StandardProfile::h25(Bundesland::Be);
-        let large = h25.power_at(at, 6_000.0).unwrap();
-        let prior = h25.clone().anchored(at, large);
+        let profile = HouseholdProfile::new(Bundesland::Be);
+        let large = profile.power_at(at, 6_000.0).unwrap();
+        let prior = profile.clone().anchored(at, large);
         assert!((prior.kwh_per_year() - 6_000.0).abs() < 1.0);
         assert!((prior.band_at(at).p50 - large.get()).abs() < 1e-9);
         assert_eq!(prior.basis(), PriorBasis::Anchored);
 
         // The night trough a box usually starts from implies a small household,
         // and under-scaling is the expensive direction: held at the floor.
-        let trough = h25.power_at(at, 2_000.0).unwrap();
-        let held = h25.clone().anchored(at, trough);
+        let trough = profile.power_at(at, 2_000.0).unwrap();
+        let held = profile.clone().anchored(at, trough);
         assert_eq!(held.kwh_per_year(), TYPICAL_HOUSE_KWH_PER_YEAR);
-        let dark = h25.clone().anchored(at, Power::ZERO);
+        let dark = profile.clone().anchored(at, Power::ZERO);
         assert_eq!(dark.kwh_per_year(), TYPICAL_HOUSE_KWH_PER_YEAR);
 
         // A kettle at 03:00 is not a household of thirty thousand kWh.
-        let kettle = h25.anchored(at, Power::from_kw(3.0));
+        let kettle = profile.anchored(at, Power::from_kw(3.0));
         assert_eq!(kettle.kwh_per_year(), ANCHOR_RANGE_KWH.1);
     }
 
     #[test]
     fn january_is_not_july() {
-        // The defect a transcription is most likely to make — a month's three
-        // columns in another month's place — moves the seasons, and a household
-        // uses more in January than in July. SR-031.
-        let h25 = StandardProfile::h25(Bundesland::Be);
+        let profile = HouseholdProfile::new(Bundesland::Be);
         let day = |at: time::OffsetDateTime| -> f64 {
             let mut s = slot(at);
             let date = s.local_date();
             let mut kwh = 0.0;
             while s.local_date() == date {
-                kwh += h25.power_at(s, 4_000.0).unwrap().get() / 1_000.0 * 0.25;
+                kwh += profile.power_at(s, 4_000.0).unwrap().get() / 1_000.0 * SLOT_HOURS;
                 s = s.next();
             }
             kwh
@@ -405,8 +332,8 @@ mod tests {
             s = s.next();
         }
         let at = slot(datetime!(2026-01-15 12:00 UTC));
-        let prior = StandardProfile::h25(Bundesland::Be)
-            .fitted(&learned, at, Bundesland::Be)
+        let prior = HouseholdProfile::new(Bundesland::Be)
+            .fitted(&learned, at)
             .expect("a whole workday was seen");
         assert_eq!(prior.basis(), PriorBasis::Fitted);
         // Six kWh on a January workday is a small household, and a *measured*
@@ -418,10 +345,50 @@ mod tests {
         );
         assert!(prior.kwh_per_year() > ANCHOR_RANGE_KWH.0);
 
+        // A learned day always has 96 wall-clock cells, including when its
+        // representative Sunday is a clock-change day.
+        for instant in [
+            datetime!(2026-03-29 12:00 UTC),
+            datetime!(2026-10-25 12:00 UTC),
+        ] {
+            let profile = HouseholdProfile::new(Bundesland::Be);
+            let at = slot(instant);
+            let normal_day = profile.day_kwh_like(DayType::Sunday, at).unwrap();
+            let date = at.local_date();
+            let mut quarter = slot(ems_core::calendar::day_start_utc(date));
+            let end = ems_core::calendar::day_end_utc(date);
+            let mut energy = 0.0;
+            while quarter.start() < end {
+                energy += profile
+                    .power_at(quarter, REFERENCE_KWH_PER_YEAR)
+                    .unwrap()
+                    .get()
+                    * SLOT_HOURS
+                    / 1_000.0;
+                quarter = quarter.next();
+            }
+            // The clock changes during the flat overnight background load.
+            let overnight_kw = profile
+                .power_at(
+                    slot(ems_core::calendar::day_start_utc(date)),
+                    REFERENCE_KWH_PER_YEAR,
+                )
+                .unwrap()
+                .get()
+                / 1_000.0;
+            let day_hours = (end - ems_core::calendar::day_start_utc(date)).whole_hours();
+            let adjusted = if day_hours == 23 {
+                energy + overnight_kw
+            } else {
+                energy - overnight_kw
+            };
+            assert!((normal_day - adjusted).abs() < 1e-10);
+        }
+
         // Nothing whole yet: no fitted scale.
         assert!(
-            StandardProfile::h25(Bundesland::Be)
-                .fitted(&LoadProfile::new(Bundesland::Be), at, Bundesland::Be)
+            HouseholdProfile::new(Bundesland::Be)
+                .fitted(&LoadProfile::new(Bundesland::Be), at)
                 .is_none()
         );
     }
@@ -431,7 +398,7 @@ mod tests {
         // A Thursday in March: four Thursdays back are workdays in Berlin, where
         // January's would have reached Neujahr — a Sonntag by the calendar.
         let at = slot(datetime!(2026-03-12 17:45 UTC));
-        let prior = StandardProfile::h25(Bundesland::Be).declared(4_000.0);
+        let prior = HouseholdProfile::new(Bundesland::Be).declared(4_000.0);
         let mut learned = LoadProfile::new(Bundesland::Be);
         assert_eq!(learned.band_with_prior(at, &prior), prior.band_at(at));
         let weeks = i64::try_from(crate::load::PRIOR_FADE_SAMPLES).expect("four");
@@ -448,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_declared_household_is_believed() {
-        let prior = StandardProfile::h25(Bundesland::Be).declared(2_500.0);
+        let prior = HouseholdProfile::new(Bundesland::Be).declared(2_500.0);
         assert_eq!(prior.kwh_per_year(), 2_500.0);
         assert_eq!(prior.basis(), PriorBasis::Declared);
         let band = prior.band_at(slot(datetime!(2026-01-15 17:45 UTC)));

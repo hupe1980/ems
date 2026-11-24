@@ -60,7 +60,7 @@ pub use health::{Health, PlantHealth};
 pub use load::LoadProfile;
 pub use metrics::{CALIBRATION_DAYS, Calibration, is_informative};
 pub use naive::{persistence, seasonal_naive};
-pub use prior::{Prior, PriorBasis, StandardProfile};
+pub use prior::{HouseholdProfile, Prior, PriorBasis};
 pub use quantile::{Band, Forecast, PowerBand};
 pub use residual::{ResidualModel, SETTLED_SAMPLES};
 pub use session::{Session, SessionForecast, SessionHistory};

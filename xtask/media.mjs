@@ -31,7 +31,8 @@ const TABLET = { width: 1280, height: 800, deviceScaleFactor: 2, mobile: true };
 // ── Chrome over DevTools ────────────────────────────────────────────────────
 const profile = mkdtempSync(join(tmpdir(), "hems-media-"));
 const trustArgs = [];
-if (["handover-test", "commissioning-review", "first-run-install"].includes(mode)) {
+if (["handover-test", "commissioning-review", "first-run-install"].includes(mode) ||
+    (mode === "price-sheet" && new URL(base).protocol === "https:")) {
   const url = new URL(base);
   if (url.protocol !== "https:" || url.hostname !== "127.0.0.1") throw Error("Expected an isolated loopback gateway");
   const certificate = new X509Certificate(readFileSync(process.env.GATEWAY_CERT));
@@ -178,6 +179,13 @@ if (mode === "release-preview") {
     };
     if (savedGoal && !(await fetch(goalUrl, {method:"DELETE"})).ok) throw Error("Could not prepare the winter fixture");
     await open("day", {lang: "en", device: {...PHONE, width: 320}});
+    const receipt = initial.receipt;
+    if (!receipt?.metered_bill || receipt.money != null || !receipt.comparison_gap || receipt.comparison != null) {
+      throw Error("Winter replay must expose its tariff bill and service exclusion");
+    }
+    if (!await js(`document.querySelector(".receipt").textContent.includes(t(${JSON.stringify("gap_" + receipt.comparison_gap.reason)}))`)) {
+      throw Error("Day omitted the simulated service exclusion");
+    }
     const forecastDays = (await (await fetch(new URL("/v1/days", base))).json()).days;
     const scoredCount = forecastDays.filter(day => day.forecast != null).length;
     if (scoredCount < 14 && !await js(`document.body.innerText.includes(${JSON.stringify("Forecast learning · " + scoredCount + " of 14 days scored")})`)) {
@@ -524,7 +532,7 @@ if (mode === "price-sheet") {
       throw Error("Tariff page did not reach " + condition);
     };
     const sheet = JSON.parse(readFileSync(new URL("../crates/ems-tariff/examples/preisblatt-fixed.json", import.meta.url)));
-    const year = Number(new Intl.DateTimeFormat("en", {year:"numeric",timeZone:"Europe/Berlin"}).format(new Date()));
+    const year = Number(new Intl.DateTimeFormat("en", {year:"numeric",timeZone:"Europe/Berlin"}).format(new Date())) + 2;
     Object.assign(sheet, {contract:"HOUSEHOLD-BROWSER-TEST",valid_from:year + "-01-01",priced_for_year:year});
     const make = (doc) => {
       const {privateKey,publicKey} = generateKeyPairSync("ed25519");
@@ -541,12 +549,24 @@ if (mode === "price-sheet") {
     await js('location.hash = "setup"');
     await waitFor('document.querySelector("#supplyFile") && supplyStatus.can_import');
     if (!await js('supplyStatus.active == null && supplyStatus.next == null')) throw Error("Tariff acceptance needs an empty household store");
+    const dynamic = JSON.parse(readFileSync(new URL("../crates/ems-tariff/examples/preisblatt-dynamic.json", import.meta.url)));
+    Object.assign(dynamic, {contract:"DYNAMIC-BROWSER-TEST", valid_from:sheet.valid_from, priced_for_year:year});
+    await upload(make(dynamic));
+    await waitFor('supplyDraft?.review.terms.contract === "DYNAMIC-BROWSER-TEST"');
+    if (!await js('supplyDraft.review.price_ct === null && document.querySelector("#supplyCard").innerText.includes("Market price pending")')) throw Error("A future dynamic contract needs an explicit missing price");
+    await js('document.querySelector("#supplyCancel").click()');
+    await waitFor('document.activeElement?.id === "supplyFile" && !supplyDraft');
+
     const parts = signed.split(".");
     await upload(parts[0] + "." + Buffer.from(JSON.stringify({...sheet,contract:"MODIFIED"})).toString("base64url") + "." + parts[2]);
     await waitFor('supplyMessage && !supplyDraft && !supplyBusy');
     await upload(signed);
     await waitFor('supplyDraft?.review.terms.contract === "HOUSEHOLD-BROWSER-TEST"');
     if (!await js('document.querySelector("#supplyCard code").textContent === supplyDraft.review.terms.fingerprint && document.documentElement.scrollWidth <= innerWidth')) throw Error("Tariff review or phone width");
+    if (!await js('document.querySelector("#supplyCard").innerText.includes("33.71389 ct/kWh")')) throw Error("The confirmation must show the exact signed price");
+    await js('document.querySelector("#lang").focus(); document.querySelector("#lang").click()');
+    if (!await js('document.querySelector("#supplyCard").innerText.includes("33,71389 ct/kWh")')) throw Error("German review lost decimal precision");
+    await js('document.querySelector("#lang").focus(); document.querySelector("#lang").click()');
     const other = make(sheet);
     const status = await js(`fetch("/v1/tariff", {method:"PUT",headers:{"Content-Type":"application/json"}, body:JSON.stringify({signed:${JSON.stringify(other)}, confirmation:supplyDraft.review})}).then(r => r.status)`);
     if (status !== 409) throw Error("Changed signer under the same key ID was accepted");
@@ -727,10 +747,10 @@ if (mode === "walkthrough") {
   await say("Dasselbe fürs Warmwasser: 55 Grad bis 18 Uhr.");
   await js(`window.scrollTo({ top: 0, behavior: 'smooth' })`);
   await tap('.tabs a[data-v="day"]');
-  await say("Am Ende des Tages ein Kassenbon: was der Tag gekostet hat — und was dasselbe Haus ohne hems gekostet hätte.");
+  await say("Die Tagesrechnung zeigt die Stromkosten. Fehlt vergleichbarer Betrieb, steht hier der erste Grund.");
   await js(`document.querySelector('.month')?.scrollIntoView({ block: 'center', behavior: 'smooth' })`);
   await sleep(700);
-  await say("Darunter der Monat: ein Balken je Tag, und eine Summe, die auf den Cent den Kassenbons entspricht.");
+  await say("Im Monat sehen Sie, für wie viele Tage ein Vergleich möglich ist. Tippen Sie einen Tag für seine Rechnung an.");
   await js(`window.scrollTo({ top: 0, behavior: 'smooth' })`);
   await tap('.tabs a[data-v="setup"]');
   await say("Einrichtung: die SKI in Vierergruppen, zum Vergleich mit dem Etikett der Steuerbox.");

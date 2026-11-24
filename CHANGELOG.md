@@ -5,6 +5,22 @@ All notable changes to ems. The format follows
 [Semantic Versioning](https://semver.org/) — before 1.0, a minor version may
 break anything, and says so here.
 
+## [0.9.0] — 2026-11-24
+
+### Added
+
+- Households can sign in through OIDC to compare 7 or 30 calendar days of import, export and generation. The portal distinguishes missing reports from measured zeroes and shows the latest simulated EV departure receipt.
+- Operators can search and filter the fleet desk, check gateway and feeder freshness independently and load one site's check-in history.
+- The building simulator compares two OCPP charging stations with a KNX feeder meter and reserves heating capacity using BACnet/IP zone readings. Its replays cover station reconnects, sensor faults and incomplete tenant readings.
+- `hemsd ev-departure` rehearses an OCPP charging interruption and reconciles outlet delivery with SunSpec whole-house import. `hemsd house --run --manage-storage` exercises battery setpoints, measured AC power and timed release.
+- `cemsd reconcile --format html` produces an offline interval review with links to meter exceptions and explicit offsets for the repeated Berlin hour.
+
+### Changed
+
+- Household cold starts use a project-owned synthetic demand profile in place of the bundled BDEW H25 table.
+- Day and Month show savings only for comparable service and expose comparison coverage. Daily bills require a unique priced reading for every quarter. Setup shows the signed unit price and UTC offset for the active contract.
+- SunSpec meters of types 201–204 report import and export. The driver checks write acknowledgements and rediscovers inverter controls after reconnecting. Gateway readiness follows the Steuerbox connection.
+
 ## [0.8.0] — 2026-11-23
 
 ### Added
@@ -317,6 +333,7 @@ hardware.
 - `rmcp` 3.11 (RUSTSEC-2026-0457, -0461) and `ctutils` 0.4.8 (RUSTSEC-2026-0385).
 - Every override and S2 instruction is logged with the credential that made it.
 
+[0.9.0]: https://github.com/hupe1980/ems/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hupe1980/ems/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hupe1980/ems/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hupe1980/ems/compare/v0.5.0...v0.6.0

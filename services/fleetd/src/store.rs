@@ -1,4 +1,4 @@
-//! What survives a restart, and the only place `fleetd` writes SQL.
+//! Durable enrolments and configuration reports.
 //!
 //! # Why there is a database here at all
 //!

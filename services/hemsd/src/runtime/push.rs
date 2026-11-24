@@ -1681,9 +1681,11 @@ mod tests {
         let (origin, inbox) = push_service(201).await;
         let push = sender(&origin).await;
         let browser = Receiver::fresh();
+        let page = std::env::var("EMS_TEST_NOTIFICATION_ORIGIN")
+            .unwrap_or_else(|_| "https://hems.local".to_owned());
         push.subscribe(
             asked(format!("{origin}/push/one"), &browser),
-            "https://hems.local".into(),
+            page.clone(),
             T0,
         )
         .await
@@ -1710,7 +1712,7 @@ mod tests {
         let received = inbox.lock().await;
         assert_eq!(received.len(), 2, "exactly two");
         let stranger = Receiver::fresh();
-        let mut titles = Vec::new();
+        let mut documents = Vec::new();
         for ((headers, body), id) in received.iter().zip(expected_ids) {
             assert_eq!(headers["content-encoding"], "aes128gcm");
             assert_eq!(headers["ttl"], "1800");
@@ -1724,16 +1726,8 @@ mod tests {
             let document: serde_json::Value = serde_json::from_slice(&plain).unwrap();
             assert_eq!(document["web_push"], 8030);
             assert_eq!(document["notification"]["data"]["event_id"], id);
-            assert_eq!(
-                document["notification"]["navigate"],
-                "https://hems.local/#now"
-            );
-            titles.push(
-                document["notification"]["title"]
-                    .as_str()
-                    .unwrap()
-                    .to_owned(),
-            );
+            assert_eq!(document["notification"]["navigate"], format!("{page}/#now"));
+            documents.push(document);
 
             // Signed for this push service, by the key the browser subscribed with.
             let authorization = headers["authorization"].to_str().unwrap();
@@ -1749,12 +1743,19 @@ mod tests {
             assert!(claims["exp"].as_i64().unwrap() - T0.unix_timestamp() <= 24 * 3600 + 160 * 60);
         }
         assert_eq!(
-            titles,
+            documents
+                .iter()
+                .map(|doc| doc["notification"]["title"].as_str().unwrap())
+                .collect::<Vec<_>>(),
             [
                 Event::ReductionBegan.sentence(Lang::De).0,
                 Event::ReductionEnded.sentence(Lang::De).0
             ]
         );
+        // The worker acceptance test consumes the two decrypted wire documents.
+        if let Some(path) = std::env::var_os("EMS_TEST_NOTIFICATION_CAPTURE") {
+            std::fs::write(path, serde_json::to_vec(&documents).unwrap()).unwrap();
+        }
     }
 
     #[tokio::test]

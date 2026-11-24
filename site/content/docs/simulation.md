@@ -16,11 +16,44 @@ Choose the boundary you want to exercise. All peers below run on the same machin
 | `cargo run -p bemsd -- demo` | Two charging stations exchange OCPP 1.6J messages with a local charging management system. | Station loads, meter timestamps and delivery delays |
 | `cargo run -p cemsd --features openadr -- openadr` | A site client exchanges an event and a metered report with an OpenADR 3.1 server over HTTP. | Aggregator request, industrial meter trace and alternative battery dispatch times |
 
+## Reconcile the virtual household meter
+
+Run `just house-meter-trial` from the workspace root. It reads import and export over Modbus TCP for three Berlin dates, advancing the plant one second at a time. Winter has 96 quarters, the spring clock change has 92 and the autumn change has 100. The closing midnight reading belongs to the last quarter of the preceding day. Each quarter must agree with integrated device power within 1 Wh per direction. It also compares the daily totals with a separately stepped minute model. The allowance in each direction is the larger of 50 Wh and 1% of that model’s total. The printed fixture bill uses 25 ct/kWh for import before 18:00 Berlin time, 40 ct/kWh thereafter, and 8 ct/kWh for export. It must agree with the plant calculation within one cent.
+
+For a live session run `cargo run -p hemsd --features house -- house --run --at 16:58`. The gateway manages the inverter and reads the connection meter and the self-managed battery. The virtual Steuerbox sends its scheduled reduction over EEBUS. The `grid` entry in `/readyz` shows whether the paired Steuerbox is connected. Setup shows the last LPC heartbeat. Keep the owner-only `.steuerbox.pem` beside the generated configuration to preserve the paired identity across restarts.
+
+## Check an EV departure
+
+Run one household wallbox and its controller over local OCPP 1.6J WebSockets. The car plugs in at 06:15 UTC, charging stops at 06:30, and the station reconnects at 06:45. Departure is at 07:00. The 45 simulated minutes run in seconds.
+
+```sh
+cargo run -p hemsd --features house -- ev-departure
+```
+
+| Try a goal | What the outlet register proves |
+|---|---|
+| Default, 3,600 Wh | 1,200 Wh by rejoin and 3,600 Wh by departure. The goal is met. |
+| `--goal-wh 6000` | 4,750 Wh delivered. The 11 kW wallbox can add at most 2,750 Wh in the last quarter. The shortfall is 1,250 Wh. |
+| `--missing-close` | 1,200 Wh by rejoin. The departure total stays unknown. |
+
+The **Connection meter** line covers the whole 45-minute window. With the default goal, the house imports **4,281 Wh**, including **230 Wh** while charging is paused. The outlet accounts for **3,600 Wh**. With `--missing-close`, the same grid total is available but the last verified outlet delivery is only 1,200 Wh. Roof production and household loads run on the same clock as the outlet, with storage disabled.
+
+The household guard reads connection power over Modbus TCP before each charging decision. The wallbox applies a 15-minute transaction profile, and its cumulative Wh register survives the interruption. The goal is measured at the outlet. Vehicle state of charge and charging losses are outside this fixture.
+
+## Exercise battery control
+
+Run `cargo run -p hemsd --features house -- house --run --manage-storage` to let the gateway control the simulated pack. Open the battery’s control detail in **Now** to compare requested watts, the setting confirmed by the device, and measured AC power. The detail retains the last confirmation time when feedback goes quiet. Omitting the flag leaves the pack in self-consumption.
+
+`just house-storage-trial` exercises the gateway driver and an independent controller over Modbus TCP. Unit 3 reports AC power in model 701, state of charge in 802 and the active setting in 704. Negative device watts charge the pack. The gateway renews a target on a fresh control decision. The peer releases it after 30 simulated seconds without renewal or on explicit disable. [SunSpec DER AC controls](https://github.com/sunspec/models/blob/master/json/model_704.json)
+
+A separate controller can discover model 704 on unit 3 and send a four-register write starting at `WSetEna`. Set enable and watt mode to 1, then supply the signed 32-bit `WSet` value, high word first. Read back the setting and `WSetRvrtRem`. Writing 0 to `WSetEna` releases the pack immediately.
+
 ## Check a shift against its meter
 
 From the workspace root, run:
 ```sh
 cargo run -p cemsd -- reconcile crates/ems-sim/fixtures/shift-trace.json
+cargo run -p cemsd -- reconcile --format html crates/ems-sim/fixtures/shift-trace.json > review.html
 ```
 
 The command compares cumulative import with closed quarter-hour energy for one
@@ -28,6 +61,8 @@ delivery point. Supply whole Wh, explicit UTC offsets and a tolerance in Wh.
 Each closed reading uses the interval start. Export the latest corrected
 values before running. The example crosses the repeated autumn clock hour.
 Its two differences are 0 Wh and +1 Wh (register minus closed meter).
+
+Open `review.html` offline. **Go to first exception** jumps to the affected quarter. **Next exception** skips matching intervals. Each quarter shows both readings, its signed difference and its Berlin offset.
 
 The terminal summary gives coverage and the largest difference. Redirect stdout to save the JSON report. A missing boundary, decreasing register, missing
 closed interval or excessive difference yields a nonzero exit with the interval
@@ -50,9 +85,21 @@ Choose *Bestätigung fehlt* to replay the same request with its final meter
 sample missing. Reloading preserves the selected case. The demo uses synthetic
 data and exposes these read-only routes on its loopback listener.
 
+### When a charger reconnects
+
+In **Beispielfall wechseln**, choose **West-02 nach Verbindungsabbruch**. At the deadline West-01 reports 12 kW and West-02 is disconnected. Follow **Weiter**. West-02 reconnects and resends a pre-loss reading. The bank total stays unknown until the 09:13:30 MEZ samples arrive. The two stations then report 12 and 14 kW, exceeding the original request by 2 kW. **Zurück** restores the evidence available at the selected instant.
+
+### Check the heating reserve
+
+With the building demo running, open [Heizreserve](http://127.0.0.1:8081/comfort). Analog Input 1 reports 21.5 °C over BACnet/IP. The two OCPP stations can share 24 kW while the point is healthy. A fault at the same temperature retains 6 kW for heating. When the point goes silent, the last good reading remains visible with its age. Compare the requested ceiling with the independently received station readings in each case. The 24 kW budget and 6 kW reserve are inputs to this fixture.
+
+In the sensor fault case, open **KNX-Zähler am Ladeabgang vergleichen**. A separate virtual feeder meter sends signed watts on group `2/1/3` (DPT 14.056) over loopback UDP. The three alternatives use the same 18 kW station total. A 22 kW feeder reading shows a 4 kW excess. A telegram received three seconds before the station deadline is too old to compare. The rehearsal allows 100 W of difference and up to two seconds of receipt age.
+
 ## Compare community allocations
 
 For community energy sharing, run `cargo run -p bemsd -- community --viewer coordinator`, open [the allocation replay](http://127.0.0.1:8083/) and use the login printed in the terminal. Compare the two keys on 10 kWh of supply. The static key leaves 3 kWh undistributed. The cascading key assigns those 3 kWh to the member with unmet demand. Switch to the second 02:00 interval and check its UTC offset. With a missing member reading the coordinator sees incomplete coverage and the final allocation is withheld. Restart with `--viewer member-a` and the new login to see the member’s own share.
+
+In the coordinator view select **Welche Messung entscheidet?**. Reveal A or B with the keyboard. The page shows what that single reading establishes and withholds final shares until both meters are measured. Back and reload restore the selected evidence.
 
 ## Replay an industrial shift
 
@@ -76,6 +123,8 @@ Compare the site’s two projected means with the original meter trace. Starting
 
 ## Winter report
 
+Add `--cold-start` to rehearse the first day after installation. The report shows the source of the initial load estimate and how much of the day relies on it.
+
 `cargo run -p hemsd -- simulate --day winter` prints the following readings. Net savings include battery wear and comfort costs.
 
 ```text
@@ -93,9 +142,9 @@ Compare the site’s two projected means with the original meter trace. Starting
   battery life spent                         0.58 €
   comfort given up                           0.13 €
   cost of the day                           21.61 €
-  without optimisation                      22.70 €
-  saved                                      1.09 €
-  …of it on the bill                         0.83 €
+  without optimisation                      22.68 €
+  saved                                      1.07 €
+  …of it on the bill                         0.80 €
 
   § 14a limit in force                       90 min
   …against a minimum of                     10.5 kW
@@ -146,7 +195,7 @@ Use `--perfect-foresight` to isolate forecast errors on the same weather, `--wea
 
 The charger can refuse a request below its minimum current. A battery reports delivered energy after power-dependent losses, and an inverter takes time to reach its ceiling. The virtual control box can stop sending heartbeats during a reduction. Inspect the meter or command outcome to distinguish what was requested from what happened. [Device behaviour](@/docs/devices.md).
 
-For a socket-level trial, start the [virtual house](@/docs/getting-started.md#a-house-without-hardware). The paired electrical trials use seven weather and price profiles with fixed load and rooftop PV. A shadow gateway observes meter and device readings while an independent controller remains responsible for limits. Comparisons involving a connected car, hot-water draw or shifted battery inventory require evidence that both alternatives delivered equal service.
+For a socket-level trial, start the [virtual house](@/docs/getting-started.md#a-house-without-hardware). The paired electrical trials use seven weather and price profiles with fixed load and rooftop PV. A shadow gateway observes meter and device readings while an independent controller remains responsible for limits. A separate mixed-asset trial runs two physical models with the same charging window, heating demand, hot-water draw and initial storage. It reads the simulated connection meters via SunSpec/Modbus TCP. The test includes an equal-bill control, a cheaper day that misses departure and a lost service sample.
 
 ## One day cannot answer some questions
 
@@ -156,5 +205,7 @@ just risk deadline 20
 ```
 
 The first command varies the seeded weather and evaluates forecast bands over twenty episodes. The second compares planning policies across repeated deadline scenarios. Inspect the worst outcome and unmet service alongside mean cost. An ordinary day with no missed deadline says little about performance in a tight evening.
+
+In the household demo, Day and Month compare electricity bills only after both minute-by-minute trajectories qualify. Both rooms must stay within 0.1 K of the comfort band. Departure energy, daily unmet hot water and final stored energy are checked to 1 Wh. Different grid-control regimes withhold the comparison. The CLI also reports its separate economic benchmark, including wear and discomfort.
 
 Reference days are reproducible model comparisons. A wall-clock solver budget can affect the solution selected on a busy machine. A field savings claim requires metered costs and comparable service at the installation. [Forecast quality](@/docs/forecasting.md) · [How receipts use measured data](@/docs/household.md#the-month).

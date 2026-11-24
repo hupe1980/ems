@@ -95,7 +95,7 @@ def run(binary):
             page.go_forward()
             expect(heading).to_contain_text("Übergabe")
             for route in ("/", "/v1/demo/building"):
-                for query in ("?moment=no-such-moment", "?case=no-such-case", "?unexpected=yes"):
+                for query in ("?moment=no-such-moment", "?case=no-such-case", "?unexpected=yes", "?case=confirmed&moment=rejoined"):
                     assert page.request.get(base + route + query).status == 400, route + query
                 assert page.request.post(base + route).status == 405
             for case, text in [("above-request", "26 kW gemessen"), ("unconfirmed", "Lieferung unbestätigt")]:
@@ -114,10 +114,61 @@ def run(binary):
                     assert data["final_sample_kw"] is None, data
             assert read(page, base, "handover", "unconfirmed")["final_sample_kw"] is None
 
+            page.goto(base + "/?case=station-rejoin&moment=deadline#zeitpunkt")
+            lost = read(page, base, "deadline", "station-rejoin")
+            assert not lost["stations"][1]["connected"]
+            for moment, label, power in [
+                ("rejoined", "Wieder verbunden", None),
+                ("buffered", "Gepufferte Messung", None),
+                ("restored", "Neue Messung", 26),
+            ]:
+                link = nav.get_by_role("link", name="Weiter: " + label)
+                link.focus()
+                page.keyboard.press("Enter")
+                expect(heading).to_be_focused()
+                expect(heading).to_contain_text(label)
+                data = read(page, base, moment, "station-rejoin")
+                assert data["stations"][1]["connected"]
+                assert data["final_sample_kw"] == power
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            expect(page.locator("main")).to_contain_text("26 kW gemessen um 09:13:30")
+            for prior in ("buffered", "rejoined", "deadline"):
+                nav.get_by_role("link", name="Zurück:", exact=False).focus()
+                page.keyboard.press("Enter")
+                expect(page).to_have_url(base + f"/?case=station-rejoin&moment={prior}#zeitpunkt")
+                expect(heading).to_be_focused()
+            page.reload()
+            expect(heading).to_contain_text("Stichtag")
+            assert "09:13:30" not in page.content()
+            assert read(page, base, "deadline", "station-rejoin") == lost
+
+            mobile = browser.new_page(viewport={"width": 320, "height": 700}, java_script_enabled=False)
+            mobile.goto(base)
+            link = mobile.get_by_role("link", name="Heizreserve und Ladeleistung vergleichen")
+            link.focus()
+            link.press("Enter")
+            expect(mobile.get_by_role("heading", name="Heizreserve", exact=True)).to_be_visible()
+            rows = mobile.request.get(base + "/v1/demo/building/comfort").json()
+            assert [r["reported_c"] for r in rows] == [21.5, 21.5, None]
+            for section, row, kw in zip(mobile.locator("main section").all(), rows, [24, 18, 18], strict=True):
+                expect(section).to_contain_text(f"{kw} kW Ladegrenze")
+                assert row["charging_limit_kw"] == row["measured_bank_kw"] == kw
+            assert mobile.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            feeder = mobile.locator("summary", has_text="KNX-Zähler am Ladeabgang vergleichen")
+            feeder.focus()
+            feeder.press("Space")
+            expect(mobile.get_by_text("22 kW · 4 kW über der Stationssumme")).to_be_visible()
+            expect(mobile.get_by_text("Kein Vergleich · Empfang vor 3 s")).to_be_visible()
+            comparisons = rows[1]["feeder_comparisons"]
+            assert [r["verdict"] for r in comparisons] == ["agrees", "higher", "unavailable"]
+            assert [r["delta_kw"] for r in comparisons] == [0, 4, None]
+            assert mobile.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            mobile.close()
+
         with demo(binary) as base:
             assert read(page, base, "deadline") == deadline_view
         browser.close()
-    print("BEMS replay passed all four cursors, rewind, delayed and missing evidence, keyboard focus and cold restart.")
+    print("BEMS replay passed deadline rewind, OCPP rejoin, delayed and missing evidence, keyboard focus and cold restart.")
 
 
 if __name__ == "__main__":

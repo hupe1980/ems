@@ -37,8 +37,8 @@
 
 use ems_core::prelude::{Energy, GeoPoint, Horizon, Power, Slot};
 use ems_forecast::{
-    ArrayModel, Band, Calibration, Forecast, LoadProfile, Prior, ResidualModel, Session,
-    SessionForecast, SessionHistory, StandardProfile,
+    ArrayModel, Band, Calibration, Forecast, HouseholdProfile, LoadProfile, Prior, ResidualModel,
+    Session, SessionForecast, SessionHistory,
 };
 use ems_sim::Realisation;
 use time::{Duration, OffsetDateTime};
@@ -460,8 +460,8 @@ pub fn pv_forecast(
 /// running box gated on `LoadProfile::is_empty` and the reference days did not,
 /// so the simulated first evening measured a path production never ran (D187).
 ///
-/// With a `prior` — BDEW's H25 scaled to this household, see [`household_prior`]
-/// — every cell the household has not filled leans on the published shape, and
+/// With a `prior` — the synthetic load profile scaled to this household, see [`household_prior`]
+/// — every cell the household has not filled leans on the synthetic shape, and
 /// the forecast is the household's own from four observations a cell onwards.
 /// Without one, a learned profile answers alone, and a profile with nothing in
 /// it falls back to persistence from the box's own meter: doubling by this time
@@ -487,7 +487,7 @@ pub fn load_forecast(
     measured_now.map(|recent| ems_forecast::naive::persistence(recent, horizon, 0.9))
 }
 
-/// BDEW's H25 scaled to this household, by the best basis the box has.
+/// The synthetic load profile scaled to this household, by the best basis the box has.
 ///
 /// A declared household consumption first; then the household's own whole
 /// metered days (**fitted**), once there is one; then the box's reading at
@@ -504,14 +504,14 @@ pub fn household_prior(
     at: Slot,
     measured_now: Option<Power>,
 ) -> Option<Prior> {
-    let h25 = StandardProfile::h25(profile.land);
-    if let Some(kwh) = declared_kwh_per_year.filter(|k| *k > 0.0) {
-        return Some(h25.declared(kwh));
+    let shape = HouseholdProfile::new(profile.land);
+    if let Some(kwh) = declared_kwh_per_year.filter(|k| k.is_finite() && *k > 0.0) {
+        return Some(shape.declared(kwh));
     }
-    if let Some(fitted) = h25.clone().fitted(profile, at, profile.land) {
+    if let Some(fitted) = shape.clone().fitted(profile, at) {
         return Some(fitted);
     }
-    measured_now.map(|reading| h25.anchored(at, reading))
+    measured_now.map(|reading| shape.anchored(at, reading))
 }
 
 /// The charging session the planner should be given at `now`.

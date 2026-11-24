@@ -923,6 +923,8 @@ async fn probe(address: std::net::SocketAddr, unit: u8) -> Option<Identity> {
                 Ok(None) => {}
                 Err(frame::FrameError::Exception { function, code }) => {
                     break frame::Response {
+                        unit,
+                        function,
                         transaction: request.transaction,
                         body: frame::ResponseBody::Exception { function, code },
                     };

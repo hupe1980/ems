@@ -2,6 +2,7 @@
 use anyhow::{Context, Result, ensure};
 use aws_lc_rs::{digest, signature};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64};
+use ems_core::prelude::Horizon;
 use ems_tariff::sheet::PriceSheet;
 use serde::Deserialize;
 
@@ -90,6 +91,15 @@ pub fn verify(compact: &[u8]) -> Result<Verified> {
 #[derive(Default)]
 pub(crate) struct Schedule(Vec<(i64, Verified)>);
 
+/// The complete market hours needed to price every quarter of a solve.
+pub(crate) fn market_hours(horizon: Horizon) -> Horizon {
+    let quarter = horizon.first.start().minute() / 15;
+    Horizon {
+        first: horizon.first.offset(-i64::from(quarter)),
+        len: (usize::from(quarter) + horizon.len).next_multiple_of(4),
+    }
+}
+
 impl Schedule {
     pub(crate) fn load(store: &crate::store::Store) -> Result<Self> {
         Ok(Self(
@@ -114,14 +124,47 @@ impl Schedule {
             .filter(|item| item.sheet.covers(slot.local_date()))
     }
 
+    pub(crate) fn status(
+        &self,
+        slot: ems_core::prelude::Slot,
+        published: Option<&ems_tariff::PriceStack>,
+        fallback: Option<rust_decimal::Decimal>,
+        can_import: bool,
+    ) -> Status {
+        let active = self.applicable(slot);
+        let next = self.next(slot);
+        let price = match active {
+            Some(sold) => sold.import_price(slot, published, fallback),
+            None => published
+                .and_then(|stack| stack.at(slot))
+                .filter(|p| p.contract.is_none())
+                .cloned(),
+        };
+        Status {
+            can_import,
+            active: active.map(Terms::from),
+            expired: self
+                .previous(slot)
+                .filter(|sold| !sold.sheet.covers(slot.local_date()))
+                .map(Terms::from),
+            next: next.map(|(_, item)| Terms::from(item)),
+            next_at: next.map(|(start, _)| start),
+            price_ct: price.as_ref().map(|p| p.import_ct.normalize().to_string()),
+            estimated: price.is_some_and(|p| !p.price_known),
+        }
+    }
+
+    /// Prices for the exact solve horizon and a publication covering its complete
+    /// edge hours, so a mid-hour seller preview can still resolve an hourly mean.
     pub(crate) fn prices(
         &self,
         site: &ems_tariff::Tariff,
         horizon: ems_core::prelude::Horizon,
         market: &std::collections::BTreeMap<ems_core::prelude::Slot, rust_decimal::Decimal>,
         fallback: rust_decimal::Decimal,
-    ) -> ems_tariff::PriceStack {
-        let slots = horizon
+    ) -> (ems_tariff::PriceStack, ems_tariff::PriceStack) {
+        let prefix = usize::from(horizon.first.start().minute() / 15);
+        let slots: Vec<_> = market_hours(horizon)
             .slots()
             .map(|slot| {
                 self.applicable(slot)
@@ -131,7 +174,10 @@ impl Schedule {
                     })
             })
             .collect();
-        ems_tariff::PriceStack { slots }
+        let plan = ems_tariff::PriceStack {
+            slots: slots[prefix..prefix + horizon.len].to_vec(),
+        };
+        (plan, ems_tariff::PriceStack { slots })
     }
 
     /// Tie a preview to the schedule the household reviewed, including future changes.
@@ -200,7 +246,7 @@ pub struct Status {
     pub next: Option<Terms>,
     /// Actual first quarter of the next contract, as Unix seconds.
     pub next_at: Option<i64>,
-    /// Gross import price in the current published plan.
+    /// Gross import price for the active terms in the current quarter.
     pub price_ct: Option<String>,
     /// A current price uses an estimated wholesale index.
     pub estimated: bool,
@@ -231,6 +277,30 @@ pub struct Review {
 }
 
 impl Verified {
+    /// Resolve the signed import terms against the raw indices in the published plan.
+    /// A preview requires a known index. Current status may use the site's fallback.
+    pub(crate) fn import_price(
+        &self,
+        slot: ems_core::prelude::Slot,
+        prices: Option<&ems_tariff::PriceStack>,
+        fallback: Option<rust_decimal::Decimal>,
+    ) -> Option<ems_tariff::SlotPrice> {
+        use rust_decimal::Decimal;
+        let market = prices
+            .into_iter()
+            .flat_map(|stack| &stack.slots)
+            .filter_map(|price| price.market_ct.map(|value| (price.slot, value)))
+            .collect();
+        self.sheet
+            .site_price(
+                slot,
+                &ems_tariff::Tariff::fixed(Decimal::ZERO, Decimal::ZERO),
+                &market,
+                fallback.unwrap_or_default(),
+            )
+            .filter(|price| price.price_known || fallback.is_some())
+    }
+
     pub(crate) fn review(
         &self,
         schedule: &Schedule,
@@ -238,7 +308,6 @@ impl Verified {
         prices: Option<&ems_tariff::PriceStack>,
     ) -> Result<Review> {
         use ems_core::prelude::Slot;
-        use rust_decimal::Decimal;
         let january = time::Date::from_ordinal_date(self.sheet.year, 1)?;
         let first_day = january.max(self.sheet.start);
         let start = Slot::containing(ems_core::calendar::day_start_utc(first_day)).max(now.next());
@@ -250,21 +319,9 @@ impl Verified {
             schedule.can_schedule(start.start().unix_timestamp(), now.start().unix_timestamp()),
             "too many future changes"
         );
-        let market = prices
-            .into_iter()
-            .flat_map(|p| &p.slots)
-            .filter_map(|p| p.market_ct.map(|v| (p.slot, v)))
-            .collect();
         let price_ct = self
-            .sheet
-            .site_price(
-                start,
-                &ems_tariff::Tariff::fixed(Decimal::ZERO, Decimal::ZERO),
-                &market,
-                Decimal::ZERO,
-            )
-            .filter(|p| p.price_known)
-            .map(|p| p.import_ct.normalize().to_string());
+            .import_price(start, prices, None)
+            .map(|price| price.import_ct.normalize().to_string());
         Ok(Review {
             terms: Terms::from(self),
             digest: self.digest.clone(),
@@ -292,6 +349,135 @@ mod tests {
             B64.encode(doc.to_string())
         );
         format!("{data}.{}", B64.encode(key.sign(data.as_bytes()).as_ref()))
+    }
+
+    #[test]
+    fn gateway_review_and_plan_match_signed_seller_examples() {
+        let fixtures = [
+            (
+                include_str!("../tests/fixtures/tariff/fixed.jws"),
+                include_str!("../../../crates/ems-tariff/examples/preisblatt-fixed.json"),
+            ),
+            (
+                include_str!("../tests/fixtures/tariff/dynamic.jws"),
+                include_str!("../../../crates/ems-tariff/examples/preisblatt-dynamic.json"),
+            ),
+        ];
+        let rows: Vec<(&str, Option<&str>, Option<&str>)> =
+            serde_json::from_str(include_str!("../tests/fixtures/tariff/quotes.json")).unwrap();
+        let site = ems_tariff::Tariff::fixed(dec!(10), dec!(7));
+        let effective = Slot::containing(datetime!(2026-12-31 23:00 UTC));
+        for (sheet_index, (compact, example)) in fixtures.into_iter().enumerate() {
+            assert_eq!(compact.split('.').nth(1).unwrap(), B64.encode(example));
+            let verified = verify(compact.as_bytes()).unwrap();
+            let store = crate::store::Store::in_memory().unwrap();
+            store
+                .put_price_sheet(
+                    effective.prev().start().unix_timestamp(),
+                    effective.start().unix_timestamp(),
+                    compact,
+                )
+                .unwrap();
+            let schedule = Schedule::load(&store).unwrap();
+            for &(instant, fixed, dynamic) in &rows {
+                let at = time::OffsetDateTime::parse(
+                    instant,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap();
+                let slot = Slot::starting_at(at).unwrap();
+                let market = [(slot, dec!(-2))].into();
+                let (plan, _) = schedule.prices(
+                    &site,
+                    ems_core::prelude::Horizon::new(at, 1),
+                    &market,
+                    Decimal::ZERO,
+                );
+                let price = plan.at(slot).unwrap();
+                let expected = [fixed, dynamic][sheet_index];
+                assert_eq!(
+                    price.contract.as_deref(),
+                    expected.map(|_| verified.sheet.contract.as_str())
+                );
+                if let Some(expected) = expected {
+                    assert!(price.price_known);
+                    let previous_plan = ems_tariff::PriceStack {
+                        slots: vec![ems_tariff::stack::price_at_market(
+                            &site,
+                            slot,
+                            Some(dec!(-2)),
+                        )],
+                    };
+                    let status = schedule.status(slot, Some(&previous_plan), None, true);
+                    assert_eq!(status.price_ct.as_deref(), Some(expected));
+                    assert!(!status.estimated);
+                    assert_eq!(status.active.unwrap().contract, verified.sheet.contract);
+                    assert_eq!(price.import_ct.normalize().to_string(), expected);
+                    let preview = verified
+                        .review(&Schedule::default(), slot.prev(), Some(&plan))
+                        .unwrap();
+                    assert_eq!(preview.effective_at, at.unix_timestamp());
+                    assert_eq!(preview.price_ct.as_deref(), Some(expected));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mid_hour_status_and_review_keep_the_hourly_index_used_by_the_planner() {
+        let mut doc: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../crates/ems-tariff/examples/preisblatt-dynamic.json"
+        ))
+        .unwrap();
+        doc["energy"]["index"] = "day-ahead-hourly-mean".into();
+        let compact = signed(&doc, 3);
+        let first = Slot::containing(datetime!(2027-01-05 16:00 UTC));
+        let at = first.offset(2);
+        let store = crate::store::Store::in_memory().unwrap();
+        store
+            .put_price_sheet(
+                first.prev().start().unix_timestamp(),
+                first.start().unix_timestamp(),
+                &compact,
+            )
+            .unwrap();
+        let schedule = Schedule::load(&store).unwrap();
+        let market = [
+            (first, dec!(-2)),
+            (first.next(), dec!(4)),
+            (at, dec!(6)),
+            (at.next(), dec!(8)),
+        ]
+        .into();
+        let (plan, published) = schedule.prices(
+            &ems_tariff::Tariff::fixed(dec!(10), dec!(7)),
+            ems_core::prelude::Horizon::new(at.start(), 1),
+            &market,
+            dec!(12),
+        );
+        assert_eq!(plan.slots.len(), 1);
+        assert_eq!(plan.at(at).unwrap().import_ct, dec!(37.16489));
+        let status = schedule.status(at, Some(&published), Some(dec!(12)), true);
+        assert_eq!(status.price_ct.as_deref(), Some("37.16489"));
+        assert!(!status.estimated);
+        let sold = schedule.applicable(at).unwrap();
+        assert_eq!(
+            sold.review(&schedule, at.prev(), Some(&published))
+                .unwrap()
+                .price_ct,
+            status.price_ct
+        );
+        assert!(
+            sold.review(&schedule, at.prev(), Some(&plan))
+                .unwrap()
+                .price_ct
+                .is_none()
+        );
+        assert!(
+            schedule
+                .status(at, Some(&plan), Some(dec!(12)), true)
+                .estimated
+        );
     }
 
     #[test]
@@ -343,7 +529,7 @@ mod tests {
         let mut store = crate::store::Store::open(&path).unwrap();
         let schedule = Schedule::load(&store).unwrap();
         let site = ems_tariff::Tariff::fixed(dec!(10), dec!(7));
-        let plan = schedule.prices(
+        let (plan, _) = schedule.prices(
             &site,
             ems_core::prelude::Horizon::new(before.start(), 2),
             &std::collections::BTreeMap::new(),

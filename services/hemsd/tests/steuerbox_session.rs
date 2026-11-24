@@ -128,7 +128,7 @@ async fn a_steuerbox_over_tls_reduces_a_running_household() {
         // that registered itself on the developer's own network for the length
         // of a `cargo test` is a side effect nobody asked for.
         quiet(),
-        box_ski,
+        ems_service::Health::new(),
         signal,
     ));
 
@@ -259,7 +259,7 @@ async fn an_untrusted_steuerbox_completes_tls_and_is_held_short_of_the_data_phas
         ship_id: "hems_untrusted-test".into(),
         ..hemsd::runtime::ship::ShipSettings::default()
     };
-    let (node, box_ski, _key) =
+    let (node, _, _key) =
         hemsd::runtime::ship::identity(&settings, None, time::OffsetDateTime::now_utc())
             .await
             .expect("an identity");
@@ -283,7 +283,7 @@ async fn an_untrusted_steuerbox_completes_tls_and_is_held_short_of_the_data_phas
         Arc::clone(&registry),
         Attached { driver, asset },
         quiet(),
-        box_ski,
+        ems_service::Health::new(),
         signal,
     ));
 
@@ -393,7 +393,7 @@ async fn a_steuerbox_approved_while_it_waits_gets_through_without_a_restart() {
         Arc::clone(&registry),
         Attached { driver, asset },
         settings,
-        box_ski,
+        ems_service::Health::new(),
         signal,
     ));
 
@@ -515,7 +515,7 @@ async fn a_failsafe_the_operator_writes_survives_the_next_power_cut() {
             asset: asset.clone(),
         },
         quiet(),
-        box_ski,
+        ems_service::Health::new(),
         signal,
     ));
 

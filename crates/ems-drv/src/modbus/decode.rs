@@ -98,6 +98,9 @@ fn battery(regs: &[u16], into: &mut Measurement) {
     let Ok(m) = Model802::parse(regs) else {
         return;
     };
+    if !SCALE_FACTOR_RANGE.contains(&m.soc_sf) || m.soc == u16::MAX {
+        return;
+    }
     into.soc = Soc::new(scaled(i64::from(m.soc), m.soc_sf) / 100.0).ok();
 }
 
@@ -111,6 +114,9 @@ fn der(regs: &[u16], into: &mut Measurement) {
     let (Some(w), Some(sf)) = (m.w, m.w_sf) else {
         return;
     };
+    if !SCALE_FACTOR_RANGE.contains(&sf) {
+        return;
+    }
     let producing = -scaled(i64::from(w), sf);
     if into.power.is_none() {
         into.power = Some(Power::new(producing));

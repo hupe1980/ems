@@ -258,6 +258,7 @@ pub(crate) struct ClosedReport {
     pub day: DayKpis,
     pub bill: crate::month::MeteredBill,
     pub comparison: Option<replay::Comparison>,
+    pub comparison_gap: Option<replay::ComparisonGap>,
     pub arbitrage: Option<storage::Arbitrage>,
 }
 
@@ -342,8 +343,13 @@ pub(crate) fn report_and_bill(
             clipped_kwh: clipping.kwh,
             foresight_was_perfect: false,
         },
-        bill,
         comparison,
+        comparison_gap: if comparison.is_none() {
+            replay::ComparisonGap::first(date, &registers, &bill)
+        } else {
+            None
+        },
+        bill,
         arbitrage: storage::Arbitrage::closed(&registers),
     }))
 }

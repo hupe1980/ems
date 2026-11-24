@@ -1849,6 +1849,7 @@ mod tests {
             forecast: None,
             metered_bill: None,
             comparison: None,
+            comparison_gap: None,
             arbitrage: None,
             imported_wh: 12_345,
             produced_wh: 3_200,

@@ -3,7 +3,10 @@
     "requested_at": "2026-11-22T08:12:00Z",
     "first_sample_at": "2026-11-22T08:12:05Z",
     "deadline_at": "2026-11-22T08:12:15Z",
-    "handover_at": "2026-11-22T08:15:00Z"
+    "handover_at": "2026-11-22T08:15:00Z",
+    "rejoined_at": "2026-11-22T08:13:00Z",
+    "buffered_at": "2026-11-22T08:13:10Z",
+    "restored_at": "2026-11-22T08:13:30Z"
   },
   "west_01": {
     "profile_reply_at": "2026-11-22T08:12:01Z",
@@ -108,6 +111,27 @@
               "sampledValue": [
                 {
                   "value": "14000",
+                  "location": "Inlet",
+                  "measurand": "Power.Active.Import",
+                  "unit": "W"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "after_rejoin": {
+      "received_at": "2026-11-22T08:13:30Z",
+      "payload": [
+        {
+          "connectorId": 0,
+          "meterValue": [
+            {
+              "timestamp": "2026-11-22T08:13:30Z",
+              "sampledValue": [
+                {
+                  "value": "12000",
                   "location": "Inlet",
                   "measurand": "Power.Active.Import",
                   "unit": "W"
@@ -226,6 +250,27 @@
                   "location": "Inlet",
                   "measurand": "Power.Active.Import",
                   "unit": "kW"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "after_rejoin": {
+      "received_at": "2026-11-22T08:13:30Z",
+      "payload": [
+        {
+          "connectorId": 0,
+          "meterValue": [
+            {
+              "timestamp": "2026-11-22T08:13:30Z",
+              "sampledValue": [
+                {
+                  "value": "14000",
+                  "location": "Inlet",
+                  "measurand": "Power.Active.Import",
+                  "unit": "W"
                 }
               ]
             }

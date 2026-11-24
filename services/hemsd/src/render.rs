@@ -219,7 +219,7 @@ pub fn day(scenario: &Scenario, r: &DayResult) -> String {
             &mut out,
             "load forecast leans on",
             format!(
-                "H25, {} ({:.0} % of the day)",
+                "Synthetic household profile, {} ({:.0} % of the day)",
                 match basis {
                     ems_forecast::PriorBasis::Declared => "your declared consumption",
                     ems_forecast::PriorBasis::Fitted => "fitted to your own days",

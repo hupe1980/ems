@@ -2,13 +2,17 @@
 
 A household energy gateway with a local control loop, planner and browser UI. The gateway uses SunSpec/Modbus TCP and EEBUS to communicate with devices and exposes S2 to an external energy manager.
 
+On first start the gateway uses a synthetic household load profile. Set `[site] household_kwh_per_year` to annual appliance consumption when known. [Forecasting guide](https://hupe1980.github.io/ems/docs/forecasting/)
+
+Rehearse an OCPP departure with `cargo run -p hemsd --features house -- ev-departure`. The receipt shows OCPP outlet delivery and SunSpec whole-house import, including the quarter when the wallbox paused. Set `--goal-wh 6000` to see a shortfall or `--missing-close` to inspect an unverified departure. Use `--report-to` to send the signed outlet evidence to the collector for the [household portal](../portald/README.md).
+
 ## Try the interface
 
 ```sh
 cargo run -p hemsd -- demo --days 1
 ```
 
-Open the [household page](http://127.0.0.1:8080/). **Now** explains what the devices are doing, **Plan** lets you price a departure or hot-water goal, and **Day** shows the energy and cost for a closed day.
+Open the [household page](http://127.0.0.1:8080/). **Now** explains what the devices are doing, **Plan** lets you price a departure or hot-water goal, and **Day** shows the energy and cost for a closed day. Select a day in Month to see the matched bill difference or the first service check that failed.
 
 ## Run a gateway
 
@@ -34,7 +38,7 @@ Set `mode = "shadow"`, configure `external_limit_controller` and set a local `st
 
 ## Seller price sheets
 
-Run `hemsd price-sheet FILE --at 2027-01-05T17:00:00+01:00` for the gross import price at one instant. Add the net index with `--index-ct` for dynamic contracts. Use `--signed` for an Ed25519 JWS. Setup shows the signer fingerprint and asks the household to approve the effective contract. [Worked example](https://hupe1980.github.io/ems/docs/tariffs/#check-a-seller-sheet-locally)
+Run `hemsd price-sheet FILE --at 2027-01-05T17:00:00+01:00` for the gross import price at one instant. Add the net index with `--index-ct` for dynamic contracts. Use `--signed` for an Ed25519 JWS. Try the checked-in `services/hemsd/tests/fixtures/tariff/dynamic.jws` with `--index-ct=-2` to compare the quarters immediately before and at 17:00 Berlin time. Setup shows the signer fingerprint and asks the household to approve the effective contract. [Worked example](https://hupe1980.github.io/ems/docs/tariffs/#check-a-seller-sheet-locally)
 
 ## Matter appliance power
 
@@ -45,6 +49,8 @@ Build with `cargo build -p hemsd --features matter`. Select a commissioned appli
 | Command from the workspace root | What it exercises |
 |---|---|
 | `cargo run --release -p hemsd -- simulate --day winter` | The planner, guard and arbiter against simulated devices and seeded weather. Add `--json` for machine-readable results. |
+| `just house-storage-trial` | Check signed gateway commands, renewal, reserve, AC metering and the 30-second reversion over Modbus TCP. |
+| `just house-meter-trial` | Reconcile meter readings and a two-rate bill over Modbus TCP for winter and both Berlin clock changes. |
 | `cargo run -p hemsd --features house -- house --run --at 16:58` | A gateway connected to a virtual inverter, battery, meter and Steuerbox over local sockets. |
 | `cargo run --release -p hemsd -- backtest --day summer --days 20` | Forecast coverage across independent simulated days. |
 | `just quote-trial` | Slider-to-price latency over 20 accepted departure goals. |
@@ -55,3 +61,5 @@ For API integration, `hemsd openapi` emits the schema and `cargo xtask check-api
 ## License
 
 MIT OR Apache-2.0
+
+Use `hemsd house --run --manage-storage` with the `house` feature to manage the loopback battery. In **Now**, open **Battery control** to compare the requested, confirmed and measured power.

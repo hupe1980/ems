@@ -1,12 +1,4 @@
 [toolchain]
-# Pinned to the declared MSRV so every developer and every CI lane compiles on
-# exactly the same toolchain. Bumping the MSRV means changing this value,
-# `rust-version` in Cargo.toml and the `msrv` job in .github/workflows/ci.yml in
-# the same commit.
-#
-# 1.99 is a choice, not a floor: one release behind stable, so whoever builds
-# the gateway image on a distribution toolchain has a release of slack. The
-# hard floor the dependencies impose is lower — `agentplane` 0.61 declares
-# 1.94.1 — and edition 2024 needs 1.85.
+# Keep the toolchain aligned with workspace.package.rust-version.
 channel    = "1.99"
 components = ["rustfmt", "clippy"]

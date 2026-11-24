@@ -33,7 +33,7 @@ tagline    = "open-source energy management for the German grid"
 
 # check-stats verifies the citation, test and domain-crate counts.
 stat_rules   = "465"
-stat_tests   = "1445"
+stat_tests   = "1472"
 stat_crates  = "10"
 stat_days    = "7"
 stat_horizon = "192"

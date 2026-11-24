@@ -506,12 +506,11 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 
 /* ── Anchors ────────────────────────────────────────────────────────────── */
 
-.zola-anchor {
-  opacity: 0; margin-left: .4rem; font-weight: 400;
-  text-decoration: none; color: var(--fg-subtle);
+.zola-anchor { color: inherit; text-decoration: none; }
+.zola-anchor:hover, .zola-anchor:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: .15em;
 }
-h2:hover .zola-anchor, h3:hover .zola-anchor, h4:hover .zola-anchor,
-.zola-anchor:focus-visible { opacity: 1; }
 
 @media print {
   .site-header, .docs-nav, .toc, .pager, .copy-btn, .site-footer { display: none; }

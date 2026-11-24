@@ -75,6 +75,28 @@ def compare(page, role):
     return data
 
 
+def reveal_readings(page, base):
+    for first, bound, reading in [("a", "3", "2"), ("b", "0", "8")]:
+        page.goto(base + "/?reveal=none&interval=2")
+        empty = compare(page, "coordinator")
+        assert empty["coordinator"]["measured"] == 0
+        first_label = first.upper()
+        other = "B" if first == "a" else "A"
+        activate(page, page.get_by_role("link", name=f"Messwert {first_label} aufdecken"))
+        partial = compare(page, "coordinator")
+        assert partial["coordinator"]["minimum_residual_kwh"] == bound
+        assert partial["coordinator"]["residual_kwh"] is None
+        assert [r["consumed_kwh"] for r in partial["rows"] if r["consumed_kwh"] is not None] == [reading]
+        assert all(r["shared_kwh"] is None for r in partial["rows"])
+        expect(page.locator("#messfrage")).to_be_focused()
+        activate(page, page.get_by_role("link", name=f"Messwert {other} aufdecken"))
+        close = compare(page, "coordinator")
+        assert close["coordinator"]["residual_kwh"] == "3"
+        page.go_back()
+        page.reload()
+        assert compare(page, "coordinator") == partial
+
+
 def journey(page, base, role):
     page.goto(base + "/?interval=1&case=static")
     first = compare(page, role)
@@ -112,11 +134,14 @@ def journey(page, base, role):
         activate(page, page.get_by_role("link", name=previous["period"], exact=True).first)
         assert "member=a" in page.url
         assert compare(page, role) == previous
+        reveal_readings(page, base)
     else:
         page.go_back()
         assert compare(page, role) == cascade
         for route in ("/", "/v1/demo/community"):
             denied = page.request.get(base + route + "?member=b&interval=2")
+            assert denied.status == 404 and not denied.body()
+            denied = page.request.get(base + route + "?reveal=both&interval=2")
             assert denied.status == 404 and not denied.body()
     return second
 
@@ -137,7 +162,7 @@ def run(binary):
                             assert old.get(base + route).status == 401
                     finally:
                         old.dispose()
-                context = browser.new_context(http_credentials=auth, viewport={"width": 320, "height": 720}, locale="de-DE")
+                context = browser.new_context(java_script_enabled=False, http_credentials=auth, viewport={"width": 320, "height": 720}, locale="de-DE")
                 try:
                     page = context.new_page()
                     if role == "member-a" and member_snapshot is not None:

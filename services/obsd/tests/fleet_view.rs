@@ -94,39 +94,46 @@ async fn start_with_a_site_credential(
         ems_service::identity!(),
         settings,
         ems_service::Health::new(),
-        router(Observed::new(
-            store,
-            60,
-            time::Duration::days(2),
-            // Every site the tests report for, each with a key of its own — which
-            // is the point: two sites sharing one key would make "who signed this"
-            // unanswerable, and the daemon refuses that configuration.
-            (0..10)
-                .map(|i| format!("site-{i}"))
-                .chain(std::iter::once("haus-2".to_owned()))
-                .map(|site| {
-                    let key = format!("{SECRET}-{site}");
-                    (site, key)
-                })
-                .chain(std::iter::once((
-                    "haus-1".to_owned(),
-                    SECRET_FOR_HAUS_1.to_owned(),
-                )))
-                .collect(),
-            ems_events::webhook::DEFAULT_TOLERANCE,
-            ems_service::Credentials::resolve(
-                &site
-                    .map(|(name, token)| (name.to_owned(), ems_service::Secret::literal(token)))
-                    .into_iter()
+        router(
+            Observed::new(
+                store,
+                60,
+                time::Duration::days(2),
+                // Every site the tests report for, each with a key of its own — which
+                // is the point: two sites sharing one key would make "who signed this"
+                // unanswerable, and the daemon refuses that configuration.
+                (0..10)
+                    .map(|i| format!("site-{i}"))
+                    .chain(std::iter::once("haus-2".to_owned()))
+                    .map(|site| {
+                        let key = format!("{SECRET}-{site}");
+                        (site, key)
+                    })
+                    .chain(std::iter::once((
+                        "haus-1".to_owned(),
+                        SECRET_FOR_HAUS_1.to_owned(),
+                    )))
                     .collect(),
-                &std::collections::BTreeMap::new(),
-                &[ems_service::OperatorCredential {
-                    token: ems_service::Secret::literal(OPERATOR),
-                    tenant: "*".into(),
-                }],
+                ems_events::webhook::DEFAULT_TOLERANCE,
+                ems_service::Credentials::resolve(
+                    &site
+                        .map(|(name, token)| (name.to_owned(), ems_service::Secret::literal(token)))
+                        .into_iter()
+                        .collect(),
+                    &std::collections::BTreeMap::new(),
+                    &[ems_service::OperatorCredential {
+                        token: ems_service::Secret::literal(OPERATOR),
+                        tenant: "*".into(),
+                    }],
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        )),
+            .with_customers(
+                ems_service::Credentials::default()
+                    .with_site("haus-1", "customer-1")
+                    .with_site("haus-2", "customer-2"),
+            ),
+        ),
     );
     tokio::spawn(async move { server.run_until(signal).await.unwrap() });
     for _ in 0..200 {
@@ -718,4 +725,74 @@ async fn the_retention_sweep_is_an_index_scan() {
         plan.contains("site_day_by_day"),
         "the retention sweep left its index:\n{plan}"
     );
+}
+
+#[tokio::test]
+async fn customer_receipt_requires_own_evidence_and_preserves_the_close() {
+    let (addr, shutdown) = start().await;
+    let departure = time::macros::datetime!(2026-01-15 07:00 UTC);
+    let submit = |site: &'static str, at, closing_wh, requested_wh| async move {
+        let data = ems_events::departure::SimulatedDeparture {
+            departure: at,
+            requested_wh,
+            opening_wh: 1000,
+            rejoin_wh: 1600,
+            closing_wh,
+        };
+        let event = ems_events::Event::new(
+            ems_events::SITE_DEPARTURE_REHEARSED,
+            format!("ems://sites/{site}"),
+            "receipt",
+            at,
+            data,
+        );
+        let body = event.to_bytes().unwrap();
+        let sig = ems_events::webhook::sign(
+            SECRET_FOR_HAUS_1.as_bytes(),
+            "receipt",
+            time::OffsetDateTime::now_utc(),
+            &body,
+        );
+        request(
+            addr,
+            "POST",
+            "/v1/departures",
+            Some(std::str::from_utf8(&body).unwrap()),
+            &sig.headers(),
+        )
+        .await
+        .0
+    };
+    let read = |token: &'static str, path: &'static str| async move {
+        request(
+            addr,
+            "GET",
+            path,
+            None,
+            &[("authorization", format!("Bearer {token}"))],
+        )
+        .await
+    };
+    let path = "/v1/me/departure";
+    assert_eq!(read(OPERATOR, path).await.0, 401);
+    assert_eq!(read("customer-1", "/v1/fleet").await.0, 401);
+    assert_eq!(submit("haus-2", departure, None, 1000).await, 401);
+    assert_eq!(submit("haus-1", departure, Some(1200), 1000).await, 422);
+    assert_eq!(submit("haus-1", departure, None, 1000).await, 204);
+    assert_eq!(
+        read("customer-2", "/v1/me/departure?site=haus-1").await.0,
+        204
+    );
+    let value = |s: String| serde_json::from_str::<serde_json::Value>(&s).unwrap();
+    assert!(value(read("customer-1", path).await.1)["delivered_wh"].is_null());
+    assert_eq!(submit("haus-1", departure, Some(1800), 1000).await, 204);
+    assert_eq!(submit("haus-1", departure, None, 1000).await, 204);
+    assert_eq!(submit("haus-1", departure, Some(2000), 1000).await, 409);
+    assert_eq!(submit("haus-1", departure, Some(1800), 700).await, 409);
+    assert_eq!(value(read("customer-1", path).await.1)["shortfall_wh"], 200);
+    let later = departure + time::Duration::days(1);
+    assert_eq!(submit("haus-1", later, Some(2000), 1000).await, 204);
+    assert_eq!(submit("haus-1", departure, None, 1000).await, 409);
+    assert_eq!(value(read("customer-1", path).await.1)["shortfall_wh"], 0);
+    shutdown.trigger();
 }

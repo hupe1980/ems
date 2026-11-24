@@ -40,29 +40,60 @@ pub type Reduction = (Duration, Duration, f64);
 /// # Errors
 /// Where the file cannot be read, parsed or written.
 pub fn identity(path: Option<&std::path::Path>) -> anyhow::Result<Identity> {
-    const SPLIT: &str = "-----BEGIN PRIVATE KEY-----";
-    if let Some(path) = path
-        && let Ok(kept) = std::fs::read_to_string(path)
-        && let Some(at) = kept.find(SPLIT)
-    {
-        return Identity::from_pem(&kept[..at], &kept[at..])
-            .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()));
-    }
-    let identity = cert::self_signed(CertParams::new(SHIP_ID))
-        .map_err(|e| anyhow::anyhow!("the Steuerbox certificate: {e}"))?;
-    if let Some(path) = path {
-        // A private key, even a simulator's: whoever holds it can reduce any
-        // box that was told to trust this SKI.
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+    use anyhow::Context as _;
+    use std::io::{ErrorKind, Write as _};
+
+    let issue = || {
+        cert::self_signed(CertParams::new(SHIP_ID))
+            .map_err(|e| anyhow::anyhow!("the Steuerbox certificate: {e}"))
+    };
+    let Some(path) = path else {
+        return issue();
+    };
+    let read = || -> anyhow::Result<Option<Identity>> {
+        use std::io::Read as _;
+        let mut file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        std::io::Write::write_all(
-            &mut options.open(path)?,
-            format!("{}{}", identity.certificate_pem(), identity.key_pem()).as_bytes(),
-        )?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shared_permissions = file.metadata()?.permissions().mode() & 0o077;
+            anyhow::ensure!(
+                shared_permissions == 0,
+                "the Steuerbox identity must be readable only by its owner"
+            );
+        }
+        let mut pem = String::new();
+        file.read_to_string(&mut pem)?;
+        let key = pem
+            .find("-----BEGIN PRIVATE KEY-----")
+            .context("missing Steuerbox private key")?;
+        let (certificate, key) = pem.split_at(key);
+        Identity::from_pem(certificate, key)
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("invalid Steuerbox identity: {e}"))
+    };
+    if let Some(kept) = read().with_context(|| path.display().to_string())? {
+        return Ok(kept);
     }
-    Ok(identity)
+    let fresh = issue()?;
+    let parent = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    let mut pending = tempfile::NamedTempFile::new_in(parent)?;
+    write!(pending, "{}{}", fresh.certificate_pem(), fresh.key_pem())?;
+    pending.as_file().sync_all()?;
+    match pending.persist_noclobber(path) {
+        Ok(_) => Ok(fresh),
+        Err(e) if e.error.kind() == ErrorKind::AlreadyExists => {
+            read()?.context("the concurrently created Steuerbox identity is unavailable")
+        }
+        Err(e) => Err(e.error.into()),
+    }
 }
 
 fn guard() -> (Engine, EnergyGuardActor) {
@@ -202,9 +233,22 @@ mod tests {
 
     #[test]
     fn a_kept_identity_keeps_its_ski_and_is_the_owners_alone() {
-        let path = std::env::temp_dir().join(format!("hems-house-{}.pem", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        let first = identity(Some(&path)).expect("issued");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity.pem");
+        let start = std::sync::Barrier::new(4);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        identity(Some(&path)).unwrap().ski.to_string()
+                    })
+                })
+                .collect();
+            let ids: Vec<_> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+            assert!(ids.windows(2).all(|pair| pair[0] == pair[1]));
+        });
+        let first = identity(Some(&path)).unwrap();
         let again = identity(Some(&path)).expect("read back");
         assert_eq!(
             first.ski, again.ski,
@@ -219,7 +263,20 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-        let _ = std::fs::remove_file(&path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(identity(Some(&path)).is_err());
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(identity(Some(&path)).unwrap().ski, first.ski);
+        }
+        std::fs::write(&path, "incomplete credential").unwrap();
+        assert!(identity(Some(&path)).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "incomplete credential"
+        );
     }
 
     #[test]

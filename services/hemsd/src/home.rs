@@ -200,9 +200,25 @@ pub fn idle() -> Explanation {
     }
 }
 
+/// Device feedback for the opted-in household battery.
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct BatteryControl {
+    /// A write or its verification read is outstanding on the current link.
+    pub pending: bool,
+    /// Whether a fresh device read showed autonomous operation.
+    pub autonomous: bool,
+    /// Signed household watts from correlated register readback.
+    pub confirmed_w: Option<f64>,
+    /// Most recent successful command readback.
+    pub last_confirmed: Option<String>,
+}
+
 /// One device, as the page shows it.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct Device {
+    /// Feedback for a gateway-managed battery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_control: Option<BatteryControl>,
     /// Most recent device measurement, including the last one before silence.
     pub last_seen: Option<String>,
     /// Latest measurement in watts, absent for a silent device.
@@ -1202,7 +1218,21 @@ fn devices_now(
         .map(|(id, kind)| {
             let (measured, soc) = status.readings.get(&id).copied().unwrap_or((None, None));
             let commanded = status.commanded.get(&id).copied();
-            let shown = measured.or(commanded);
+            let battery_control = status
+                .storage_feedback
+                .as_ref()
+                .filter(|(asset, _)| asset == &id && !status.shadow)
+                .map(|(_, s)| BatteryControl {
+                    pending: s.pending,
+                    autonomous: s.autonomous,
+                    confirmed_w: s.confirmed.map(Power::get),
+                    last_confirmed: s.last_confirmed.map(rfc3339),
+                });
+            let shown = if battery_control.is_some() {
+                measured
+            } else {
+                measured.or(commanded)
+            };
             let mut why = waiting(
                 status.reasons.get(&id).map_or_else(idle, |reason| {
                     relative(
@@ -1236,6 +1266,7 @@ fn devices_now(
                 None
             };
             Device {
+                battery_control,
                 last_seen: status.last_measured.get(&id).copied().map(rfc3339),
                 commanded_w: commanded.map(Power::get),
                 measured_w: measured.map(Power::get),

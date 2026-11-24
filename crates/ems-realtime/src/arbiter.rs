@@ -273,8 +273,7 @@ struct Desires<'a> {
 /// What one tick produced.
 #[derive(Debug, Clone)]
 pub struct Decision {
-    /// The commands to send. Only assets whose value moved by more than the
-    /// deadband appear.
+    /// Commands for changed targets and any asset requiring a fresh decision to renew control.
     pub setpoints: Vec<Setpoint>,
     /// What every asset was told, including the unchanged ones — the state the
     /// next tick compares against.
@@ -338,6 +337,12 @@ impl Arbiter {
     /// Decide what every asset should do now.
     #[must_use]
     pub fn tick(&self, tick: Tick<'_>) -> Decision {
+        self.tick_with_refresh(tick, None)
+    }
+
+    /// Also emit the current reason and target for a device with a bounded command lifetime.
+    #[must_use]
+    pub fn tick_with_refresh(&self, tick: Tick<'_>, refresh: Option<&AssetId>) -> Decision {
         let max_age = self.config.guard.max_measurement_age;
         let desires = self.desires(&tick, max_age);
 
@@ -411,7 +416,7 @@ impl Arbiter {
             // command is the evidence that the reduction was carried out.
             let guard_rule = verdict.binding_at(id, smoothed);
             let moved = previous.is_none_or(|p| (smoothed - p).abs() > self.config.deadband);
-            if !moved && guard_rule.is_none() {
+            if !moved && guard_rule.is_none() && refresh != Some(id) {
                 continue;
             }
             // The value was held short of what was wanted, and neither the plan

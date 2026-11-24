@@ -236,6 +236,14 @@ pub fn assemble(
     };
     let mut drivers = Vec::with_capacity(settings.drivers.len());
     for driver in &settings.drivers {
+        if !shadow
+            && matches!(driver, DriverSettings::Sunspec(s) if s.manage_storage)
+            && !(1..=3).contains(&settings.control.tick_period_s)
+        {
+            return Err(StartError::Build(
+                "managed storage requires tick_period_s in 1..=3 for timely renewal".into(),
+            ));
+        }
         let built = build_driver(driver, &household.site, kept, now)?;
         drivers.push(registry.register(built, &household.site)?);
     }
@@ -695,23 +703,7 @@ fn build_driver(
         })
     };
     match settings {
-        DriverSettings::Sunspec(s) => {
-            let mut driver = SunSpec::new(
-                asset(&s.asset)?,
-                s.unit,
-                Cadence {
-                    poll: time::Duration::milliseconds(s.poll_ms.cast_signed()),
-                    timeout: time::Duration::milliseconds(s.timeout_ms.cast_signed()),
-                },
-            );
-            if s.listens_only {
-                driver = driver.listening_only();
-            }
-            if let Some(kw) = s.rating_kw {
-                driver = driver.with_rating(Power::from_kw(kw));
-            }
-            Ok(Box::new(driver))
-        }
+        DriverSettings::Sunspec(s) => Ok(Box::new(sunspec_driver(s, site, &asset(&s.asset)?)?)),
         DriverSettings::EebusLpc(s) => {
             // The household's own § 14a minimum where none is configured.
             // `[A1 4.5.2]`'s minimum grows with the number of controllable
@@ -776,6 +768,55 @@ fn build_driver(
             Ok(Box::new(driver))
         }
     }
+}
+
+fn sunspec_driver(
+    s: &crate::config::SunspecSettings,
+    site: &Site,
+    id: &AssetId,
+) -> Result<SunSpec, StartError> {
+    let mut driver = SunSpec::new(
+        id.clone(),
+        s.unit,
+        Cadence {
+            poll: time::Duration::milliseconds(s.poll_ms.cast_signed()),
+            timeout: time::Duration::milliseconds(s.timeout_ms.cast_signed()),
+        },
+    );
+    if s.manage_storage {
+        let Some(ems_core::prelude::Asset::Battery(pack)) = site.asset(id) else {
+            return Err(StartError::Driver {
+                asset: s.asset.clone(),
+                detail: "manage_storage requires a battery asset".into(),
+            });
+        };
+        if !(1..=2000).contains(&s.poll_ms) || !(1..=5000).contains(&s.timeout_ms) {
+            return Err(StartError::Driver {
+                asset: s.asset.clone(),
+                detail: "managed storage requires poll_ms in 1..=2000 and timeout_ms in 1..=5000"
+                    .into(),
+            });
+        }
+        if s.listens_only
+            || !s
+                .address
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|a| a.ip().is_loopback())
+        {
+            return Err(StartError::Driver {
+                asset: s.asset.clone(),
+                detail: "managed storage requires a writable loopback battery".into(),
+            });
+        }
+        driver = driver.with_storage_limits(pack.max_charge, pack.max_discharge);
+    }
+    if s.listens_only {
+        driver = driver.listening_only();
+    }
+    if let Some(kw) = s.rating_kw {
+        driver = driver.with_rating(Power::from_kw(kw));
+    }
+    Ok(driver)
 }
 
 /// Where each configured driver's plain TCP socket is.
@@ -961,6 +1002,10 @@ pub async fn run(
         shutdown.clone(),
         control::run(
             control::Managed {
+                storage_control: settings.drivers.iter().find_map(|d| match d {
+                    DriverSettings::Sunspec(s) if s.manage_storage => AssetId::new(&s.asset).ok(),
+                    _ => None,
+                }),
                 can_trace_storage: day::storage::supported(&running.household.site),
                 can_replay: day::replay::supported(&running.household.site),
                 shadow: settings.mode == crate::config::OperatingMode::Shadow,
@@ -1241,7 +1286,7 @@ async fn start_ship(
         Arc::clone(&running.registry),
         on,
         settings.ship.clone(),
-        ski,
+        health.clone(),
         shutdown.clone(),
     ));
     Ok(())

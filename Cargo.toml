@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/ems-core", "crates/ems-device", "crates/ems-drv", "crates/ems-flex", "crates/ems-grid", "crates/ems-realtime", "crates/ems-tariff", "crates/ems-forecast", "crates/ems-optimizer", "crates/ems-events", "crates/ems-service", "crates/ems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/bemsd", "services/cemsd", "services/histd", "services/obsd", "services/tariffd", "tools/ems-wasm", "xtask"]
+members = ["crates/ems-core", "crates/ems-device", "crates/ems-drv", "crates/ems-flex", "crates/ems-grid", "crates/ems-realtime", "crates/ems-tariff", "crates/ems-forecast", "crates/ems-optimizer", "crates/ems-events", "crates/ems-service", "crates/ems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/bemsd", "services/cemsd", "services/histd", "services/obsd", "services/portald", "services/tariffd", "tools/ems-wasm", "xtask"]
 
 [workspace.package]
-version      = "0.8.0"
+version      = "0.9.0"
 authors      = ["hupe1980"]
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
@@ -48,7 +48,7 @@ if-addrs     = { version = "0.15" }
 sunspec      = { version = "0.9", default-features = false, features = [
     "model1", "model101", "model102", "model103", "model123",
     "model201", "model202", "model203", "model204",
-    "model701", "model702", "model802",
+    "model701", "model702", "model704", "model802",
 ] }
 
 # Server for the virtual household behind the hemsd house feature.
@@ -58,18 +58,18 @@ tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-se
 good_lp      = { version = "1.15", default-features = false }
 
 # ── Internal (path + version so the domain crates can be published) ─────────
-ems-core      = { path = "crates/ems-core",      version = "0.8" }
-ems-device    = { path = "crates/ems-device",    version = "0.8" }
-ems-drv       = { path = "crates/ems-drv",       version = "0.8" }
-ems-flex      = { path = "crates/ems-flex",      version = "0.8" }
-ems-grid      = { path = "crates/ems-grid",      version = "0.8" }
-ems-tariff    = { path = "crates/ems-tariff",    version = "0.8" }
-ems-forecast  = { path = "crates/ems-forecast",  version = "0.8" }
-ems-optimizer = { path = "crates/ems-optimizer", version = "0.8" }
-ems-realtime  = { path = "crates/ems-realtime",  version = "0.8" }
-ems-events    = { path = "crates/ems-events",    version = "0.8" }
-ems-service   = { path = "crates/ems-service",   version = "0.8" }
-ems-sim       = { path = "crates/ems-sim",       version = "0.8" }
+ems-core      = { path = "crates/ems-core",      version = "0.9" }
+ems-device    = { path = "crates/ems-device",    version = "0.9" }
+ems-drv       = { path = "crates/ems-drv",       version = "0.9" }
+ems-flex      = { path = "crates/ems-flex",      version = "0.9" }
+ems-grid      = { path = "crates/ems-grid",      version = "0.9" }
+ems-tariff    = { path = "crates/ems-tariff",    version = "0.9" }
+ems-forecast  = { path = "crates/ems-forecast",  version = "0.9" }
+ems-optimizer = { path = "crates/ems-optimizer", version = "0.9" }
+ems-realtime  = { path = "crates/ems-realtime",  version = "0.9" }
+ems-events    = { path = "crates/ems-events",    version = "0.9" }
+ems-service   = { path = "crates/ems-service",   version = "0.9" }
+ems-sim       = { path = "crates/ems-sim",       version = "0.9" }
 
 # Shared runtime dependencies
 

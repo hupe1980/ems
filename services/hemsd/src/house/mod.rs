@@ -10,12 +10,14 @@
 //! Real time only: the box reads the system clock, so the house does too, and
 //! [`Options::at`] chooses where in the reference day it starts.
 
+pub mod departure;
 pub mod fleet;
 mod modbus;
 #[cfg(test)]
 mod reference_trials;
 pub mod registers;
 pub mod steuerbox;
+mod storage;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -66,25 +68,26 @@ pub struct Options {
 pub struct Clock {
     midnight: OffsetDateTime,
     offset: Duration,
-    started: OffsetDateTime,
+    started: tokio::time::Instant,
+    wall_start: OffsetDateTime,
 }
 
 impl Clock {
     fn new(scenario: &Scenario, at: Option<Duration>, now: OffsetDateTime) -> Self {
-        let offset = at.unwrap_or_else(|| {
-            Duration::minutes(i64::from(Slot::containing(now).local_minute_of_day()))
-        });
+        let offset =
+            at.unwrap_or_else(|| ems_core::calendar::to_berlin(now).time() - time::Time::MIDNIGHT);
         Self {
             midnight: scenario.start(),
             offset,
-            started: now,
+            started: tokio::time::Instant::now(),
+            wall_start: now,
         }
     }
 
     /// How far into the reference day the house is.
     #[must_use]
     pub fn since_midnight(&self) -> Duration {
-        self.offset + (OffsetDateTime::now_utc() - self.started)
+        self.offset + self.started.elapsed()
     }
 
     /// The instant of the reference day the house is living.
@@ -96,7 +99,7 @@ impl Clock {
     /// The instant of the reference day the house lives at wall-clock `real`.
     #[must_use]
     pub fn scenario_at(&self, real: OffsetDateTime) -> OffsetDateTime {
-        self.midnight + self.offset + (real - self.started)
+        self.midnight + self.offset + (real - self.wall_start)
     }
 }
 
@@ -146,6 +149,7 @@ impl Physics {
             .ok_or_else(|| anyhow::anyhow!("the virtual house needs a roof"))?;
         let pack = config.battery.map(|battery| {
             let mut pack = BatterySim::new(battery.kwh, battery.power);
+            pack.soc_min = battery.reserve_soc;
             pack.stored = battery.kwh * battery.reserve_soc.fraction().max(0.30);
             pack
         });
@@ -153,7 +157,7 @@ impl Physics {
             write_requests: 0,
             inverter: Unit::inverter(),
             meter: Unit::meter(),
-            battery: Unit::battery(),
+            battery: Unit::battery(config.battery.map_or(Power::ZERO, |b| b.power)),
             pv: PvSim::default(),
             pack,
             array: ArrayModel::new(pv.kwp, pv.ac_nominal, pv.tilt_deg, pv.azimuth_deg),
@@ -170,10 +174,21 @@ impl Physics {
     /// Move every device on by `dt` at instant `at` of the reference day, and
     /// refresh the registers.
     ///
-    /// The battery runs itself — it covers the house from the roof first, as an
-    /// uncommanded pack does — because the box's SunSpec driver carries no
-    /// storage setpoint to command it with.
+    /// The pack covers local demand until a model 704 command takes effect.
+    /// Split a long step at reversion so the meter includes both regimes.
     pub fn step(&mut self, at: OffsetDateTime, dt: Duration) {
+        self.step_with_ev(at, dt, Power::ZERO);
+    }
+
+    fn step_with_ev(&mut self, at: OffsetDateTime, dt: Duration, ev: Power) {
+        let target = self.battery.battery_target();
+        if let Some((_, remaining)) = target
+            && dt > remaining
+        {
+            self.step_with_ev(at, remaining, ev);
+            self.step_with_ev(at + remaining, dt - remaining, ev);
+            return;
+        }
         let hours = dt.as_seconds_f64() / 3600.0;
         let available = self.weather.production_at(&self.array, self.location, at);
         let ceiling = self
@@ -182,13 +197,16 @@ impl Physics {
             .map_or(self.rating, |fraction| self.rating * fraction);
         let (pv, curtailed) = self.pv.step(available, ceiling, dt);
         let produced = pv.outflow();
-        let load = self
-            .weather
-            .load_at(at, crate::scenario::household_load(Slot::containing(at)));
-        let battery = self
-            .pack
-            .as_mut()
-            .map_or(Power::ZERO, |p| p.step(produced - load, dt));
+        let load = ev
+            + self
+                .weather
+                .load_at(at, crate::scenario::household_load(Slot::containing(at)));
+        let battery = self.pack.as_mut().map_or(Power::ZERO, |p| {
+            p.step(target.map_or(produced - load, |(power, _)| power), dt)
+        });
+        if target.is_some() {
+            self.battery.advance_battery(dt);
+        }
         let grid = load + battery - produced;
 
         self.produced_wh += produced.get() * hours;
@@ -209,7 +227,8 @@ impl Physics {
         );
         self.meter
             .set_meter(grid.get(), self.imported_wh, self.exported_wh);
-        self.battery.set_battery(self.reading.soc);
+        self.battery
+            .set_battery(self.reading.soc, self.reading.battery_w);
     }
 }
 
@@ -291,6 +310,11 @@ pub async fn start(options: Options) -> anyhow::Result<House> {
             options.listen
         );
     }
+    ensure_local_ship(options.household)?;
+    let guard = options
+        .household
+        .map(|_| steuerbox::identity(options.identity.as_deref()))
+        .transpose()?;
     let now = OffsetDateTime::now_utc();
     let clock = Clock::new(&options.scenario, options.at, now);
     let mut physics = Physics::new(&options.scenario)?;
@@ -299,31 +323,33 @@ pub async fn start(options: Options) -> anyhow::Result<House> {
 
     let listener = tokio::net::TcpListener::bind(options.listen).await?;
     let modbus = listener.local_addr()?;
-    let mut tasks = vec![tokio::spawn(modbus::serve(listener, Arc::clone(&physics)))];
     // The day's prices and sky, where `tariffd` and `forecastd` would answer
     // them, on the Modbus address's host and a port of its own.
     let (fleet, prices_and_sky) =
         fleet::serve(SocketAddr::new(modbus.ip(), 0), &options.scenario, clock).await?;
-    tasks.push(prices_and_sky);
+    let mut tasks = vec![
+        prices_and_sky,
+        tokio::spawn(modbus::serve(listener, Arc::clone(&physics))),
+    ];
 
     let stepped = Arc::clone(&physics);
     tasks.push(tokio::spawn(async move {
-        let mut every = tokio::time::interval(std::time::Duration::from_secs(1));
-        every.tick().await;
+        let second = std::time::Duration::from_secs(1);
+        let mut every = tokio::time::interval_at(clock.started + second, second);
         loop {
-            every.tick().await;
+            let tick = every.tick().await;
+            let at = clock.midnight + clock.offset + (tick - clock.started) - Duration::SECOND;
             stepped
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .step(clock.now(), Duration::SECOND);
+                .step(at, Duration::SECOND);
         }
     }));
 
     let (seen, steuerbox) = watch::channel(steuerbox::Seen::default());
     let silenced = Arc::new(AtomicBool::new(false));
     let mut steuerbox_ski = None;
-    if let Some(household) = options.household {
-        let identity = steuerbox::identity(options.identity.as_deref())?;
+    if let Some((household, identity)) = options.household.zip(guard) {
         steuerbox_ski = Some(identity.ski.to_string());
         let reduction = options
             .scenario
@@ -351,37 +377,23 @@ pub async fn start(options: Options) -> anyhow::Result<House> {
     })
 }
 
-/// The configuration of a box that manages `house`: the reference household,
-/// its three SunSpec devices by unit, and the Steuerbox trusted by SKI.
-///
-/// # Errors
-/// Where the scenario's household cannot be built.
-pub fn configuration(
-    house: &House,
-    scenario: &Scenario,
-    ship: Option<SocketAddr>,
-    api: SocketAddr,
-) -> anyhow::Result<String> {
-    use std::fmt::Write as _;
-    let household =
-        crate::Household::build(&scenario.config).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let rating_kw = scenario.config.pv.map_or(0.0, |pv| pv.ac_nominal.kw());
-    let mut out = format!(
-        "# A box that manages the virtual house on {modbus}.\n\
-         # Written by `hemsd house`; start it with `hemsd run --config <this file>`.\n\n\
-         [service]\nlisten = \"{api}\"\n\n\
-         [fleet]\ntariffd_url = \"http://{fleet}\"\nforecastd_url = \"http://{fleet}\"\n\
-         location = \"{location}\"\n",
-        modbus = house.modbus,
-        fleet = house.fleet,
-        location = fleet::LOCATION,
+fn ensure_local_ship(ship: Option<SocketAddr>) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        ship.is_none_or(|listener| listener.ip().is_loopback()),
+        "the virtual Steuerbox requires a loopback SHIP address"
     );
-    let (battery_kwh, battery_kw) = scenario
-        .config
+    Ok(())
+}
+
+/// Emit only the assets and site facts represented by this virtual plant.
+fn wire_site(
+    physical: &crate::HouseholdConfig,
+    household: &crate::Household,
+) -> anyhow::Result<toml::Table> {
+    let (battery_kwh, battery_kw) = physical
         .battery
         .map_or((0.0, 0.0), |b| (b.kwh.kwh(), b.power.kw()));
-    let declared: std::collections::BTreeMap<_, _> = scenario
-        .config
+    let declared: std::collections::BTreeMap<_, _> = physical
         .declared
         .iter()
         .filter(|(id, _)| {
@@ -395,31 +407,118 @@ pub fn configuration(
         .collect();
     let mut site = toml::Table::new();
     site.insert("declared".into(), toml::Value::try_from(declared)?);
+    if let Some(pv) = physical.pv {
+        site.insert(
+            "para9".into(),
+            toml::Value::try_from(crate::config::Para9Settings::from(pv.para9))?,
+        );
+    }
+    if let Some(power) = physical.connection.contract_power {
+        site.insert("contract_power_kw".into(), power.kw().into());
+    }
     for (name, value) in [
-        ("pv_kwp", scenario.config.pv.map_or(0.0, |p| p.kwp.kw())),
-        ("pv_ac_kw", rating_kw),
+        ("pv_kwp", physical.pv.map_or(0.0, |p| p.kwp.kw())),
+        ("pv_ac_kw", physical.pv.map_or(0.0, |pv| pv.ac_nominal.kw())),
+        ("pv_tilt_deg", physical.pv.map_or(0.0, |pv| pv.tilt_deg)),
+        (
+            "pv_azimuth_deg",
+            physical.pv.map_or(0.0, |pv| pv.azimuth_deg),
+        ),
+        ("latitude", physical.location.latitude),
+        ("longitude", physical.location.longitude),
+        ("altitude_m", physical.location.altitude_m),
+        ("fuse_a", physical.fuse.get()),
+        (
+            "reserve_soc",
+            physical.battery.map_or(0.0, |b| b.reserve_soc.fraction()),
+        ),
+        ("evse_max_a", 0.0),
+        ("heat_pump_kw", 0.0),
+        ("dhw_litres", 0.0),
         ("battery_kwh", battery_kwh),
         ("battery_kw", battery_kw),
+        (
+            "battery_wear_eur_per_kwh",
+            physical.battery.map_or(0.0, |b| b.wear_eur_per_kwh),
+        ),
     ] {
         site.insert(name.to_owned(), value.into());
     }
-    writeln!(
-        &mut out,
-        "\n{}",
-        toml::to_string(&std::collections::BTreeMap::from([("site", site)]))?
-    )?;
+    site.insert("dishwasher_kw_steps".into(), toml::Value::Array(Vec::new()));
+    Ok(site)
+}
+
+/// The configuration of a box that manages `house`: the reference household,
+/// its three SunSpec devices by unit, and the Steuerbox trusted by SKI.
+///
+/// # Errors
+/// Where the scenario's household cannot be built.
+pub fn configuration(
+    house: &House,
+    scenario: &Scenario,
+    ship: Option<SocketAddr>,
+    api: SocketAddr,
+    manage_storage: bool,
+) -> anyhow::Result<String> {
+    use std::fmt::Write as _;
+    ensure_local_ship(ship)?;
+    let mut out = format!(
+        "# A box that manages the virtual house on {modbus}.\n\
+         # Written by `hemsd house`; start it with `hemsd run --config <this file>`.\n\n\
+         [service]\nlisten = \"{api}\"\n\n\
+         [fleet]\ntariffd_url = \"http://{fleet}\"\nforecastd_url = \"http://{fleet}\"\n\
+         location = \"{location}\"\n",
+        modbus = house.modbus,
+        fleet = house.fleet,
+        location = fleet::LOCATION,
+    );
+    out.push_str(&device_configuration(
+        scenario,
+        house.modbus,
+        manage_storage,
+    )?);
     if let (Some(ship), Some(ski)) = (ship, &house.steuerbox_ski) {
         write!(
             out,
             "\n[ship]\nlisten = \"{ship}\"\ntrust = [\"{ski}\"]\nannounce = false\n"
         )?;
     }
+    if ship.is_some() {
+        write!(
+            out,
+            "\n[[drivers]]\nkind = \"eebus-lpc\"\nasset = \"{CONNECTION_POINT}\"\n"
+        )?;
+    }
+    Ok(out)
+}
+
+fn device_configuration(
+    scenario: &Scenario,
+    modbus: SocketAddr,
+    manage_storage: bool,
+) -> anyhow::Result<String> {
+    use std::fmt::Write as _;
+    let physical = crate::HouseholdConfig {
+        evse: None,
+        heat_pump: None,
+        dhw: None,
+        dishwasher: None,
+        ..scenario.config.clone()
+    };
+    let household = crate::Household::build(&physical).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let rating_kw = scenario.config.pv.map_or(0.0, |pv| pv.ac_nominal.kw());
+    let mut out = String::new();
+    let site = wire_site(&physical, &household)?;
+    writeln!(
+        &mut out,
+        "\n{}",
+        toml::to_string(&std::collections::BTreeMap::from([("site", site)]))?
+    )?;
     let mut device = |asset: &str, unit: u8, extra: &str| {
         write!(
             out,
             "\n[[drivers]]\nkind = \"sunspec\"\nasset = \"{asset}\"\n\
-             address = \"{}\"\nunit = {unit}\n{extra}",
-            house.modbus
+             address = \"{modbus}\"\nunit = {unit}\n{extra}"
         )
     };
     if let Some(pv) = &household.pv {
@@ -435,12 +534,14 @@ pub fn configuration(
         "listens_only = true\n",
     )?;
     if let Some(battery) = &household.battery {
-        device(battery.as_str(), UNIT_BATTERY, "")?;
-    }
-    if ship.is_some() {
-        write!(
-            out,
-            "\n[[drivers]]\nkind = \"eebus-lpc\"\nasset = \"{CONNECTION_POINT}\"\n"
+        device(
+            battery.as_str(),
+            UNIT_BATTERY,
+            if manage_storage {
+                "manage_storage = true\n"
+            } else {
+                ""
+            },
         )?;
     }
     Ok(out)
@@ -482,10 +583,12 @@ mod tests {
         .json()
         .await
         .expect("tariffd's shape");
-        // `options` puts the house at 12:00: the forty-ninth slot of its day.
+        // The request starts at the real quarter boundary, before the process started.
         assert_eq!(
             prices["points"][0]["price_ct"],
-            scenario.prices_ct[48].to_string()
+            scenario.prices_ct
+                [Slot::containing(house.clock.scenario_at(now)).index_in_local_day() as usize]
+                .to_string()
         );
         assert_eq!(prices["points"].as_array().map(Vec::len), Some(2));
 
@@ -501,8 +604,14 @@ mod tests {
         .expect("forecastd's shape");
         assert_eq!(sky["points"].as_array().map(Vec::len), Some(192));
 
-        let written = configuration(&house, &scenario, None, "127.0.0.1:8080".parse().unwrap())
-            .expect("a configuration");
+        let written = configuration(
+            &house,
+            &scenario,
+            None,
+            "127.0.0.1:8080".parse().unwrap(),
+            false,
+        )
+        .expect("a configuration");
         assert!(written.contains(&format!("tariffd_url = \"http://{}\"", house.fleet)));
     }
 
@@ -510,14 +619,36 @@ mod tests {
     async fn a_house_is_not_served_to_the_network_by_accident() {
         let refused = start(options("0.0.0.0:0")).await.expect_err("not loopback");
         assert!(refused.to_string().contains("--exposed"), "{refused}");
-        start(options("127.0.0.1:0")).await.expect("loopback");
+        let mut nonlocal_ship = options("127.0.0.1:0");
+        nonlocal_ship.household = Some("192.0.2.1:4712".parse().unwrap());
+        assert!(
+            start(nonlocal_ship)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("loopback SHIP")
+        );
+        let house = start(options("127.0.0.1:0")).await.expect("loopback");
+        assert!(
+            configuration(
+                &house,
+                &options("127.0.0.1:0").scenario,
+                Some("[::]:4712".parse().unwrap()),
+                "127.0.0.1:8080".parse().unwrap(),
+                false
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
     async fn the_configuration_it_writes_is_one_the_box_accepts() {
-        let scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
+        let mut scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
+        scenario.config.pv.as_mut().unwrap().tilt_deg = 22.0;
+        scenario.config.location.altitude_m = 210.0;
         let house = start(Options {
             household: Some("127.0.0.1:4712".parse().expect("an address")),
+            scenario: scenario.clone(),
             ..options("127.0.0.1:0")
         })
         .await
@@ -527,6 +658,7 @@ mod tests {
             &scenario,
             Some("127.0.0.1:4712".parse().expect("an address")),
             "127.0.0.1:8080".parse().expect("an address"),
+            false,
         )
         .expect("a configuration");
         let settings: crate::Settings = toml::from_str(&written).expect("it parses");
@@ -536,6 +668,16 @@ mod tests {
             "three devices and the § 14a driver"
         );
         assert!(!settings.ship.announce, "a simulator's box stays off mDNS");
+        let site = settings.site.household().unwrap();
+        assert!(
+            site.evse.is_none()
+                && site.heat_pump.is_none()
+                && site.dhw.is_none()
+                && site.dishwasher.is_none()
+        );
+        assert_eq!(site.pv, scenario.config.pv);
+        assert_eq!(site.battery, scenario.config.battery);
+        assert_eq!(site.location, scenario.config.location);
         crate::runtime::assemble(&settings, None, OffsetDateTime::now_utc())
             .expect("and describes a site the box will start on");
     }

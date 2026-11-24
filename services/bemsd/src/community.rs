@@ -1,4 +1,5 @@
 //! Synthetic quarter-hour allocation for one locally selected identity.
+mod reveal;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -9,6 +10,7 @@ use axum::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ems_core::prelude::Slot;
 use ems_grid::sharing::{Aufteilung, Community, Member, allocate_by};
+use reveal::Reveal;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, macros::datetime};
@@ -71,6 +73,7 @@ struct Selection {
     case: Case,
     interval: Option<u8>,
     member: Option<String>,
+    reveal: Option<Reveal>,
 }
 
 #[derive(Serialize)]
@@ -98,6 +101,8 @@ struct Summary {
     expected: usize,
     supply_kwh: String,
     residual_kwh: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minimum_residual_kwh: Option<String>,
 }
 
 const PERIODS: [(&str, OffsetDateTime); 2] = [
@@ -110,6 +115,27 @@ const PERIODS: [(&str, OffsetDateTime); 2] = [
         datetime!(2026-10-25 01:00 UTC),
     ),
 ];
+
+fn demands(case: Case, second: bool) -> Vec<Option<Decimal>> {
+    let mut values = vec![Some(Decimal::TWO)];
+    if second {
+        // Revisions replace a single member/interval cell. Estimated inputs never close it.
+        let revisions: &[Option<u8>] = match case {
+            Case::Missing | Case::Estimated | Case::Outage => &[None],
+            Case::Late => &[None, Some(8)],
+            Case::Corrected => &[Some(8), Some(4)],
+            Case::Duplicate => &[Some(8), Some(8)],
+            Case::Zero => &[Some(0)],
+            _ => &[Some(8)],
+        };
+        let mut cell = None;
+        for revision in revisions {
+            cell = revision.map(Decimal::from);
+        }
+        values.push(cell);
+    }
+    values
+}
 
 fn read(viewer: Viewer, selection: &Selection) -> Result<Reading, StatusCode> {
     let interval = selection.interval.unwrap_or(2);
@@ -130,22 +156,14 @@ fn read(viewer: Viewer, selection: &Selection) -> Result<Reading, StatusCode> {
         return Err(StatusCode::NOT_FOUND);
     }
     let case = selection.case;
-    let mut values = vec![Some(Decimal::TWO)];
-    if index == 1 {
-        // Revisions replace a single member/interval cell. Estimated inputs never close it.
-        let revisions: &[Option<u8>] = match case {
-            Case::Missing | Case::Estimated | Case::Outage => &[None],
-            Case::Late => &[None, Some(8)],
-            Case::Corrected => &[Some(8), Some(4)],
-            Case::Duplicate => &[Some(8), Some(8)],
-            Case::Zero => &[Some(0)],
-            _ => &[Some(8)],
-        };
-        let mut cell = None;
-        for revision in revisions {
-            cell = revision.map(Decimal::from);
-        }
-        values.push(cell);
+    if selection.reveal.is_some()
+        && !(coordinator && index == 1 && member.is_none() && matches!(case, Case::Static))
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let mut values = demands(case, index == 1);
+    if let Some(reveal) = selection.reveal {
+        reveal.project(&mut values);
     }
     let dynamic = matches!(case, Case::Cascading);
     let community = Community::new(
@@ -222,6 +240,9 @@ fn read(viewer: Viewer, selection: &Selection) -> Result<Reading, StatusCode> {
             measured: values.iter().flatten().count(),
             expected: names.len(),
             supply_kwh: supply.to_string(),
+            minimum_residual_kwh: selection
+                .reveal
+                .map(|_| reveal::minimum(&values, supply).normalize().to_string()),
             residual_kwh: allocation.map(|a| a.unallocated.normalize().to_string()),
         }),
     })
@@ -276,6 +297,11 @@ fn render(v: &Reading, selection: &Selection, viewer: Viewer) -> String {
             "<section aria-label=\"Bilanz\"><h2>Restmenge</h2><strong>{}</strong><p>{}/{} Messungen · Erzeugung {} kWh</p></section>",
             s.residual_kwh.as_ref().map_or_else(|| "ausstehend".into(), |v| format!("{v} kWh")), s.measured, s.expected, s.supply_kwh
         ));
+    }
+    if let Some(snapshot) = selection.reveal {
+        text.push_str(&snapshot.panel(v));
+    } else if matches!(viewer, Viewer::Coordinator) && selection.member.is_none() {
+        text.push_str(r#"<p><a href="?interval=2&amp;reveal=none#messfrage">Welche Messung entscheidet?</a></p>"#);
     }
     for row in &v.rows {
         let heading = if v.coordinator.is_some() {
@@ -406,6 +432,65 @@ mod tests {
                 assert_eq!(last.status, "Vollständig");
             }
         }
+    }
+
+    #[test]
+    fn only_the_coordinator_can_reveal_measured_cells_in_the_selected_quarter() {
+        for (stage, bound, measured) in [
+            (Reveal::None, "0", 0),
+            (Reveal::A, "3", 1),
+            (Reveal::B, "0", 1),
+            (Reveal::Both, "3", 2),
+        ] {
+            let selection = Selection {
+                reveal: Some(stage),
+                ..Selection::default()
+            };
+            let v = read(Viewer::Coordinator, &selection).unwrap();
+            let c = v.coordinator.unwrap();
+            assert_eq!(c.minimum_residual_kwh.as_deref(), Some(bound));
+            assert_eq!(c.measured, measured);
+            assert_eq!(c.residual_kwh.is_some(), measured == 2);
+            for viewer in [Viewer::MemberA, Viewer::MemberB, Viewer::FormerMember] {
+                for html in [false, true] {
+                    let session = Session {
+                        viewer,
+                        auth: "Basic local".into(),
+                    };
+                    let mut h = HeaderMap::new();
+                    assert_eq!(
+                        response(&session, &h, &selection, html).status(),
+                        StatusCode::UNAUTHORIZED
+                    );
+                    h.insert(header::AUTHORIZATION, session.auth.parse().unwrap());
+                    assert_eq!(
+                        response(&session, &h, &selection, html).status(),
+                        StatusCode::NOT_FOUND
+                    );
+                }
+            }
+        }
+        for selection in [
+            Selection {
+                reveal: Some(Reveal::A),
+                interval: Some(1),
+                ..Selection::default()
+            },
+            Selection {
+                case: Case::Cascading,
+                reveal: Some(Reveal::Both),
+                ..Selection::default()
+            },
+        ] {
+            assert!(matches!(
+                read(Viewer::Coordinator, &selection),
+                Err(StatusCode::NOT_FOUND)
+            ));
+        }
+        assert_eq!(
+            reveal::minimum(&[Some(Decimal::ZERO), None], Decimal::TEN),
+            Decimal::from(5)
+        );
     }
 
     #[test]

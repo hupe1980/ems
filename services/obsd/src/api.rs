@@ -1,5 +1,7 @@
 //! What a box reports and what an operator asks.
 
+mod departure;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -29,6 +31,7 @@ pub struct Observed {
     secrets: Arc<Vec<(String, String)>>,
     tolerance: time::Duration,
     readers: Arc<Credentials>,
+    customers: Arc<Credentials>,
 }
 
 impl Observed {
@@ -58,7 +61,15 @@ impl Observed {
             secrets: Arc::new(secrets),
             tolerance,
             readers: Arc::new(readers),
+            customers: Arc::default(),
         }
+    }
+
+    /// Attach the credentials used exclusively by the household receipt reader.
+    #[must_use]
+    pub fn with_customers(mut self, customers: Credentials) -> Self {
+        self.customers = Arc::new(customers);
+        self
     }
 
     /// The window a summary is computed over, for the households `scope` names.
@@ -140,6 +151,9 @@ impl Observed {
 /// The routes.
 pub fn router(observed: Observed) -> Router {
     Router::new()
+        .route("/v1/me/history", get(departure::history))
+        .route("/v1/me/departure", get(departure::read))
+        .route("/v1/departures", post(departure::receive))
         .route("/v1/days", post(report))
         .route("/v1/fleet", get(summary))
         .route("/v1/sites/{site}", get(site))

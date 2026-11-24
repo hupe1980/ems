@@ -146,6 +146,19 @@ pub fn client(
     identity: crate::Identity,
     settings: &HttpSettings,
 ) -> Result<reqwest::Client, HttpError> {
+    client_builder(identity, settings)?
+        .build()
+        .map_err(|e| HttpError::Client(e.to_string()))
+}
+
+/// Configure the shared transport before applying a caller-specific redirect policy.
+///
+/// # Errors
+/// Returns an error if the configured trust anchors cannot be loaded.
+pub fn client_builder(
+    identity: crate::Identity,
+    settings: &HttpSettings,
+) -> Result<reqwest::ClientBuilder, HttpError> {
     let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(settings.connect_timeout_s.max(1)))
         .timeout(Duration::from_secs(settings.timeout_s.max(1)))
@@ -197,9 +210,7 @@ pub fn client(
         }
     };
 
-    builder
-        .build()
-        .map_err(|e| HttpError::Client(e.to_string()))
+    Ok(builder)
 }
 
 /// Whether an endpoint keeps what is sent to it confidential in transit.

@@ -111,7 +111,12 @@ async fn start_on(
         router(Fleet::new(
             registry,
             releases,
-            ems_service::Credentials::default().with_operator(OPERATOR),
+            ems_service::Credentials::default()
+                .with_operator(OPERATOR)
+                .with_operator_of(
+                    ems_service::auth::SiteScope::One("other".into()),
+                    "other-operator",
+                ),
             store,
         )),
     );
@@ -449,5 +454,142 @@ async fn a_restart_does_not_orphan_the_fleet() {
     );
     assert_eq!(roster[0]["converged"], true);
 
+    trigger.trigger();
+}
+
+#[tokio::test]
+async fn desk_distinguishes_stalled_meter_and_rejects_foreign_access_and_replays() {
+    let fixture = ems_service::testdb::Postgres::start(fleetd::store::MIGRATIONS).await;
+    let (address, trigger) = start_on(sites(), fixture.db.clone()).await;
+    let (_, body) = request(
+        address,
+        "POST",
+        "/v1/enrol",
+        None,
+        Some(r#"{"site":"site-1","secret":"installer-secret"}"#),
+    )
+    .await;
+    let enrolment: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let token = enrolment["token"].as_str().unwrap();
+    let read = |token| request(address, "GET", "/v1/desk?site=site-1", Some(token), None);
+    let sites = |body: String| serde_json::from_str::<serde_json::Value>(&body).unwrap();
+    assert_eq!(
+        sites(read(OPERATOR).await.1)[0]["attention"],
+        "Awaiting first check-in"
+    );
+    assert_eq!(read(token).await.0, 401);
+    assert_eq!(sites(read("other-operator").await.1), serde_json::json!([]));
+    let now = time::OffsetDateTime::now_utc().unix_timestamp() - 5;
+    for offset in (-36..=0).chain([-1, 0]) {
+        let payload = serde_json::json!({"sent_at":now+offset,"feeder_at":now-180}).to_string();
+        assert_eq!(
+            request(address, "POST", "/v1/checkins", Some(token), Some(&payload))
+                .await
+                .0,
+            204
+        );
+    }
+    for payload in [
+        serde_json::json!({"sent_at":now-100}),
+        serde_json::json!({"sent_at":now,"feeder_at":now+1}),
+    ] {
+        assert_eq!(
+            request(
+                address,
+                "POST",
+                "/v1/checkins",
+                Some(token),
+                Some(&payload.to_string())
+            )
+            .await
+            .0,
+            422
+        );
+    }
+    assert_eq!(
+        request(
+            address,
+            "POST",
+            "/v1/checkins",
+            Some(OPERATOR),
+            Some(&serde_json::json!({"sent_at":now}).to_string())
+        )
+        .await
+        .0,
+        401
+    );
+    let result = sites(read(OPERATOR).await.1);
+    let row = &result[0];
+    assert_eq!(row["attention"], "Inspect feeder");
+    assert_eq!(row["gateway"]["state"], "current");
+    assert_eq!(row["feeder"]["state"], "stale");
+    assert_eq!(row["report"]["state"], "unknown");
+    assert_eq!(row["history"].as_array().unwrap().len(), 32);
+    assert_eq!(row["history"][0]["sent_at"], now);
+    assert_eq!(row["history"][31]["sent_at"], now - 31);
+    let client = fixture.db.get().await.unwrap();
+    client
+        .execute(
+            "UPDATE gateway_checkin SET received_at=$1 WHERE site='site-1' AND sent_at=$2",
+            &[&(now - 95), &now],
+        )
+        .await
+        .unwrap();
+    let duplicate = serde_json::json!({"sent_at":now,"feeder_at":now}).to_string();
+    assert_eq!(
+        request(
+            address,
+            "POST",
+            "/v1/checkins",
+            Some(token),
+            Some(&duplicate)
+        )
+        .await
+        .0,
+        204
+    );
+    let result = sites(read(OPERATOR).await.1);
+    assert_eq!(result[0]["attention"], "Gateway silent");
+    assert_eq!(result[0]["history"][0]["received_at"], now - 95);
+    let recovered =
+        serde_json::json!({"sent_at":now+1,"feeder_at":now,"report_at":now-37*3600}).to_string();
+    assert_eq!(
+        request(
+            address,
+            "POST",
+            "/v1/checkins",
+            Some(token),
+            Some(&recovered)
+        )
+        .await
+        .0,
+        204
+    );
+    let result = sites(read(OPERATOR).await.1);
+    assert_eq!(result[0]["attention"], "Inspect closed report");
+    assert_eq!(result[0]["gateway"]["state"], "current");
+    assert_eq!(result[0]["report"]["state"], "stale");
+    assert_eq!(result[0]["history"][1]["feeder_at"], now - 180);
+    client
+        .execute(
+            "INSERT INTO enrolment (site, token, enrolled_at)
+        SELECT 'sim-' || n, 'test-' || n, now() FROM generate_series(2,100) n",
+            &[],
+        )
+        .await
+        .unwrap();
+    let summary = sites(
+        request(address, "GET", "/v1/desk", Some(OPERATOR), None)
+            .await
+            .1,
+    );
+    assert_eq!(summary.as_array().unwrap().len(), 100);
+    assert!(
+        summary
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["history"].as_array().unwrap().is_empty())
+    );
     trigger.trigger();
 }

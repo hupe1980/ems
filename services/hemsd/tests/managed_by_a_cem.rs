@@ -1255,7 +1255,7 @@ async fn a_manager_reads_the_virtual_house_battery_over_wss() {
     })
     .await
     .unwrap();
-    let config = house::configuration(&house, &scenario, Some(ship), local).unwrap();
+    let config = house::configuration(&house, &scenario, Some(ship), local, false).unwrap();
     let mut settings: hemsd::Settings = toml::from_str(&config).unwrap();
     settings.s2.enabled = true;
     settings.s2.report_every_secs = 1;

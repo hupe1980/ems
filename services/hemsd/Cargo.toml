@@ -98,14 +98,16 @@ tracing      = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # The virtual house's Modbus far end, kept out of the box's own build.
+ocpp-kit = { workspace = true, features = ["tokio"], optional = true }
 tokio-modbus = { workspace = true, optional = true }
+tempfile = { version = "3", optional = true }
 sunspec      = { workspace = true, optional = true }
 
 [features]
 matter = ["ems-drv/matter", "dep:tokio-tungstenite", "dep:futures-util"]
 # `hemsd house`: a simulated household on the wire — SunSpec devices over Modbus
 # TCP and a Steuerbox over SHIP — for a real `hemsd run` to manage.
-house = ["dep:tokio-modbus", "dep:sunspec"]
+house = ["dep:ocpp-kit", "ems-drv/ocpp", "dep:tokio-modbus", "dep:sunspec", "dep:tempfile"]
 
 [dev-dependencies]
 # The **CEM's** half of S2, for the one test that needs a real one. The client

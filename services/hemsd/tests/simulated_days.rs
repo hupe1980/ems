@@ -2048,20 +2048,14 @@ fn the_simulation_guide_matches_the_winter_report() {
         .home_at(0, hemsd::home::GoalSet::default())
         .receipt
         .unwrap();
-    let money = receipt.money.unwrap();
-    for (label, cents) in [
-        ("cost of the day", money.cost_ct),
-        ("without optimisation", money.without_ct),
-        ("saved", money.saved_ct),
-    ] {
-        let (_, printed) = example
-            .lines()
-            .map(split_report_line)
-            .find(|(key, _)| *key == label)
-            .unwrap();
-        let euros: rust_decimal::Decimal = printed.trim_end_matches(" €").parse().unwrap();
-        assert_eq!(euros, rust_decimal::Decimal::new(cents, 2), "{label}");
-    }
+    let trial = day.service_trial.as_ref().unwrap();
+    assert_eq!(receipt.metered_bill.as_ref(), Some(&trial.bill));
+    assert_eq!(receipt.comparison_gap, trial.gap);
+    assert_eq!(receipt.comparison, trial.comparison);
+    assert!(
+        receipt.money.is_none(),
+        "the benchmark includes comfort and wear"
+    );
 }
 
 /// Hold one transcript block to the report the binary would print.
@@ -2197,7 +2191,7 @@ fn the_baseline_household_heats_its_water_the_way_this_household_asked() {
 /// until the profile fills (D187).
 ///
 /// What a cold box owes a household is a lawful plan, a delivered one, an
-/// honest account of how little it knows — and, since it leans on BDEW's H25
+/// honest account of how little it knows — and, since it leans on the synthetic
 /// household profile rather than on one meter reading, **not being worse than
 /// no energy manager at all**. That last one was a recorded loss for as long as
 /// the box planned its first evening by persistence from the night trough.
@@ -2264,7 +2258,7 @@ fn a_box_on_its_first_evening_is_lawful_and_honest_about_what_it_knows() {
         warm_day.pv_forecast.crps
     );
 
-    // 5. No worse than no box. The published shape is what makes this hold:
+    // 5. No worse than no box. The initial shape is what makes this hold:
     //    persistence from the night trough planned against a house using a
     //    fraction of what it would, and lost €1,75 on this day.
     assert!(
@@ -2284,10 +2278,10 @@ fn a_box_on_its_first_evening_is_lawful_and_honest_about_what_it_knows() {
     );
 
     // 6. And learning is still worth something: six weeks of a household's own
-    //    metering beat the best published average of everybody else's.
+    //    metering beat the initial synthetic profile.
     assert!(
         warm_day.saving_eur() > day.saving_eur(),
-        "six weeks of learning should be worth more than H25: {:.2} € warm against \
+        "six weeks of learning should be worth more than the synthetic prior: {:.2} € warm against \
          {:.2} € cold",
         warm_day.saving_eur(),
         day.saving_eur()
@@ -2439,12 +2433,12 @@ fn the_unmanaged_household_runs_the_battery_it_owns() {
         ),
     ] {
         let r = run(&scenario).unwrap();
-        // A warmed household plans on its own history alone: H25 has no say in
+        // A warmed household plans on its own history alone: the prior has no say in
         // any slot, which is what keeps every warmed reference day unchanged by
         // the prior a cold box leans on.
         assert!(
             r.load_prior_share.abs() < 1e-12,
-            "{name}: a box six weeks warm still leans on H25 in {:.1} % of its day",
+            "{name}: a box six weeks warm still leans on the prior in {:.1} % of its day",
             r.load_prior_share * 100.0
         );
         assert!(

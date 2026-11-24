@@ -47,7 +47,7 @@ impl Cell {
 /// treated as informative.
 pub const MIN_SAMPLES: usize = 3;
 
-/// How many observations a cell needs before the published prior has no say
+/// How many observations a cell needs before the synthetic prior has no say
 /// in it.
 ///
 /// Four: one more than [`MIN_SAMPLES`], so a cell's own spread is already
@@ -290,7 +290,7 @@ impl LoadProfile {
         Some(kwh)
     }
 
-    /// How much say the published prior still has in `slot`: one where this
+    /// How much say the synthetic prior still has in `slot`: one where this
     /// household has never been seen at this day type and quarter hour, falling
     /// linearly to zero at [`PRIOR_FADE_SAMPLES`] observations.
     #[must_use]

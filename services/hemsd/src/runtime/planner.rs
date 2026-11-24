@@ -270,7 +270,7 @@ pub struct Planner {
     /// deadline without a car on the cable is a schedule the arbiter spends the
     /// afternoon failing to follow.
     pub charging: Option<crate::config::EebusEvSettings>,
-    /// The household's declared annual consumption, kWh, which scales the H25
+    /// The household's declared annual consumption, kWh, which scales the household
     /// prior a cold box leans on. See [`crate::forecasting::household_prior`].
     pub household_kwh_per_year: Option<f64>,
     /// The household's car goal from the page, which wins over `charging`'s
@@ -520,11 +520,10 @@ async fn refresh(fleet: &Fleet, cached: &mut Cached, carbon_matters: bool, now: 
     // in the evening on one day of prices is told the whole of tomorrow costs
     // the flat fallback, and defers every flexible kilowatt-hour into it.
     let horizon = Horizon::new(now, 96 * 2);
-    let hour = horizon
-        .first
-        .offset(-i64::from(horizon.first.start().minute() / 15));
-    let price_horizon = Horizon::new(hour.start(), horizon.len + 3);
-    match fleet.prices(price_horizon).await {
+    match fleet
+        .prices(crate::price_sheet::market_hours(horizon))
+        .await
+    {
         Ok(Some(prices)) => {
             cached.prices_at = Some(now);
             cached.prices = Some(prices);
@@ -582,13 +581,13 @@ async fn attempt(
     tariff.carbon_g_per_kwh = cached.carbon.clone();
     let fallback =
         rust_decimal::Decimal::try_from(planner.tariff.fallback_ct_per_kwh).unwrap_or_default();
-    let prices = cached.schedule.prices(&tariff, horizon, &spot, fallback);
+    let (prices, published_prices) = cached.schedule.prices(&tariff, horizon, &spot, fallback);
     // Published for the control loop. The quarter-hour registers MiSpeL and
     // § 42c settle from carry two *prices* — the anzulegender Wert and the spot
     // price — and the loop that measures the quantities has no tariff of its
     // own. Sharing this one is what lets it write a whole register rather than
     // a register with two zeros in it.
-    *prices_out.write().await = Some(prices.clone());
+    *prices_out.write().await = Some(published_prices);
     if !prices.slots.iter().any(|p| p.price_known) {
         return Err(Reason::NoPrices);
     }
@@ -1198,13 +1197,9 @@ fn ev_session(
 /// `Some` where the planner may move `id`: a store its driver cannot command
 /// is not a store to plan.
 ///
-/// A SunSpec battery is the case — the standard's storage model carries rate
-/// limits and no setpoint, so its driver refuses every command and the
-/// registry names it `uncommandable`. Planned anyway, every slot after the first
-/// was priced on energy the battery would never move, while the page called it
-/// *not connected*. Left out, it is neither modelled nor named, which by D96 is
-/// what keeps the arbiter from receiving a target for it at all: the battery
-/// runs its own logic and the plan prices the house around it.
+/// A self-managed battery can report its state of charge without accepting
+/// power targets. Excluding it here keeps projected energy and arbiter commands
+/// consistent with the installed actuator (D96).
 fn drivable(observed: &crate::drivers::Observed, id: &ems_core::prelude::AssetId) -> Option<()> {
     (!observed.uncommandable.contains(id)).then_some(())
 }

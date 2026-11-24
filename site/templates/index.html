@@ -67,14 +67,18 @@
     <div class="systems-grid">
       <section>
         <h3>Home <small>HEMS</small></h3>
-        <p>Schedule EV charging, hot water and battery use around household goals, prices and grid limits. Connect supported equipment or use the simulator.</p>
+        <p>Schedule EV charging, hot water and battery use around household goals, prices and grid limits. In the virtual house, compare a battery request with what the meter actually saw.</p>
         <a href="{{ get_url(path='@/docs/household.md') }}">Read the household guide</a>
-        <a href="#solar-charging">Try solar EV charging</a>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#exercise-battery-control">Run the battery trial</a>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#check-an-ev-departure">Rehearse a charger interruption</a>
+        <a href="{{ get_url(path='@/docs/services.md') }}#household-departure-receipt">Explore household history and charging receipts</a>
       </section>
       <section>
         <h3>Building <small>BEMS</small></h3>
-        <p>Ask two simulated OCPP stations to share a charging limit and check what each drew. Explore how the building shares solar energy with its occupants.</p>
+        <p>Compare two charging stations with the building’s feeder meter during a zone sensor fault, or explore how shared solar energy is allocated to tenants.</p>
         <a href="{{ get_url(path='@/docs/simulation.md') }}#replay-a-building-handover">Replay a building handover</a>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#check-the-heating-reserve">Check the heating reserve</a>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#compare-community-allocations">Explore tenant allocation</a>
       </section>
       <section>
         <h3>Industrial <small>CEMS</small></h3>

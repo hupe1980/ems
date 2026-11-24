@@ -11,11 +11,6 @@
 -- than about the operator's intent, and neither can be re-derived — a lost token
 -- is a fleet of boxes holding a credential nothing recognises.
 --
--- Instants are `TIMESTAMPTZ`. They were RFC 3339 *strings* on SQLite, which had
--- no instant type, so a row nothing in this daemon could have written was a
--- whole error variant here; PostgreSQL parses and stores one, so the variant is
--- gone and "when did this box last report" is a comparison rather than a parse.
-
 -- One row per box that has enrolled.
 --
 -- The row *is* the single-use property: `site` is the primary key, so a second
@@ -42,3 +37,13 @@ CREATE TABLE IF NOT EXISTS running (
 
 -- Answering "which of my boxes have gone quiet" without reading every row.
 CREATE INDEX IF NOT EXISTS running_by_last_seen ON running (last_seen);
+
+-- Check-in clocks use whole Unix seconds, matching gateway wire precision.
+CREATE TABLE IF NOT EXISTS gateway_checkin (
+    site TEXT NOT NULL REFERENCES enrolment(site) ON DELETE CASCADE,
+    sent_at BIGINT NOT NULL,
+    received_at BIGINT NOT NULL,
+    feeder_at BIGINT,
+    report_at BIGINT,
+    PRIMARY KEY (site, sent_at)
+);

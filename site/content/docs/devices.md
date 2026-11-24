@@ -17,6 +17,8 @@ Choose a driver for the measurements and commands the installed device actually 
 | EEBUS appliance | Supported use case, whether it measures or commands, and the commissioned peer |
 | Matter appliance | Commissioned endpoint and fabric in the local Matter Server. The pilot reads active power. [Setup and reading states](@/docs/household.md#matter-appliance-power). |
 
+The household OCPP simulator uses an outlet energy register to check one charging transaction across reconnect. Run the [departure rehearsal](@/docs/simulation.md#check-an-ev-departure).
+
 ## What a device will actually take
 
 The arbiter requests watts. An inverter accepts a production ceiling, an EV charger accepts current per conductor and a fixed-speed appliance has a small set of operating states. The device model translates a permitted range into a physically attainable command before the driver encodes it.
@@ -31,9 +33,9 @@ Polled devices need timely responses. A subscription that publishes only changes
 
 ## SunSpec and vendor registers
 
-The gateway walks the SunSpec model chain on the configured unit. Common supported roles include inverter models 101–103 or 701, meter models 201–204 and battery model 802. Verify the discovered operating model before applying the configuration in Setup. The virtual battery exposes state of charge and manages its own power.
+The gateway walks the SunSpec model chain on the configured unit. Common supported roles include inverter models 101–103 or 701, meter models 201–204 and battery model 802. Verify the discovered operating model before applying the configuration in Setup. The virtual battery reports AC power on model 701 and state of charge on model 802. It runs on self-consumption by default. Start the virtual house with `--manage-storage` to let the gateway request signed watts on model 704. Use a control tick of 1–3 seconds for this profile. The battery returns to self-consumption when its 30-second control period expires.
 
-For supported inverter controls, a Modbus write acknowledgement confirms receipt of a request. The driver reads back the active limit and enable state. Compare the resulting command outcome with measured production and available sunlight. A roof producing below a ceiling on a cloudy day gives no evidence that curtailment is active.
+Set `listens_only = true` for a read-only SunSpec unit. On reconnect the driver rediscovers the unit before accepting a ceiling. For supported inverter controls, a Modbus write acknowledgement confirms receipt of a request. The driver reads back the active limit and enable state. Compare the resulting command outcome with measured production and available sunlight. A roof producing below a ceiling on a cloudy day gives no evidence that curtailment is active.
 
 Vendor register maps are read-only by default. Each permitted write must declare its register, command and allowed raw values. A heat pump with a documented heat/cool mode register can therefore support a mode change without permitting arbitrary writes. Use the exact register table for the installed firmware.
 

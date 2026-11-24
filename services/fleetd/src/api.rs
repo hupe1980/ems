@@ -1,5 +1,7 @@
 //! What a box asks the fleet.
 
+mod desk;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -51,6 +53,9 @@ impl Fleet {
 /// The routes.
 pub fn router(fleet: Fleet) -> Router {
     Router::new()
+        .route("/desk", get(desk::page))
+        .route("/v1/desk", get(desk::queue))
+        .route("/v1/checkins", post(desk::checkin))
         .route("/v1/enrol", post(enrol))
         .route("/v1/config", get(config))
         .route("/v1/config/running", post(report_running))
@@ -111,11 +116,7 @@ async fn enrol(
     Ok(axum::Json(enrolled))
 }
 
-/// The configuration a box should be running, and the signature over it.
-///
-/// The box verifies it against the Ed25519 key it was **built** with, exactly as
-/// it verifies a release — so this endpoint being authenticated is a convenience
-/// and not the security property. See [`ems_service::SignedConfig`].
+/// Serve the site configuration and its externally supplied Ed25519 signature.
 async fn config(
     State(fleet): State<Fleet>,
     headers: HeaderMap,

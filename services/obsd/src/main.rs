@@ -52,7 +52,12 @@ async fn main() -> anyhow::Result<()> {
     let mut secrets: Vec<(String, String)> = Vec::new();
     for (site, keys) in &settings.webhook_secrets {
         for key in keys {
-            secrets.push((site.clone(), key.resolve_from_process()?));
+            let key = key.resolve_from_process()?;
+            anyhow::ensure!(
+                !key.trim().is_empty(),
+                "empty webhook signing key for site {site}"
+            );
+            secrets.push((site.clone(), key));
         }
     }
 
@@ -76,6 +81,19 @@ async fn main() -> anyhow::Result<()> {
         &settings.tenants,
         &settings.operators,
     )?;
+    let mut customers = ems_service::Credentials::default();
+    for (site, reference) in &settings.customer_tokens {
+        let token = reference.resolve_from_process()?;
+        anyhow::ensure!(
+            !token.trim().is_empty()
+                && token.trim() == token
+                && customers.authority_of(&token).is_none()
+                && readers.authority_of(&token).is_none()
+                && !secrets.iter().any(|(_, key)| key == &token),
+            "customer token for {site} must be unique and separate from gateway and operator credentials"
+        );
+        customers = customers.with_site(site, token);
+    }
     if readers.is_empty() {
         tracing::warn!(
             "no operator token is configured, so the fleet view will not be served; \
@@ -124,14 +142,17 @@ async fn main() -> anyhow::Result<()> {
     // The two surfaces answer from the same fleet view and under the same
     // credentials, and each MCP call is authorised as its own caller — so a
     // token cannot reach over `/mcp` what the REST route would refuse it.
-    let mut app = router(Observed::new(
-        store.clone(),
-        settings.keep_days,
-        silent_after,
-        secrets,
-        time::Duration::seconds(settings.webhook_tolerance_s.cast_signed()),
-        readers.clone(),
-    ));
+    let mut app = router(
+        Observed::new(
+            store.clone(),
+            settings.keep_days,
+            silent_after,
+            secrets,
+            time::Duration::seconds(settings.webhook_tolerance_s.cast_signed()),
+            readers.clone(),
+        )
+        .with_customers(customers),
+    );
     if settings.mcp.enabled {
         let auth = ems_service::McpAuth::per_caller(&settings.mcp, &readers)?;
         app = app.merge(obsd::mcp_server::router(

@@ -165,7 +165,12 @@ fn earlier(scenario: &Scenario, ago: usize) -> Scenario {
 }
 
 fn closed_day(day: &DayResult, date: time::Date) -> ClosedDay {
-    let mut receipt = ClosedDay::of(&receipt_of_day(day, date), true);
+    let mut receipt = ClosedDay::of(&receipt_of_day(day, date), false);
+    if let Some(trial) = &day.service_trial {
+        receipt.metered_bill = Some(trial.bill.clone());
+        receipt.comparison = trial.comparison;
+        receipt.comparison_gap = trial.gap;
+    }
     if day.pv_forecast.samples > 0 && day.load_forecast.samples > 0 {
         receipt.forecast = crate::month::ForecastCoverage::of(
             day.pv_forecast.coverage,
@@ -305,12 +310,11 @@ mod tests {
             .home_at(0, home::GoalSet::default())
             .receipt
             .expect("a receipt");
-        let money = r.money.expect("priced replay");
-        assert_eq!(
-            money.cost_ct.to_string(),
-            format!("{:.0}", day.cost.total() * 100.0)
-        );
-        assert_eq!(money.saved_ct, money.without_ct - money.cost_ct);
+        let trial = day.service_trial.unwrap();
+        assert_eq!(r.metered_bill.as_ref(), Some(&trial.bill));
+        assert_eq!(r.comparison, trial.comparison);
+        assert_eq!(r.comparison_gap, trial.gap);
+        assert!(r.money.is_none());
         assert_eq!(r.reduced_minutes, Some(day.limited_minutes));
     }
 
@@ -329,10 +333,14 @@ mod tests {
                 scenario.date.previous_day()
             ]
         );
-        assert!(history.iter().all(|d| d.money.is_some()));
+        assert!(history.iter().all(|d| {
+            d.metered_bill
+                .as_ref()
+                .is_some_and(|b| b.energy_ct.is_some())
+        }));
         // Different weather is a different day: a month of one bar thirty
         // times would be a picture of nothing.
-        assert_ne!(history[0].money, history[1].money);
+        assert_ne!(history[0].metered_bill, history[1].metered_bill);
         // No reduction on either; `the_earlier_days_…` says where it is.
         assert!(history.iter().all(|d| d.reductions == 0));
     }

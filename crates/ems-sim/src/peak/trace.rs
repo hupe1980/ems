@@ -24,21 +24,44 @@ pub struct Trace {
     pub start: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     end: OffsetDateTime,
-    tolerance_wh: u64,
+    /// Largest accepted absolute difference, in Wh.
+    pub tolerance_wh: u64,
     /// Cumulative import register readings.
     pub register: Vec<Point>,
     /// Independently metered energy keyed by interval start.
     pub closed: Vec<Point>,
 }
 
+/// Reconciliation outcome in precedence order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IntervalStatus {
+    /// The cumulative register fell during this quarter.
+    RegisterDecreased,
+    /// At least one boundary reading is absent.
+    MissingBoundary,
+    /// The independent close is absent.
+    MissingClosedInterval,
+    /// Both readings exist and their difference exceeds tolerance.
+    OutsideTolerance,
+    /// Both readings agree within tolerance.
+    WithinTolerance,
+}
+
+/// Evidence for a single quarter, in chronological order within the report.
 #[derive(Serialize)]
-struct Interval {
+pub struct Interval {
+    /// Start instant, normalized to UTC.
     #[serde(with = "time::serde::rfc3339")]
-    start: OffsetDateTime,
-    register_wh: Option<u64>,
-    closed_wh: Option<u64>,
-    difference_wh: Option<i128>,
-    status: &'static str,
+    pub start: OffsetDateTime,
+    /// Increase between observed register boundaries.
+    pub register_wh: Option<u64>,
+    /// Independent close at the quarter start.
+    pub closed_wh: Option<u64>,
+    /// Register increase minus the independent close.
+    pub difference_wh: Option<i128>,
+    /// Outcome of the shared comparison.
+    pub status: IntervalStatus,
 }
 
 /// Coverage and agreement between the two meter series.
@@ -56,6 +79,11 @@ pub struct Report {
 }
 
 impl Report {
+    /// Quarters in ascending UTC order.
+    pub fn intervals(&self) -> &[Interval] {
+        &self.intervals
+    }
+
     /// Number of quarter-hour intervals in the comparison window.
     pub fn interval_count(&self) -> usize {
         self.intervals.len()
@@ -94,7 +122,16 @@ fn index(
 /// # Errors
 /// Returns an error for invalid windows, conflicting duplicates or misplaced readings.
 pub fn compare(t: &Trace) -> Result<Report> {
-    let span = t.end - t.start;
+    let utc = |at: OffsetDateTime| {
+        at.checked_to_offset(UtcOffset::UTC)
+            .filter(|v| v.year() >= 0)
+            .ok_or_else(|| {
+                anyhow::anyhow!("comparison window must be representable in RFC 3339 UTC")
+            })
+    };
+    let mut start = utc(t.start)?;
+    let window_end = utc(t.end)?;
+    let span = window_end - start;
     ensure!(
         aligned(t.start) && aligned(t.end) && span.is_positive() && span <= Duration::days(31),
         "use a positive, aligned comparison window of at most 31 days"
@@ -103,8 +140,7 @@ pub fn compare(t: &Trace) -> Result<Report> {
     let closed = index(&t.closed, t.start, t.end, true)?;
     let mut intervals = Vec::new();
     let mut max_absolute_difference_wh = None;
-    let mut start = t.start.to_offset(UtcOffset::UTC);
-    while start < t.end {
+    while start < window_end {
         let end = start + Duration::minutes(15);
         let bounds = register.get(&start).zip(register.get(&end));
         let reset = !register.range(start..=end).map(|(_, wh)| wh).is_sorted();
@@ -114,17 +150,17 @@ pub fn compare(t: &Trace) -> Result<Report> {
             .zip(closed_wh)
             .map(|(a, b)| i128::from(a) - i128::from(b));
         let status = match (reset, register_wh, closed_wh) {
-            (true, _, _) => "register_decreased",
-            (_, None, _) => "missing_boundary",
-            (_, _, None) => "missing_closed_interval",
+            (true, _, _) => IntervalStatus::RegisterDecreased,
+            (_, None, _) => IntervalStatus::MissingBoundary,
+            (_, _, None) => IntervalStatus::MissingClosedInterval,
             (_, Some(a), Some(b)) => {
                 let delta = a.abs_diff(b);
                 max_absolute_difference_wh =
                     Some(delta.max(max_absolute_difference_wh.unwrap_or(0)));
                 if delta <= t.tolerance_wh {
-                    "within_tolerance"
+                    IntervalStatus::WithinTolerance
                 } else {
-                    "outside_tolerance"
+                    IntervalStatus::OutsideTolerance
                 }
             }
         };
@@ -139,7 +175,7 @@ pub fn compare(t: &Trace) -> Result<Report> {
     }
     let matching_intervals = intervals
         .iter()
-        .filter(|r| r.status == "within_tolerance")
+        .filter(|r| r.status == IntervalStatus::WithinTolerance)
         .count();
     Ok(Report {
         within_tolerance: matching_intervals == intervals.len(),
@@ -191,7 +227,7 @@ impl Trace {
         let first = report.intervals.first()?;
         first
             .closed_wh
-            .filter(|_| first.status == "within_tolerance")
+            .filter(|_| first.status == IntervalStatus::WithinTolerance)
     }
 }
 
@@ -234,8 +270,8 @@ mod tests {
         });
         t.closed.pop();
         let r = compare(&t).unwrap();
-        assert_eq!(r.intervals[0].status, "register_decreased");
-        assert_eq!(r.intervals[1].status, "missing_closed_interval");
+        assert_eq!(r.intervals[0].status, IntervalStatus::RegisterDecreased);
+        assert_eq!(r.intervals[1].status, IntervalStatus::MissingClosedInterval);
         assert_eq!(r.max_absolute_difference_wh, None);
         let mut t = trace();
         t.register
@@ -245,7 +281,7 @@ mod tests {
                 .unwrap()
                 .intervals
                 .iter()
-                .all(|r| r.status == "missing_boundary")
+                .all(|r| r.status == IntervalStatus::MissingBoundary)
         );
     }
 

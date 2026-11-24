@@ -24,7 +24,7 @@ A slower monitor compares recent roof performance with a longer baseline. This c
 
 ## The first evening
 
-A newly installed box has little local history. It starts with the BDEW H25 household profile, scaled using available household consumption information. The configured `[site] household_kwh_per_year` provides an explicit scale. As quarter-hours accumulate, the household’s measured load replaces the prior in the corresponding time and day-type cells. Local persistence retains learning across restarts.
+A new gateway estimates gross household demand using a synthetic morning and evening load shape on the local holiday calendar. Set `[site] household_kwh_per_year` to annual appliance consumption, excluding heat, EV charging and storage. Without that figure the gateway starts from a bounded meter reading and fits the scale once all 96 quarters of a day type have readings. After four observations of a quarter and day type, its measured history supplies the entire forecast for that cell. Learning survives restarts.
 
 ## Reading forecast quality
 

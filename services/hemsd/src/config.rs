@@ -740,12 +740,9 @@ pub struct SiteSettings {
     /// car or battery: the *Haushaltsstrom* an ordinary household of this size
     /// uses.
     ///
-    /// It scales BDEW's H25 profile, which is what a box leans on until it has
-    /// measured its household. Optional: without it the box scales H25 to its
-    /// own first whole day, and before that to its first reading. Not the figure
-    /// on a bill that meters a heat pump or a wallbox on the same register — H25
-    /// describes household appliances, and that figure would overstate the base
-    /// load several times over.
+    /// This scales the synthetic cold-start forecast. Without a declaration
+    /// the gateway uses a complete metered day, or an initial reading while
+    /// history accumulates.
     #[serde(default)]
     pub household_kwh_per_year: Option<f64>,
     /// Where the house is, for the solar geometry.
@@ -1658,6 +1655,9 @@ pub struct SunspecSettings {
     /// not agreed that hems may curtail it.
     #[serde(default)]
     pub listens_only: bool,
+    /// Opt in to bounded model 704 dispatch on the commissioned loopback battery.
+    #[serde(default)]
+    pub manage_storage: bool,
     /// The inverter's alternating-current rating in kW, for curtailment.
     ///
     /// SunSpec model 123 expresses a production ceiling as a **percentage of

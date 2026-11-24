@@ -8,6 +8,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+knx = { version = "0.1.1", default-features = false }
+bacnet-kit = { version = "0.1.0", default-features = false, features = ["std"] }
 ems-core = { workspace = true }
 ems-grid = { workspace = true }
 time = { workspace = true }

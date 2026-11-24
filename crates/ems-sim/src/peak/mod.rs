@@ -3,7 +3,7 @@ mod trace;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
-pub use trace::{Point, Report, Trace, compare};
+pub use trace::{Interval, IntervalStatus, Point, Report, Trace, compare};
 
 /// Prior demand peak used as the shift's target quarter-hour mean, in kW.
 pub const PRIOR_KW: i32 = 1100;

@@ -168,7 +168,7 @@ reports priced, expected and observed-mode intervals. Its `energy_ct` and
 `fixed_ct` fields are null when a bill cannot be computed. `money` contains
 simulation economics. On measured days, nullable `comparison` contains
 `with_plan_ct`, `without_plan_ct` and the summed absolute interval error
-`error_ct`. Month totals exclude differences at or below that error. Nullable
+`error_ct`. The monthly total counts every matched day in `eligible_days`. Only differences above the error contribute to `conclusive_days` and the monetary sum. When comparison is unavailable, `comparison_gap` can identify the first affected observation interval in Unix seconds and its reason. The simulated household can also report vehicle, thermal, hot-water, storage, programme or grid-limit exclusions. The CSV carries the same instant and reason in `comparison_gap_at_unix_s` and `comparison_gap_reason`. Nullable
 `arbitrage` records grid charging and household discharge for closed cycles. `forecast` reports
 the measured percentage of production and load readings inside their forecast
 ranges. `shadow: true` on the home document identifies an observing gateway.
@@ -315,8 +315,10 @@ To verify one:
 
 `bemsd demo` serves `GET /v1/demo/building?case=unconfirmed` and the
 corresponding page at `/?case=unconfirmed`. Supported cases are
-`confirmed` (default), `delayed-arrival`, `above-request`, `unconfirmed`, `stale-charger`, `stale`, `over-limit`, `unknown-pv` and `no-solar`.
+`confirmed` (default), `delayed-arrival`, `station-rejoin`, `idle-station`, `above-request`, `unconfirmed`, `stale-charger`, `stale`, `over-limit`, `unknown-pv` and `no-solar`.
 Choose `moment=requested`, `observed`, `deadline` or `handover` on either route. The default is `handover`. The connection snapshot first appears at handover. Until the station acknowledges, `profile_accepted` is null. Each station’s `final_received_at` distinguishes receipt from observation. In `case=delayed-arrival` a late sample confirms the deadline reading at handover.
+
+For `case=station-rejoin`, the additional moments are `rejoined`, `buffered` and `restored`. A station can be connected while its current power is unknown. `buffered_received_at` records the queued reading’s arrival. A qualifying sample has both `final_measured_at` and `final_received_at`.
 
 For the charging incident, `charging_source` is `ocpp-1.6j-station-telemetry`. Each member of `stations` gives the station ID, profile acknowledgement, initial kW and final kW. A null contribution makes the corresponding bank reading null. Station totals exclude individual connectors.
 

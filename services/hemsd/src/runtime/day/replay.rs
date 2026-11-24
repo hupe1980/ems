@@ -79,6 +79,8 @@ fn unplugged(
     !presence.connected
         && presence.at <= now
         && now - presence.at <= Duration::MINUTE
+        && port.at <= now
+        && now - port.at <= Duration::MINUTE
         && port.quality == metering::QualityFlag::Measured
         && port.power == Some(Power::ZERO)
 }
@@ -254,6 +256,78 @@ impl Capture {
     }
 }
 
+/// Evidence missing from the first affected quarter of a closed day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GapReason {
+    /// The gateway has no register for the quarter.
+    MissingInterval,
+    /// The interval cannot be priced under both alternatives.
+    MissingPrice,
+    /// The available readings do not establish equal service.
+    UnverifiedService,
+    /// Responsibility for control changed during the day.
+    ControlChanged,
+    /// The simulation arms operated under different grid control regimes.
+    GridLimits,
+    /// Room temperature left the household comfort band.
+    ThermalComfort,
+    /// Hot-water delivery, deadline or terminal tank inventory differed.
+    HotWater,
+    /// Vehicle energy at departure or at day close did not qualify.
+    VehicleEnergy,
+    /// End-of-day battery inventories differed.
+    BatteryInventory,
+    /// A requested appliance programme did not finish.
+    ApplianceProgramme,
+    /// The supply meter alone cannot price the community allocation.
+    SharedSettlement,
+}
+
+/// Recorded explanation for an unavailable comparison on a day receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ComparisonGap {
+    /// Start of the first affected observation interval in Unix seconds.
+    pub at_unix_s: i64,
+    /// Evidence that prevented comparison.
+    pub reason: GapReason,
+}
+
+impl ComparisonGap {
+    pub(crate) fn first(date: time::Date, rows: &[Recorded], bill: &MeteredBill) -> Option<Self> {
+        use ems_core::prelude::Slot;
+        let first = Slot::containing(ems_core::calendar::day_start_utc(date));
+        let watched = rows.first().is_some_and(|r| r.watched);
+        let mut rows = rows.iter();
+        for i in 0..bill.expected_intervals {
+            let slot = first.offset(i64::from(i));
+            let row = rows.next().filter(|row| row.registers.slot == slot);
+            let reason = match row {
+                None => GapReason::MissingInterval,
+                Some(row) if row.watched != watched => GapReason::ControlChanged,
+                Some(row) => match (&row.terms, row.replay) {
+                    (None, _) => GapReason::MissingPrice,
+                    (Some(_), None) => GapReason::UnverifiedService,
+                    (Some(terms), Some(replay)) => {
+                        let has_export = !row.registers.grid_feed_in.is_zero()
+                            || replay.plan[1] != 0
+                            || replay.baseline[1] != 0;
+                        if terms.export_ct.is_some() || !has_export {
+                            continue;
+                        }
+                        GapReason::MissingPrice
+                    }
+                },
+            };
+            return Some(Self {
+                at_unix_s: slot.start().unix_timestamp(),
+                reason,
+            });
+        }
+        None
+    }
+}
+
 /// Day-level grid-energy comparison, including fixed charges in both arms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Comparison {
@@ -335,6 +409,11 @@ mod tests {
         port.power = Some(Power::ZERO);
         assert!(unplugged(&presence, &port, now));
         assert!(!unplugged(&presence, &port, now + Duration::minutes(2)));
+        for offset in [-61, 1] {
+            port.at = now + Duration::seconds(offset);
+            assert!(!unplugged(&presence, &port, now));
+        }
+        port.at = now;
         presence.connected = true;
         assert!(!unplugged(&presence, &port, now));
     }
@@ -436,6 +515,10 @@ mod tests {
             (2500, 2500, 240)
         );
         rows[0].watched = false;
+        assert_eq!(
+            ComparisonGap::first(date, &rows, &bill).unwrap().reason,
+            GapReason::ControlChanged
+        );
         assert!(Comparison::close(&rows, &bill).is_none());
         rows[0].watched = true;
         for (i, r) in rows.iter_mut().enumerate() {
@@ -445,6 +528,21 @@ mod tests {
         rows[1].replay = None;
         assert!(Comparison::close(&rows, &bill).is_none());
         assert!(Comparison::close(&rows[1..], &bill).is_none());
+        let gap = ComparisonGap::first(date, &rows, &bill).unwrap();
+        assert_eq!(gap.reason, GapReason::UnverifiedService);
+        assert_eq!(gap.at_unix_s, start.next().start().unix_timestamp());
+        assert_eq!(
+            ComparisonGap::first(date, &rows[1..], &bill)
+                .unwrap()
+                .reason,
+            GapReason::MissingInterval
+        );
+        rows[0].terms.as_mut().unwrap().export_ct = None;
+        rows[0].replay.as_mut().unwrap().plan[1] = 1;
+        assert_eq!(
+            ComparisonGap::first(date, &rows, &bill).unwrap().reason,
+            GapReason::MissingPrice
+        );
     }
 }
 

@@ -1,5 +1,7 @@
 //! `hemsd` — the hems edge daemon.
 
+#[cfg(feature = "house")]
+use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use hemsd::{HouseholdConfig, Scenario};
 use std::path::PathBuf;
@@ -95,6 +97,22 @@ enum Command {
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=90))]
         days: u16,
     },
+    /// Rehearse a household departure with an OCPP wallbox that loses power for 15 minutes.
+    #[cfg(feature = "house")]
+    EvDeparture {
+        /// Energy wanted at the charging outlet by the end of the 45-minute session, in Wh.
+        #[arg(long, default_value_t = 3600, value_parser = clap::value_parser!(i32).range(1..=10000))]
+        goal_wh: i32,
+        /// Disconnect before the departure register reaches the controller.
+        #[arg(long)]
+        missing_close: bool,
+        /// Send the signed simulation receipt to this obsd origin, using EMS_OBSD_SECRET.
+        #[arg(long)]
+        report_to: Option<String>,
+        /// Site whose key signs the receipt.
+        #[arg(long, default_value = "reference-household")]
+        site: String,
+    },
     /// Be a household on the wire: an inverter, a meter and a battery over
     /// Modbus TCP and a Steuerbox over EEBUS, for `hemsd run` to manage.
     ///
@@ -113,7 +131,7 @@ enum Command {
         /// Where the devices answer Modbus TCP.
         #[arg(long, default_value = "127.0.0.1:1502")]
         listen: std::net::SocketAddr,
-        /// Where the box will listen for the Steuerbox (SHIP).
+        /// Loopback address where the box listens for the virtual Steuerbox (SHIP).
         #[arg(long, default_value = "127.0.0.1:4712")]
         ship: std::net::SocketAddr,
         /// Where the box will serve its page and API.
@@ -127,6 +145,9 @@ enum Command {
         /// one command.
         #[arg(long)]
         run: bool,
+        /// Authorize the gateway to control the loopback battery with bounded watt commands.
+        #[arg(long)]
+        manage_storage: bool,
         /// Allow `--listen` on an address other machines can reach. The house
         /// asks nobody for a credential.
         #[arg(long)]
@@ -146,6 +167,9 @@ enum Command {
         /// Report as JSON rather than a table.
         #[arg(long)]
         json: bool,
+        /// Plan with an empty household history, as on first installation.
+        #[arg(long)]
+        cold_start: bool,
         /// Price battery wear at this many euros per kilowatt-hour of
         /// throughput. Zero reproduces a cost-only optimiser.
         #[arg(long)]
@@ -793,6 +817,21 @@ async fn execute(command: Command) -> anyhow::Result<()> {
             return hemsd::demo::serve(demo, listen).await;
         }
         #[cfg(feature = "house")]
+        Command::EvDeparture {
+            goal_wh,
+            missing_close,
+            report_to,
+            site,
+        } => {
+            let receipt = hemsd::house::departure::rehearse(goal_wh, missing_close).await?;
+            if let Some(origin) = report_to {
+                let secret = std::env::var("EMS_OBSD_SECRET")
+                    .context("set EMS_OBSD_SECRET to the site's signing key")?;
+                receipt.publish(&origin, &site, secret.as_bytes()).await?;
+            }
+            println!("{receipt}");
+        }
+        #[cfg(feature = "house")]
         Command::House {
             day,
             at,
@@ -801,6 +840,7 @@ async fn execute(command: Command) -> anyhow::Result<()> {
             api,
             out,
             run,
+            manage_storage,
             exposed,
         } => {
             return house(HouseArgs {
@@ -812,12 +852,14 @@ async fn execute(command: Command) -> anyhow::Result<()> {
                 out,
                 exposed,
                 run,
+                manage_storage,
             })
             .await;
         }
         Command::Simulate {
             day,
             json,
+            cold_start,
             wear_eur_per_kwh,
             no_phase_switching,
             imsys,
@@ -853,6 +895,9 @@ async fn execute(command: Command) -> anyhow::Result<()> {
                 pv.para9.relief = ems_core::prelude::CapRelief::ImsysWithControl;
             }
             let mut scenario = scenario_for(day, config);
+            if cold_start {
+                scenario.warm_up_days = 0;
+            }
             if perfect_foresight {
                 scenario.weather = scenario.weather.with_perfect_forecast();
             }
@@ -1148,6 +1193,7 @@ struct HouseArgs {
     api: std::net::SocketAddr,
     out: PathBuf,
     exposed: bool,
+    manage_storage: bool,
     run: bool,
 }
 
@@ -1166,7 +1212,12 @@ async fn house(args: HouseArgs) -> anyhow::Result<()> {
         out,
         exposed,
         run,
+        manage_storage,
     } = args;
+    anyhow::ensure!(
+        !manage_storage || listen.ip().is_loopback(),
+        "managed storage requires loopback"
+    );
     let out = out.as_path();
 
     let scenario = scenario_for(day, HouseholdConfig::default());
@@ -1181,7 +1232,7 @@ async fn house(args: HouseArgs) -> anyhow::Result<()> {
     .await?;
     std::fs::write(
         out,
-        house::configuration(&house, &scenario, Some(ship), api)?,
+        house::configuration(&house, &scenario, Some(ship), api, manage_storage)?,
     )?;
 
     let minutes = house.clock.since_midnight().whole_minutes();

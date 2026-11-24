@@ -43,6 +43,15 @@ by the sheet for that slot. The JSON result names any national levy filled
 from the published table. This offline calculation leaves the gateway’s
 active contract untouched. Add `--signed` for a compact JWS to verify its signature and print its key fingerprint.
 
+For a signed example, use the synthetic seller that exercises the gateway’s own review and planner:
+
+```sh
+cargo run -p hemsd -- price-sheet services/hemsd/tests/fixtures/tariff/dynamic.jws \
+  --signed --at 2027-01-05T16:45:00+01:00 --index-ct=-2
+```
+
+At 16:45 the result is **20.50489 ct/kWh**. At 17:00 it becomes **30.02489 ct/kWh**. The published index stays at −2. The network rate changes from 10 to 18 net ct/kWh and VAT applies to the difference. The signer is labelled “EMS synthetic seller”. Setup shows the full unit price and the Berlin UTC offset when you review the first eligible quarter.
+
 ## The bill is a stack
 
 Every layer moves for its own reasons and on its own clock.

@@ -100,6 +100,10 @@ pub enum FrameError {
 /// One decoded response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
+    /// Unit identifier echoed in the MBAP header.
+    pub unit: u8,
+    /// Function code, with the exception bit removed.
+    pub function: u8,
     /// The transaction identifier the request carried.
     pub transaction: u16,
     /// What came back.
@@ -235,7 +239,15 @@ pub fn decode(buffer: &[u8]) -> Result<Option<(Response, usize)>, FrameError> {
     }
     let pdu = &buffer[HEADER..total];
     let body = decode_pdu(pdu)?;
-    Ok(Some((Response { transaction, body }, total)))
+    Ok(Some((
+        Response {
+            unit: buffer[6],
+            function: pdu[0] & 0x7f,
+            transaction,
+            body,
+        },
+        total,
+    )))
 }
 
 /// The protocol data unit, once a whole one is in hand.
@@ -277,7 +289,7 @@ fn decode_pdu(pdu: &[u8]) -> Result<ResponseBody, FrameError> {
             ))
         }
         function::WRITE_MULTIPLE => {
-            if rest.len() < 4 {
+            if rest.len() != 4 {
                 return Err(FrameError::Malformed("a short write acknowledgement"));
             }
             Ok(ResponseBody::WriteAccepted {

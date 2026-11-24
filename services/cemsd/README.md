@@ -14,7 +14,10 @@ Compare a local cumulative register with independently closed quarter hours offl
 
 ```sh
 cargo run -p cemsd -- reconcile crates/ems-sim/fixtures/shift-trace.json
+cargo run -p cemsd -- reconcile --format html crates/ems-sim/fixtures/shift-trace.json > review.html
 ```
+
+Open `review.html` offline and follow **Go to first exception**. Each quarter shows its Berlin offset, UTC start, register increase, independent close and signed difference. JSON is the default. Valid exceptions produce a report and a nonzero exit. Invalid input produces only a diagnostic.
 
 In the Linux archive, run `./cemsd reconcile examples/shift-trace.json` from the extracted directory.
 

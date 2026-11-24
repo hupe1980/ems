@@ -12,6 +12,21 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  portal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 26
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: pipx install uv==0.13.6
+      - run: just portal-trial
+        env:
+          CHROME: /usr/bin/google-chrome
+
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
@@ -151,6 +166,10 @@ jobs:
       # An example nobody runs rots. These are the product demonstration — and
       # the only check that has ever caught a rule module nobody calls.
       - run: cargo run -p hemsd -- simulate --day winter
+      - name: Rehearse the first household day without history
+        run: |
+          cargo run --locked -p hemsd -- simulate --day winter --cold-start --json |
+            jq -e '.history_days == 0 and .load_prior == "anchored" and .load_prior_share == 1'
       - run: cargo run -p hemsd -- simulate --day summer --json
       - run: cargo run -p hemsd -- simulate --day deadline
       - run: cargo run -p hemsd -- simulate --day shared
@@ -178,6 +197,11 @@ jobs:
           trap 'kill "$home_pid" "$building_pid" "$industrial_pid" 2>/dev/null || true' EXIT
           node xtask/media.mjs release-preview
 
+      - name: Check offline industrial interval review in Chrome
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: pipx run --spec uv==0.13.6 uv run xtask/interval_review.py
+
       - name: Exercise the optional OpenADR request and withdrawal
         run: |
           cargo run --locked -p cemsd --features openadr -- openadr --json > "$RUNNER_TEMP/request.json"
@@ -200,6 +224,11 @@ jobs:
         env:
           CHROME: /usr/bin/google-chrome
 
+      - name: Verify reduction notifications and tap destinations
+        run: pipx run --spec uv==0.13.6 uv run --python 3.13 xtask/notification_browser.py
+        env:
+          CHROME: /usr/bin/google-chrome
+
   house:
     name: Virtual house
     runs-on: ubuntu-latest
@@ -213,12 +242,20 @@ jobs:
       - run: cargo test -p hemsd --features house --test managed_by_a_cem a_manager_reads_the_virtual_house_battery_over_wss
       - run: cargo test -p hemsd --features house --test virtual_house
       - run: cargo test -p hemsd --features house --lib matched_socket_costs_on_every_reference_day
+      - run: cargo test --locked -p hemsd --features house --lib signed_battery_power_reverts_on_the_wire
+      - run: cargo test --locked -p hemsd --features house --lib departure_is_closed
+      - run: cargo test --locked -p hemsd --features house --lib gateway_storage_trial
+      - run: cargo test --locked -p hemsd --features house --lib berlin_meter_days_reconcile_on_the_wire -- --nocapture
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: flexiblepower/s2-analyzer
           ref: 1a37ba6db52394bc02cad79be7226e78b8b60719
           path: .s2-analyzer
           persist-credentials: false
+      - name: Inspect managed battery loss and recovery at mobile width
+        run: pipx run --spec uv==0.13.6 uv run --python 3.13 xtask/storage_control.py target/debug/hemsd
+        env:
+          CHROME: /usr/bin/google-chrome
       - name: Validate the live battery with S2 Analyzer
         run: |
           pipx run --spec uv==0.13.6 uv run --project .s2-analyzer/backend --frozen --no-dev --python 3.12 \

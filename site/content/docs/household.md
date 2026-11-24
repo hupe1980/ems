@@ -28,8 +28,10 @@ through the real guard, arbiter and planner — `hemsd demo`, below.
 |---|---|---|
 | **Now** | What is the house doing? | Grid import or export, device readings and reasons, and any active grid limit. |
 | **Plan** | What will run tonight? | A two-day strip, the first device runs, the export-or-store decision and goal quotes. After a failed update, the page dates the retained plan. |
-| **Day** | What did it cost? | A receipt and monthly history. A priced day shows the bill, wear, comfort and savings. A metered day shows energy, grid limits and charges for fully priced intervals. |
+| **Day** | What did it cost? | A receipt and monthly history. See energy, grid limits, tariffs and the reason a day qualifies for a bill comparison. |
 | **Setup** | Is everything working? | Device health, Steuerbox pairing, discovery, notifications and the handover sheet. Open the operator details for certificate fingerprints. |
+
+Month reports how many recorded meter days have an equal-service comparison. Select a day to see its difference, including zero, or the first observation that prevented comparison. Only differences larger than the measured replay error contribute to the comparison total.
 
 ## Every watt says why
 
@@ -73,7 +75,7 @@ During a reduction, **Now** shows the grid limit and which devices share it. If 
 
 ## The box speaks first
 
-In **Setup**, enable notifications for the events you need and grant permission in a browser that supports Web Push. On iPhone, add the gateway to the Home Screen first. Delivery depends on a working push subscription and a reachable push service.
+In **Setup**, enable notifications for the events you need and grant permission in a browser that supports Web Push. On iPhone, add the gateway to the Home Screen first. A reduction and its end each open **Now** when tapped. Delivery depends on a working push subscription and a reachable push service.
 
 | Occasion | Sent | A tap opens |
 |---|---|---|
@@ -146,7 +148,7 @@ displaced after storage losses, for cycles returning to their initial measured
 charge. It is never added to the comparison total.
 
 <figure class="screens">
-  <img src="../../screens/month.png" width="260" alt="Day: the receipt and, under it, the month — a bar per day and the total saved" loading="lazy">
+  <img src="../../screens/month.png" width="260" alt="January electricity cost for three fully priced days, with equivalent service verified on zero days" loading="lazy">
   <img src="../../screens/goals.png" width="260" alt="Plan: goals for the car and the hot water" loading="lazy">
   <img src="../../screens/record.png" width="260" alt="The completion code for an installer's order system, bound to an order number" loading="lazy">
 </figure>

@@ -6,6 +6,8 @@
 //! box reads the same registers through the same crate, so a disagreement
 //! between this file and the driver is a disagreement with the specification.
 
+use super::storage::{self, Storage};
+use ems_core::prelude::Power;
 use sunspec::Group;
 use sunspec::models::model1::Model1;
 use sunspec::models::model103::Model103;
@@ -39,6 +41,7 @@ pub enum Refusal {
 #[derive(Debug, Clone)]
 pub struct Unit {
     words: Vec<u16>,
+    storage: Option<Storage>,
     /// Model id → (index of its body, length).
     bodies: Vec<(u16, usize, usize)>,
 }
@@ -54,7 +57,11 @@ impl Unit {
             words.resize(words.len() + usize::from(*len), 0);
         }
         words.extend([END_OF_CHAIN, 0]);
-        let mut unit = Self { words, bodies };
+        let mut unit = Self {
+            words,
+            bodies,
+            storage: None,
+        };
         let common = unit.body_mut(1);
         text(common, Model1::MN.offset, Model1::MN.length, "hems");
         text(common, Model1::MD.offset, Model1::MD.length, name);
@@ -90,10 +97,20 @@ impl Unit {
         Self::new("virtual meter", &[(203, Model203::LEN)])
     }
 
-    /// A battery: model 802.
+    /// A battery with telemetry and bounded watt-mode control.
     #[must_use]
-    pub fn battery() -> Self {
-        Self::new("virtual battery", &[(802, Model802::LEN)])
+    pub fn battery(rating: Power) -> Self {
+        let mut unit = Self::new(
+            "virtual battery",
+            &[
+                (802, Model802::LEN),
+                (704, storage::LEN),
+                (701, Model701::LEN),
+            ],
+        );
+        unit.body_mut(701)[usize::from(Model701::THROT_PCT.offset)] = u16::MAX;
+        unit.storage = Some(Storage::new(rating, unit.body_mut(704)));
+        unit
     }
 
     fn range(&self, id: u16) -> (usize, usize) {
@@ -135,13 +152,23 @@ impl Unit {
         Ok(self.words[self.span(address, usize::from(count))?].to_vec())
     }
 
-    /// Function code 16: only model 123's writable points, and only values an
-    /// inverter would take.
+    /// Apply one write to the unit's supported control points.
     ///
     /// # Errors
     /// [`Refusal`] for anything else — as a real inverter answers.
     pub fn write(&mut self, address: u16, values: &[u16]) -> Result<(), Refusal> {
         let span = self.span(address, values.len())?;
+        let (battery, length) = self.range(704);
+        if let Some(control) = &mut self.storage {
+            if span.start < battery || span.end > battery + length {
+                return Err(Refusal::Address);
+            }
+            return control.write(
+                &mut self.words[battery..battery + length],
+                span.start - battery,
+                values,
+            );
+        }
         let (start, len) = self.range(123);
         let writable = start..start + usize::from(Model123::V_AR_PCT_ENA.offset) + 1;
         if len == 0 || values.is_empty() || span.start < writable.start || span.end > writable.end {
@@ -158,6 +185,18 @@ impl Unit {
         }
         self.words = next;
         Ok(())
+    }
+
+    pub(super) fn battery_target(&self) -> Option<(Power, time::Duration)> {
+        let control = self.storage.as_ref()?;
+        Some((control.target?, control.remaining))
+    }
+
+    pub(super) fn advance_battery(&mut self, elapsed: time::Duration) {
+        let (start, len) = self.range(704);
+        if let Some(control) = &mut self.storage {
+            control.advance(&mut self.words[start..start + len], elapsed);
+        }
     }
 
     /// The ceiling the box has written, as a fraction of the rating: `None`
@@ -205,7 +244,8 @@ impl Unit {
     }
 
     /// The battery's state of charge, 0–1.
-    pub fn set_battery(&mut self, soc: f64) {
+    pub fn set_battery(&mut self, soc: f64, draw_w: f64) {
+        set(self.body_mut(701), Model701::W.offset, signed(-draw_w));
         let body = self.body_mut(802);
         set(body, Model802::SOC.offset, signed(soc * 100.0));
     }
@@ -276,8 +316,9 @@ mod tests {
             (-2_500, 1_000, 90_000)
         );
 
-        let mut battery = Unit::battery();
-        battery.set_battery(0.42);
+        let mut battery = Unit::battery(Power::from_kw(3.0));
+        battery.set_battery(0.42, 1234.0);
+        assert_eq!(Model701::parse(battery.body(701)).unwrap().w, Some(-1234));
         assert_eq!(Model802::parse(battery.body(802)).expect("802").soc, 42);
 
         let common = Model1::parse(meter.body(1)).expect("model 1");

@@ -34,7 +34,14 @@ def exercise(page, base):
         if url.path == "/v1/home":
             return route.fulfill(json={"site": "Garden house", "devices": [{"id": "wallbox"}]})
         if url.path == "/v1/days":
-            return route.fulfill(json={"days": []})
+            bill = {"energy_ct": 99, "fixed_ct": 1, "expected_intervals": 96, "priced_intervals": 96}
+            observed = {"metered_bill": bill, "imported_wh": 1000, "produced_wh": 0, "reductions": 0}
+            equal = {"with_plan_ct": 100, "without_plan_ct": 100, "error_ct": 1}
+            return route.fulfill(json={"days": [
+                {**observed, "day": "2026-11-21", "comparison": equal},
+                {**observed, "day": "2026-11-22", "comparison": None,
+                 "comparison_gap": {"at_unix_s": 1795343400, "reason": "unverified_service"}},
+            ]})
         point = url.path.rsplit("/", 1)[-1]
         assert url.path.startswith("/v1/series/") and point in outcomes, url.path
         query = parse_qs(url.query)
@@ -55,6 +62,13 @@ def exercise(page, base):
     page.route("**/v1/**", respond)
     page.clock.set_fixed_time(datetime.fromisoformat("2026-11-23T12:00:00+01:00"))
     page.goto(base + "/?lang=en#day")
+    expect(page.locator(".month")).to_contain_text("Equivalent service verified on 1 of 2 recorded days")
+    page.get_by_role("button", name="2026-11-21").press("Enter")
+    receipt = page.locator(".receipt")
+    expect(receipt).to_contain_text("€0.00 · Within model error")
+    page.get_by_role("button", name="2026-11-22").press("Enter")
+    expect(receipt).to_contain_text("Equivalent service unverified")
+    expect(receipt).to_contain_text("GMT+1")
     inspector = page.locator("#gridHistory")
     summary = inspector.locator("summary")
     summary.focus()

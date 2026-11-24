@@ -11,6 +11,7 @@ publish = false
 openadr = ["dep:openadr", "dep:rust_decimal", "dep:reqwest", "dep:uuid"]
 
 [dependencies]
+ems-core = { workspace = true }
 ems-sim = { workspace = true, features = ["peak"] }
 openadr = { workspace = true, features = ["vtn"], optional = true }
 reqwest = { workspace = true, features = ["query"], optional = true }

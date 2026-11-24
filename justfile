@@ -18,8 +18,28 @@ default:
 # runs on a clone and a toolchain.
 #
 # ✅ Everything CI runs, in CI order
-ci: fmt-check lint purity test guards publishable deny doc
+ci: portal-build fmt-check lint purity test guards publishable deny doc
     @echo "✅ all checks passed"
+
+# Build the static customer app with its pinned frontend toolchain.
+portal-build:
+    npm ci --prefix web/portal --no-audit
+    npm run --prefix web/portal lint
+    npm run --prefix web/portal build
+
+# Verify the portal with a disposable PostgreSQL and simulated OCPP outlet.
+portal-trial: portal-build
+    cargo build --locked -p portald -p obsd -p hemsd --features hemsd/house
+    uv run xtask/customer_portal.py target/debug/hemsd target/debug/obsd target/debug/portald
+
+# Reconcile winter and both Berlin clock-change days over Modbus TCP.
+house-meter-trial:
+    cargo test --locked -p hemsd --features house --lib berlin_meter_days_reconcile_on_the_wire -- --nocapture
+
+# Drive the virtual battery over model 704 and observe the connection meter.
+house-storage-trial:
+    cargo test --locked -p hemsd --features house --lib signed_battery_power_reverts_on_the_wire
+    cargo test --locked -p hemsd --features house --lib gateway_storage_trial
 
 # Exercise read load while the loopback gateway controls the virtual house.
 history-trial:

@@ -10,7 +10,7 @@
 use metering::DayBoundary;
 use time::{Date, OffsetDateTime};
 
-pub use metering::time::calendar::to_berlin;
+pub use metering::time::calendar::{FIRST_YEAR, LAST_YEAR, to_berlin};
 pub use metering::time::holiday::Bundesland;
 
 const IN_RANGE: &str =

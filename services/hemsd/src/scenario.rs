@@ -10,6 +10,8 @@
 //! network operator reduces us at teatime on a January Thursday" is a question
 //! with a repeatable answer.
 
+pub mod service;
+
 use std::collections::BTreeMap;
 
 use ems_core::prelude::*;
@@ -238,7 +240,7 @@ pub struct Scenario {
     /// account of how little it knows (D187).
     pub warm_up_days: usize,
     /// The household's declared annual consumption without heat pump, car or
-    /// battery, kWh — what scales the H25 prior when it is known. `None` on
+    /// battery, kWh — what scales the cold-start prior when it is known. `None` on
     /// every reference day: a household asked at commissioning may not know,
     /// and the reference days measure the box that was not told.
     pub household_kwh_per_year: Option<f64>,
@@ -839,6 +841,8 @@ fn summer_prices() -> Vec<i64> {
 )]
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct DayResult {
+    /// Matched-service verdict and tariff bill from both simulated households.
+    pub service_trial: Option<service::Trial>,
     /// Energy drawn from the grid, kWh.
     pub imported_kwh: f64,
     /// Energy fed into the grid, kWh.
@@ -1221,8 +1225,7 @@ pub struct DayResult {
     pub roof_correction: f64,
     /// How many days of metering the forecasts rest on.
     pub history_days: usize,
-    /// What the load forecast leans on where the household's own history is
-    /// thin: BDEW's H25, and how it was scaled. `None` only with no prior.
+    /// Source of the scale for the synthetic household load profile, when available.
     pub load_prior: Option<ems_forecast::PriorBasis>,
     /// The share of the day's plan the prior still had a say in, 0–1. Zero on
     /// a box that has learned its household; one on its first evening.
@@ -1582,7 +1585,8 @@ fn run_with(
     let ids = ReferenceIds::of(&household)?;
     let site = &household.site;
     let start = scenario.start();
-    let day = Horizon::new(start, 96);
+    let end = ems_core::calendar::day_end_utc(scenario.date);
+    let day = Horizon::new(start, usize::try_from((end - start).whole_minutes() / 15)?);
 
     // ── The physical house ──────────────────────────────────────────────────
     // The roof the *simulator* runs is the roof the site model describes, down to
@@ -1839,7 +1843,8 @@ fn run_with(
     let mut ceiling_since: Option<OffsetDateTime> = None;
     let mut previous_ceiling: Option<Power> = None;
 
-    while now < start + Duration::days(1) {
+    let mut managed_trace = Vec::new();
+    while now < end {
         // The Steuerbox speaks.
         for command in steuerbox.poll(now) {
             apply_to_the_machine(&mut lpc, command, now);
@@ -2570,6 +2575,19 @@ fn run_with(
         let outside_band = (house.heat_pump.comfort_min_c - building.indoor_c())
             .max(building.indoor_c() - house.heat_pump.comfort_max_c)
             .max(0.0);
+        managed_trace.push(service::Frame {
+            at: now,
+            grid,
+            outside_band_k: outside_band,
+            water_short: Energy::from_kwh(result.cold_water_kwh),
+            vehicle: evse.vehicle.as_ref().map(|v| v.stored),
+            battery: battery.stored,
+            tank: tank.stored,
+            programme_done: dishwasher
+                .as_ref()
+                .is_some_and(ems_sim::ApplianceSim::is_finished),
+            limited: limits.steuve_ceiling.is_some(),
+        });
         result.discomfort_kelvin_hours += outside_band * hours;
 
         if let Some(price) = prices.at(slot) {
@@ -2843,10 +2861,12 @@ fn run_with(
         .map_or(0.0, |(v, ev)| {
             -(v.stored - ev.energy_target).max(Energy::ZERO).kwh() * mean_import
         });
+    let autonomous_trace;
     (
         result.baseline,
         result.baseline_shared_kwh,
         result.baseline_energy_eur_netted,
+        autonomous_trace,
     ) = baseline_cost(scenario, &weather, &array, &prices, site, site.location);
 
     // ── § 42c: what the community actually allocated this member ────────────
@@ -2860,6 +2880,14 @@ fn run_with(
     result.feed_in_over_minutes = feed_in_over.whole_minutes();
 
     result.quarter_hours = registers.into_values().collect();
+    result.service_trial = Some(service::close(
+        scenario,
+        &managed_trace,
+        &autonomous_trace,
+        &result.quarter_hours,
+        &prices,
+        tank_deadline,
+    ));
 
     // The same bill, netted per quarter hour before it is priced — what a
     // published comparison that evaluates at its own scheduling step reports.
@@ -2927,7 +2955,7 @@ fn run_with(
         .ratio_at(Slot::containing(start + Duration::hours(12)));
     result.history_days = learned.days;
     result.load_prior = prior.as_ref().map(ems_forecast::Prior::basis);
-    result.load_prior_share = learned.load.prior_share(Horizon::new(start, 96));
+    result.load_prior_share = learned.load.prior_share(day);
     result.roof_health = learned.health.verdict();
 
     // ── Is the household on the right network-charge module? ────────────────
@@ -3138,7 +3166,7 @@ fn unmanaged_wallbox(
         let delivered = Energy::new(p.get() * hours * THREE_PHASE_EFFICIENCY).min(*car_remaining);
         *car_remaining -= delivered;
         *car_stored += delivered;
-        p
+        Power::new(delivered.get() / (hours * THREE_PHASE_EFFICIENCY))
     } else {
         Power::ZERO
     };
@@ -3339,7 +3367,7 @@ fn baseline_cost(
     prices: &PriceStack,
     site: &Site,
     location: GeoPoint,
-) -> (CostBreakdown, f64, f64) {
+) -> (CostBreakdown, f64, f64, Vec<service::Frame>) {
     let house = Reference::of(&scenario.config).expect("run() has already validated this");
     // The unmanaged household's own quarter-hour registers, kept only so the
     // same day can be priced the netted way for *both* sides. A saving is a
@@ -3366,7 +3394,7 @@ fn baseline_cost(
     });
     // Tracked as an absolute rather than derived from `car_remaining`, which is
     // zeroed at the departure so that the shortfall is charged once.
-    let mut car_stored = scenario.ev.map_or(Energy::ZERO, |e| e.energy_now);
+    let mut car_stored = scenario.ev.map_or(Energy::from_kwh(18.0), |e| e.energy_now);
     let mut building = BuildingSim {
         nominal_electrical: house.heat_pump.power,
         cooling_electrical: house.heat_pump.cooling_electrical.unwrap_or(Power::ZERO),
@@ -3461,7 +3489,10 @@ fn baseline_cost(
             .max(baseline_battery.soc_min.fraction());
     let mut now = start;
 
-    while now < start + Duration::days(1) {
+    let mut trace = Vec::new();
+    let mut water_short = Energy::ZERO;
+    let end = ems_core::calendar::day_end_utc(scenario.date);
+    while now < end {
         let slot = Slot::containing(now);
         // The **same day**, down to the cloud at 12:19. A baseline run against
         // a different realisation than the optimised day is not a comparison at
@@ -3589,6 +3620,20 @@ fn baseline_cost(
         let outside = (house.heat_pump.comfort_min_c - building.indoor_c())
             .max(building.indoor_c() - house.heat_pump.comfort_max_c)
             .max(0.0);
+        water_short += dhw_short;
+        trace.push(service::Frame {
+            at: now,
+            grid,
+            outside_band_k: outside,
+            water_short,
+            vehicle: Some(car_stored),
+            battery: baseline_battery.stored,
+            tank: tank.stored,
+            programme_done: dishwasher
+                .as_ref()
+                .is_some_and(ems_sim::ApplianceSim::is_finished),
+            limited: device_ceiling.is_some(),
+        });
         cost.discomfort_eur += outside * hours * DISCOMFORT_EUR_PER_KELVIN_HOUR;
         now += step;
     }
@@ -3668,7 +3713,7 @@ fn baseline_cost(
             })
         })
         .sum();
-    (cost, baseline_shared_kwh, energy_eur_netted)
+    (cost, baseline_shared_kwh, energy_eur_netted, trace)
 }
 
 pub(crate) fn household_load(slot: Slot) -> Power {

@@ -1,6 +1,8 @@
 mod charging;
+mod comfort;
 mod community;
 mod demo;
+mod feeder;
 
 use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
@@ -35,8 +37,8 @@ async fn main() -> anyhow::Result<()> {
             ems_service::edge::serve_demo(community::router(viewer), listen).await
         }
         Command::Demo { listen } => {
-            ems_service::edge::serve_demo(demo::router(charging::Recording::load().await?), listen)
-                .await
+            let (bank, comfort) = tokio::try_join!(charging::Recording::load(), comfort::router())?;
+            ems_service::edge::serve_demo(demo::router(bank).merge(comfort), listen).await
         }
     }
 }

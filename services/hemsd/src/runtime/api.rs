@@ -474,7 +474,7 @@ type SheetError = (axum::http::StatusCode, String);
 async fn tariff_status(
     State(local): State<Local>,
 ) -> Result<Json<crate::price_sheet::Status>, SheetError> {
-    use crate::price_sheet::{Schedule, Status, Terms};
+    use crate::price_sheet::Schedule;
     let slot = ems_core::prelude::Slot::containing(time::OffsetDateTime::now_utc());
     let schedule = match &local.days {
         Some(store) => Schedule::load(&*store.lock().await).map_err(|_| {
@@ -485,21 +485,16 @@ async fn tariff_status(
         })?,
         None => Schedule::default(),
     };
-    let next = schedule.next(slot);
     let prices = local.home.prices.read().await;
-    let price = prices.as_ref().and_then(|p| p.at(slot));
-    Ok(Json(Status {
-        can_import: local.days.is_some(),
-        active: schedule.applicable(slot).map(Terms::from),
-        expired: schedule
-            .previous(slot)
-            .filter(|item| !item.sheet.covers(slot.local_date()))
-            .map(Terms::from),
-        next: next.map(|(_, item)| Terms::from(item)),
-        next_at: next.map(|(start, _)| start),
-        price_ct: price.map(|p| p.import_ct.normalize().to_string()),
-        estimated: price.is_some_and(|p| !p.price_known),
-    }))
+    let fallback = local.settings.as_ref().and_then(|settings| {
+        rust_decimal::Decimal::try_from(settings.tariff.fallback_ct_per_kwh).ok()
+    });
+    Ok(Json(schedule.status(
+        slot,
+        prices.as_ref(),
+        fallback,
+        local.days.is_some(),
+    )))
 }
 
 async fn preview_tariff(

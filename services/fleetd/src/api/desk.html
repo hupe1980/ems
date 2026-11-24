@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Operator desk · EMS</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: #eff3f1;
+      color: #152f2b;
+      font:
+        100%/1.5 system-ui,
+        sans-serif;
+    }
+    main {
+      max-width: 72rem;
+      margin: auto;
+      padding: clamp(1rem, 4vw, 3rem);
+    }
+    header,
+    .toolbar,
+    nav,
+    .identity {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .identity {
+      border-bottom: 1px solid #aabdb7;
+      padding-bottom: 1rem;
+    }
+    .identity b {
+      font-size: 1.5rem;
+    }
+    .identity a {
+      color: #17483b;
+    }
+    h1 {
+      font-size: clamp(2.5rem, 6vw, 4rem);
+      letter-spacing: -0.06em;
+      margin: 0.6em 0 0.25em;
+    }
+    button,
+    input,
+    select {
+      font: inherit;
+      padding: 0.55rem 0.75rem;
+      border: 1px solid #91a69c;
+      border-radius: 0.35rem;
+      background: #fff;
+      color: inherit;
+      max-width: 100%;
+    }
+    button,
+    summary {
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid #ae6a23;
+    }
+    .toolbar {
+      justify-content: flex-start;
+      margin: 1rem 0;
+    }
+    .toolbar label {
+      display: grid;
+      gap: 0.2rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    article {
+      padding: 0.85rem 1rem;
+      background: white;
+      border-bottom: 1px solid #d3dfd9;
+    }
+    summary {
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+    .signals {
+      display: flex;
+      gap: 0.6rem 2rem;
+      flex-wrap: wrap;
+      color: #40594f;
+      font-size: 0.92rem;
+      margin: 0.4rem 0 0;
+    }
+    .attention {
+      color: #8b4508;
+    }
+    nav {
+      margin: 1rem 0;
+    }
+    #summary {
+      font-size: 1.2rem;
+    }
+    li {
+      overflow-wrap: anywhere;
+    }
+    [hidden] {
+      display: none !important;
+    }
+    .scopes {
+      border: 0;
+      margin: 0;
+      padding: 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      background: #e2eae5;
+      border-radius: 0.65rem;
+      align-self: flex-end;
+    }
+    .scopes label {
+      position: relative;
+      cursor: pointer;
+    }
+    .scopes input,
+    .sr-only {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      clip-path: inset(50%);
+      overflow: hidden;
+    }
+    .scopes span {
+      display: grid;
+      align-content: center;
+      min-height: 44px;
+      padding: 0 0.65rem;
+      border-radius: 0.4rem;
+    }
+    .scopes input:checked + span {
+      background: #204d3b;
+      color: white;
+    }
+    .scopes input:focus-visible + span {
+      outline: 3px solid #ae6a23;
+    }
+    .signals span {
+      font-variant-numeric: tabular-nums;
+    }
+    .receipts {
+      list-style: none;
+      padding: 0;
+      margin: 0.7rem 0;
+    }
+    .receipts li {
+      display: grid;
+      gap: 0.15rem;
+      padding: 0.6rem 0.8rem;
+      border-inline-start: 2px solid #9eb5a8;
+      font-size: 0.9rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .receipts span {
+      color: #40594f;
+    }
+  </style>
+  <main>
+    <div class="identity">
+      <b>EMS</b><span>Fleet operations</span
+      ><a href="/oauth2/sign_out">Sign out</a>
+    </div>
+    <header>
+      <h1>Operator desk</h1>
+      <button id="refresh">Refresh desk</button>
+    </header>
+    <p id="summary" aria-live="polite"></p>
+    <div class="toolbar">
+      <label>Find a site<input type="search" id="search" /></label>
+      <fieldset class="scopes">
+        <legend class="sr-only">Site status</legend>
+        <label
+          ><input type="radio" name="scope" value="all" checked /><span
+            >All sites</span
+          ></label
+        >
+        <label
+          ><input type="radio" name="scope" value="attention" /><span
+            >Needs attention</span
+          ></label
+        >
+        <label
+          ><input type="radio" name="scope" value="current" /><span
+            >Current</span
+          ></label
+        >
+      </fieldset>
+    </div>
+    <section aria-label="Fleet sites" id="sites"></section>
+    <button id="reset" hidden>Clear search and filters</button>
+    <nav aria-label="Site pages">
+      <button id="prev">Previous</button
+      ><span id="position" aria-live="polite"></span
+      ><button id="next">Next</button>
+    </nav>
+  </main>
+  <script>
+    const el = (id) => document.getElementById(id);
+    const add = (parent, tag, value) => {
+      const n = document.createElement(tag);
+      n.textContent = value;
+      parent.append(n);
+      return n;
+    };
+    const age = (s) =>
+      s === null
+        ? ""
+        : s < 120
+          ? s + " s"
+          : s < 7200
+            ? Math.floor(s / 60) + " min"
+            : Math.floor(s / 3600) + " h";
+    const clock = new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "medium",
+      timeZone: "UTC",
+    });
+    const stamp = (s) =>
+      s === null ? "Unknown" : clock.format(new Date(s * 1000));
+    const size = 15;
+    let rows = [],
+      page = 0,
+      epoch = 0;
+    function clear() {
+      epoch++;
+      rows = [];
+      page = 0;
+      el("summary").textContent = "";
+      render();
+    }
+    async function get(path) {
+      const r = await fetch(path, { cache: "no-store", redirect: "error" });
+      if (r.status === 503 || r.status === 502 || r.status === 504)
+        throw new DOMException(
+          "Fleet temporarily unavailable. Try refreshing.",
+          "NetworkError",
+        );
+      if (!r.ok)
+        throw Error(
+          r.status === 401 || r.status === 403
+            ? "Your session has ended or access has been withdrawn."
+            : "Fleet unavailable. Try refreshing.",
+        );
+      return r.json();
+    }
+    function render() {
+      const query = el("search").value.toLowerCase(),
+        filter = document.querySelector('input[name="scope"]:checked').value;
+      const shown = rows.filter(
+        (r) =>
+          r.site.toLowerCase().includes(query) &&
+          (filter === "all" ||
+            (filter === "current") === (r.attention === "Current")),
+      );
+      const start = page * size,
+        sites = el("sites");
+      sites.replaceChildren();
+      for (const r of shown.slice(start, start + size)) {
+        const card = add(sites, "article", ""),
+          details = add(card, "details", ""),
+          summary = add(details, "summary", r.site + " · ");
+        const priority = add(summary, "span", r.attention);
+        if (r.attention !== "Current") priority.className = "attention";
+        const metrics = add(card, "p", "");
+        metrics.className = "signals";
+        for (const [label, key] of [
+          ["Gateway", "gateway"],
+          ["Feeder", "feeder"],
+          ["Report", "report"],
+        ])
+          add(
+            metrics,
+            "span",
+            label +
+              " · " +
+              [r[key].state, age(r[key].age_s)].filter(Boolean).join(" "),
+          );
+        let loaded = false;
+        const status = add(details, "div", "");
+        status.setAttribute("role", "status");
+        async function loadHistory() {
+          if (!details.open || loaded) return;
+          loaded = true;
+          status.textContent = "Loading recent check-ins…";
+          const current = epoch;
+          try {
+            const [detail] = await get(
+              "/v1/desk?site=" + encodeURIComponent(r.site),
+            );
+            if (current !== epoch) return;
+            status.replaceChildren();
+            const history = detail?.history ?? [];
+            if (!history.length) add(details, "p", "No check-ins received.");
+            else {
+              const list = add(details, "ol", "");
+              list.className = "receipts";
+              list.setAttribute("aria-label", "Recent check-ins in UTC");
+              for (const h of history) {
+                const item = add(list, "li", "");
+                add(
+                  item,
+                  "strong",
+                  "Received " + stamp(h.received_at) + " UTC",
+                );
+                add(item, "span", "Feeder · " + stamp(h.feeder_at));
+                add(item, "span", "Report · " + stamp(h.report_at));
+              }
+            }
+          } catch (error) {
+            if (current !== epoch) return;
+            if (error.name === "NetworkError") {
+              status.textContent =
+                "Recent check-ins are temporarily unavailable. ";
+              const retry = add(status, "button", "Retry history");
+              retry.onclick = () => {
+                loaded = false;
+                summary.focus();
+                void loadHistory();
+              };
+            } else {
+              clear();
+              el("summary").textContent = error.message;
+            }
+          }
+        }
+        details.addEventListener("toggle", loadHistory);
+      }
+      el("position").textContent = shown.length
+        ? start +
+          1 +
+          "–" +
+          Math.min(start + size, shown.length) +
+          " of " +
+          shown.length
+        : "No matching sites";
+      el("reset").hidden = !!shown.length || (!query && filter === "all");
+      document.querySelector("nav").hidden = shown.length <= size;
+      if (!shown.length && rows.length)
+        add(
+          sites,
+          "p",
+          query
+            ? "No sites match your search in this view."
+            : "No sites in this view.",
+        );
+      el("prev").disabled = !page;
+      el("next").disabled = start + size >= shown.length;
+    }
+    async function refresh() {
+      clear();
+      const current = epoch;
+      el("summary").textContent = "Loading fleet…";
+      try {
+        const result = await get("/v1/desk");
+        if (epoch !== current) return;
+        rows = result;
+        const count = rows.filter((row) => row.attention !== "Current").length;
+        el("summary").textContent =
+          `${count} ${count === 1 ? "needs" : "need"} attention · ${rows.length} enrolled · Updated ${new Date().toLocaleTimeString()}`;
+        render();
+      } catch (error) {
+        if (epoch === current) el("summary").textContent = error.message;
+      }
+    }
+    el("refresh").onclick = refresh;
+    el("search").oninput = document.querySelector(".scopes").onchange = () => {
+      page = 0;
+      render();
+    };
+    el("reset").onclick = () => {
+      el("search").value = "";
+      document.querySelector('input[value="all"]').checked = true;
+      page = 0;
+      render();
+      el("search").focus();
+    };
+    el("prev").onclick = () => {
+      page--;
+      render();
+    };
+    el("next").onclick = () => {
+      page++;
+      render();
+    };
+    window.addEventListener("pagehide", clear);
+    window.addEventListener("pageshow", refresh);
+  </script>
+</html>

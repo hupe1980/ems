@@ -431,6 +431,7 @@ async fn a_restart_drops_expired_deliveries_and_a_reset_erases_the_subscription(
         forecast: None,
         metered_bill: None,
         comparison: None,
+        comparison_gap: None,
         arbitrage: None,
         imported_wh: 19,
         produced_wh: 0,

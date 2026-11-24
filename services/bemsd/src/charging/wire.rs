@@ -21,14 +21,14 @@ use ocpp_kit::{
 use std::{
     collections::BTreeMap,
     net::Ipv4Addr,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::mpsc, time::timeout};
 
 type Inbox = mpsc::Sender<MeterValuesRequest>;
 
-struct CentralSystem(DateTime);
+struct CentralSystem(Arc<Mutex<DateTime>>);
 
 impl Handler for CentralSystem {
     fn on_request(
@@ -40,7 +40,7 @@ impl Handler for CentralSystem {
             match ctx.decode::<CsRequest>(&req)? {
                 CsRequest::BootNotification(_) => ctx.reply(&BootNotificationResponse::new(
                     RegistrationStatus::Accepted,
-                    self.0,
+                    *self.0.lock().expect("fixture clock"),
                     300,
                 )),
                 CsRequest::MeterValues(reading) => {
@@ -117,11 +117,8 @@ fn station_profile(at: DateTime, watts: i32) -> SetChargingProfileRequest {
     SetChargingProfileRequest::new(0, profile)
 }
 
-pub(super) async fn run(script: Script) -> Result<Recording> {
-    let profile = station_profile(
-        script.timeline.requested_at,
-        super::BANK_LIMIT_KW * 1000 / 2,
-    );
+pub(super) async fn run(script: Script, bank_kw: i32) -> Result<Recording> {
+    let profile = station_profile(script.timeline.requested_at, bank_kw * 1000 / 2);
     record_bank(script, profile).await
 }
 
@@ -133,8 +130,9 @@ async fn record_bank(script: Script, profile: SetChargingProfileRequest) -> Resu
         BasicAuthPassword::generate(Version::V1_6)?,
     ];
     let expected = keys.clone();
-    let (west1, rx1) = mpsc::channel(1);
-    let (west2, rx2) = mpsc::channel(1);
+    let (west1, mut rx1) = mpsc::channel(1);
+    let (west2, mut rx2) = mpsc::channel(1);
+    let clock = Arc::new(Mutex::new(script.timeline.requested_at));
     let csms = Csms::builder()
         .bind(addr)
         .versions([Version::V1_6])
@@ -156,7 +154,7 @@ async fn record_bank(script: Script, profile: SetChargingProfileRequest) -> Resu
             };
             std::future::ready(verdict)
         })
-        .handler(CentralSystem(script.timeline.requested_at))
+        .handler(CentralSystem(Arc::clone(&clock)))
         .build()?;
     let central = csms.handle();
     let url = format!("ws://{addr}/ocpp");
@@ -181,14 +179,38 @@ async fn record_bank(script: Script, profile: SetChargingProfileRequest) -> Resu
         };
         let [key1, key2] = keys;
         let west1 = start("West-01", key1)?;
-        let west2 = start("West-02", key2)?;
+        let west2 = start("West-02", key2.clone())?;
         let (a, b) = tokio::try_join!(
-            record(&central, west1, rx1, script.west_01, profile.clone()),
-            record(&central, west2, rx2, script.west_02, profile),
+            record(&central, &west1, &mut rx1, &script.west_01, profile.clone()),
+            record(&central, &west2, &mut rx2, &script.west_02, profile),
+        )?;
+
+        // Rehearse a power cycle after the original ramp-down. Only West-02
+        // loses its session and volatile limit. West-01 remains on its socket.
+        west2.0.shutdown(Duration::from_millis(250)).await;
+        while central.sessions().await.contains(west2.0.identity()) {
+            tokio::task::yield_now().await;
+        }
+        *clock.lock().expect("fixture clock") = script.timeline.rejoined_at;
+        let (returned, _) = start("West-02", key2)?;
+        boot(&returned).await?;
+        let mut buffered = script.west_02.initial.clone();
+        buffered.received_at = script.timeline.buffered_at;
+        exchange(&returned, &mut rx2, buffered.clone()).await?;
+        let buffered = exchange(&returned, &mut rx2, buffered).await?;
+        let mut fresh = script.west_01.after_rejoin;
+        if let Some(watts) = west1.1.get() {
+            meter_demand(&mut fresh.payload, *watts)?;
+        }
+        let (first, second) = tokio::try_join!(
+            exchange(&west1.0, &mut rx1, fresh),
+            exchange(&returned, &mut rx2, script.west_02.after_rejoin)
         )?;
         Ok(Recording {
             timeline: script.timeline,
             traces: [a, b],
+            buffered,
+            fresh: [first, second],
         })
     };
     let result = tokio::select! {
@@ -207,13 +229,7 @@ async fn record_bank(script: Script, profile: SetChargingProfileRequest) -> Resu
     result
 }
 
-async fn record(
-    central: &CsmsHandle,
-    (station, applied): (Handle, AppliedLimit),
-    mut inbox: mpsc::Receiver<MeterValuesRequest>,
-    script: StationScript,
-    profile: SetChargingProfileRequest,
-) -> Result<Trace> {
+async fn boot(station: &Handle) -> Result<()> {
     let boot = station
         .call(BootNotificationRequest::new("EMS", "Virtual wallbox"))
         .await
@@ -223,6 +239,17 @@ async fn record(
         "station registration refused"
     );
     station.wait_ready().await?;
+    Ok(())
+}
+
+async fn record(
+    central: &CsmsHandle,
+    (station, applied): &(Handle, AppliedLimit),
+    inbox: &mut mpsc::Receiver<MeterValuesRequest>,
+    script: &StationScript,
+    profile: SetChargingProfileRequest,
+) -> Result<Trace> {
+    boot(station).await?;
     let response = central
         .call(station.identity(), profile)
         .await
@@ -232,7 +259,7 @@ async fn record(
         payload: response,
     };
     // The first sample is taken during ramp-down, before the accepted limit takes effect.
-    let initial = exchange(&station, &mut inbox, script.initial).await?;
+    let initial = exchange(station, inbox, script.initial.clone()).await?;
     let west2 = station.identity().as_str() == "West-02";
     let mut finals = BTreeMap::new();
     // Independent continuations from the first observation. A missing station sends no CALL.
@@ -269,7 +296,7 @@ async fn record(
                 meter_demand(&mut event.payload, watts)?;
             }
         }
-        finals.insert(outcome, exchange(&station, &mut inbox, event).await?);
+        finals.insert(outcome, exchange(station, inbox, event).await?);
     }
     Ok(Trace {
         profile_response,

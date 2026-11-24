@@ -141,7 +141,9 @@ impl Day {
     /// The reference day's price in the slot the house lives at `real`.
     fn price_at(&self, real: OffsetDateTime) -> i64 {
         let lived = self.clock.scenario_at(real);
-        let slot = (lived - self.midnight).whole_minutes().div_euclid(15);
+        let slot = (Slot::containing(lived).start() - self.midnight)
+            .whole_minutes()
+            .div_euclid(15);
         let n = i64::try_from(self.prices_ct.len()).unwrap_or(1).max(1);
         let index = usize::try_from(slot.rem_euclid(n)).unwrap_or(0);
         self.prices_ct.get(index).copied().unwrap_or(0)

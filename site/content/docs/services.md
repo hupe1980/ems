@@ -14,7 +14,8 @@ The household gateway can enforce local limits without a fleet connection. Insta
 | `tariffd` | Day-ahead prices, carbon intensity and published network charge windows | Public market inputs |
 | `forecastd` | Quarter-hour weather and a production estimate for a supplied geometry | Weather for a configured location |
 | `histd` | Meter registers, grid-control evidence and settlement exports | Authorized household site |
-| `fleetd` | Enrolment, desired and running configuration, signed releases and operator roster | Credential and tenant |
+| `fleetd` | Enrolment, desired and running configuration, signed releases and gateway attention desk | Credential and tenant |
+| `portald` | Household energy history and charging receipts | Current household |
 | `obsd` | Signed day reports, forecast quality and operating incidents | Authorized reporting site or operator |
 | `agentd` | An advisory view across permitted services | Proposals for review |
 
@@ -36,9 +37,19 @@ A register has three times: the start of its measurement interval, the gatewayâ€
 
 ## Fleet administration and monitoring
 
-`fleetd` distinguishes configuration offered to a gateway from configuration the device reports as running. Operators can inspect their tenantâ€™s fleet and release manifests. Gateways verify signed release material before applying it. [Trust and updates](@/docs/security.md).
+`fleetd` distinguishes configuration offered to a gateway from configuration the device reports as running. Sign in to `/desk` with your organization account. Filter to sites needing attention or search by site name. Expand a site to see the last 32 check-ins. Gateway contact, feeder readings and gateway-reported closures each have their own clock. A missing timestamp appears as unknown. Install signed releases through the installer or operating system. [Trust and updates](@/docs/security.md).
+
+<a href="../../screens/operator-desk.png"><img src="../../screens/operator-desk.png" width="800" style="max-width:100%;height:auto" loading="lazy" alt="A fleet of 100 sites filtered to the one with a stale feeder reading"></a>
 
 `obsd` authenticates signed day reports before accepting them. Fleet summaries keep outcome counts alongside averages. A single missed reduction warrants investigation even if the fleet-wide average is high. Coverage and missing quantities affect which sites can contribute to a cost or forecast metric. [Agent access](@/docs/agents.md).
+
+### Household departure receipt
+
+Sign in to `/portal` with your household account. Choose **Grid import**, **Grid export** or **Generation** and a 7- or 30-day period ending on the latest report. Select a date in the chart to see its reading. **No report** marks a missing day. Open **Daily readings** for the underlying kWh values. [Configure browser sign-in](https://github.com/hupe1980/ems/tree/main/deploy/oidc).
+
+The reference household requests 6.00 kWh. When the outlet closes at 4.75 kWh delivered, the portal shows **1.25 kWh short**. Expand **Outlet meter readings** for the start, reconnection and departure registers, or download the receipt as JSON. If the departure reading is missing, the receipt shows what was confirmed at reconnection. [Rehearse a departure](https://github.com/hupe1980/ems/tree/main/services/portald).
+
+<a href="../../screens/household-portal.png"><img src="../../screens/household-portal.png" width="560" style="max-width:100%;height:auto" loading="lazy" alt="Household portal showing a week of energy history and a charging receipt 1.25 kWh short"></a>
 
 ## Running the fleet locally
 

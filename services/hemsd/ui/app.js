@@ -7,6 +7,7 @@
 // A Rust test reads this file and fails if a key has no sentence.
 const T = {
   de: {
+    packControl: "Speicherregelung", packPending: "Bestätigung ausstehend", packRequested: "Angefordert", packConfirmed: "Am Speicher bestätigt", packMeasured: "Gemessen", packAutonomous: "Eigenverbrauch aktiv", packUnknown: "Unbekannt", packLast: "Zuletzt bestätigt", packCharge: "Laden", packDischarge: "Entladen",
     supply: "Stromvertrag", supplyExpired: "Preisblatt abgelaufen", supplyNewKey: "Der Lieferant verwendet einen anderen Schlüssel.", supplyFile: "Signiertes Preisblatt auswählen", supplyLocal: "Konfigurierter Tarif · kein signiertes Preisblatt", supplyNext: "Vorgemerkt", supplyCompare: "Vergleichen Sie diesen Fingerabdruck mit der Angabe Ihres Lieferanten.", supplyUse: "Vertrag übernehmen", supplyCancel: "Verwerfen", supplyFrom: "Wirksam ab", supplyPeriod: "Preisjahr", supplyEnd: "Gültig bis", supplyNoPrice: "Marktpreis für diese Viertelstunde ausstehend", supplySaved: "Vertrag vorgemerkt.", supplyLarge: "Das Preisblatt ist zu groß.", supplyEstimate: "Schätzpreis", supplyCurrent: "Aktueller Preis", supplySign: "Schlüssel", supplyUnknown: "Die Bestätigung wurde unterbrochen. Prüfen Sie den vorgemerkten Vertrag.",
     matterTitle: "Matter-Gerät", matterPoint: "Endpunkt", matterNode: "Knoten", matterTime: "Zuletzt gelesen", matter_waiting: "Erste Messung ausstehend", matter_current: "Aktuelle Wirkleistung", matter_unknown: "Messwert unbekannt", matter_stale: "Letzte Messung · veraltet", matter_unavailable: "Messung nicht verfügbar",
     "tab.now": "Jetzt", "tab.plan": "Plan", "tab.day": "Tag", "tab.setup": "Einrichtung",
@@ -50,7 +51,7 @@ const T = {
     receipt: "Kassenbon", bill: "Stromrechnung", wear: "Speicherverschleiß", comfort: "Komfortverzicht", stores: "Speicherstand-Ausgleich", cost: "Kosten des Tages",
     without: "Gleiches Haus, gleicher Speicher, ohne hems", saved: "Gespart", onBill: "…davon auf der Rechnung",
     bought: "Gekauft", made: "Vom Dach", reductionMin: "§ 14a-Dimmung", respected: "Dimmung eingehalten", feedRespected: "Einspeisegrenze eingehalten", yes: "ja", no: "nein",
-    method: "So wird gerechnet", methodText: "Derselbe Tag läuft zweimal im selben Haus mit demselben Speicher: einmal mit Plan, einmal mit einer Eigenverbrauchsregelung. Die Differenz ist die Ersparnis. Endet ein Tag mit leererem Speicher, zählt das Nachladen mit. Verschleiß und Komfort haben einen Preis, damit eine mit kaltem Zimmer oder müdem Akku erkaufte Ersparnis nicht zählt.",
+    method: "So wird gerechnet", methodText: "Beide simulierten Haushalte erleben denselben Tag. Verglichen werden die Stromrechnungen bei gleicher Versorgung. Abfahrt, Raumtemperatur, Warmwasser und verbleibende Speicherenergie zählen mit.",
     gridHistory: "Netzanschluss · Viertelstunde prüfen", historyDate: "Tag in Berlin", historyQuarter: "Viertelstunde ab", historyAverage: "Mittlere Leistung", historyMin: "Minimum", historyMax: "Maximum", historySamples: "Aufgezeichnete Messwerte", historyUnknown: "Nicht verfügbar", historySign: "Positiv bedeutet Bezug, negativ Einspeisung.", historyLoading: "Messwerte werden geladen …", historyEmpty: "Für diese Viertelstunde liegt kein Messwert vor.", historyOff: "Die lokale Messwerthistorie ist nicht eingerichtet.", historyFailure: "Die Messwerte konnten nicht geladen werden.", historyBusy: "Die Box bearbeitet gerade eine andere Historienabfrage.", historyRetry: "Erneut versuchen",
     export: "Lokale Leistungshistorie laden (JSON)", exportBusy: "Historie wird zusammengestellt …", exportDone: "Download bereit.", exportPartial: "Teildownload · Diese Messpunkte fehlen: {points}.", exportFailed: "Keine Datei erstellt. Messpunkte nicht abrufbar: {points}.", noReceipt: "Der Kassenbon entsteht um Mitternacht.",
     forOperator: "Für Ihren Messstellenbetreiber", ski: "SKI", fp: "Zertifikat (SHA-256)", fpNote: "Bleibt nach Neustart gleich.",
@@ -62,7 +63,7 @@ const T = {
     authorizeTransfer: "Übergabe freigeben", revokeTransfer: "Freigabe zurücknehmen", transferHelp: "Bis zur Übergabe durch den Installateur steuert {who}. Die Freigabe gilt eine Stunde.", transferConfirm: "Den Installateur für eine Stunde zur Übergabe an diese Box berechtigen?",
     measuredMethod: "Die Box hält den gemessenen Hausverbrauch in beiden Läufen gleich. Die Modellabweichung summiert die absoluten Kostendifferenzen zum Zähler je Viertelstunde. Nur Unterschiede oberhalb dieser Abweichung zählen.",
     boughtBlock: "Netzladung", servedBlock: "Aus dem Speicher versorgt", blockMargin: "Marge nach Speicherverlusten", blockCount: "{n} gemessene Ladezyklen",
-    planModel: "Mit Plan (Modell)", idleModel: "Eigenverbrauch (Modell)", replayErr: "Abweichung vom Zähler", similarBill: "Innerhalb der Modellabweichung", netDifference: "Kostendifferenz", matchedDays: "Aussagekräftige Vergleichstage · {n}", noComparison: "Für den Vergleich fehlen durchgehende Messwerte für den gleichen Betrieb.",
+    planModel: "Mit Plan (Modell)", idleModel: "Eigenverbrauch (Modell)", replayErr: "Abweichung vom Zähler", similarBill: "Innerhalb der Modellabweichung", netDifference: "Kostendifferenz", gap_missing_interval: "Kein Viertelstundenwert", gap_missing_price: "Preis fehlt", gap_unverified_service: "Gleicher Betrieb nicht belegt", gap_control_changed: "Regler gewechselt", gap_grid_limits: "Unterschiedliche Netzvorgaben", gap_thermal_comfort: "Raumtemperatur außerhalb des Komfortbands", gap_hot_water: "Warmwasserversorgung nicht gleichwertig", gap_vehicle_energy: "Ladestand des Autos nicht gleichwertig", gap_battery_inventory: "Speicher am Tagesende unterschiedlich geladen", gap_appliance_programme: "Haushaltsprogramm nicht abgeschlossen", gap_shared_settlement: "Gemeinschaftsabrechnung ausstehend", comparisonCoverage: "Gleicher Betrieb belegt an {n} von {total} erfassten Tagen", matchedDays: "Aussagekräftige Vergleichstage · {n}", noComparison: "Für den Vergleich fehlen durchgehende Messwerte für den gleichen Betrieb.",
     shadowMode: "Beobachtung", shadowReads: "Die Box misst. Ein anderer Regler steuert.", watchedIntervals: "{n} Viertelstunden im Beobachtungsmodus", shadowPlan: "So würde die Box planen",
     monthlyBill: "Stromkosten für {n} vollständig abgerechnete Tage",
     measuredCost: "Bezugsstrom abzüglich Einspeisung", fixedCharges: "Anteil der jährlichen Fixkosten", pricedCoverage: "Abrechnung unvollständig · {n} von {total} Viertelstunden mit Messwert und Preis",
@@ -123,6 +124,7 @@ const T = {
     }
   },
   en: {
+    packControl: "Battery control", packPending: "Awaiting confirmation", packRequested: "Requested", packConfirmed: "Confirmed by battery", packMeasured: "Measured", packAutonomous: "Self-consumption active", packUnknown: "Unknown", packLast: "Last confirmed", packCharge: "Charging", packDischarge: "Discharging",
     supply: "Electricity contract", supplyExpired: "Price sheet expired", supplyNewKey: "The signing key has changed.", supplyFile: "Choose signed price sheet", supplyLocal: "Configured tariff · no signed price sheet", supplyNext: "Scheduled", supplyCompare: "Compare this fingerprint with the one your supplier provided.", supplyUse: "Accept contract", supplyCancel: "Discard", supplyFrom: "Effective from", supplyPeriod: "Priced year", supplyEnd: "Valid through", supplyNoPrice: "Market price pending for this quarter hour", supplySaved: "Contract scheduled.", supplyLarge: "The price sheet is too large.", supplyEstimate: "Estimated price", supplyCurrent: "Current price", supplySign: "Signing key", supplyUnknown: "Confirmation was interrupted. Check the scheduled contract.",
     matterTitle: "Matter appliance", matterPoint: "Endpoint", matterNode: "Node", matterTime: "Last read", matter_waiting: "Awaiting first reading", matter_current: "Current active power", matter_unknown: "Measurement unknown", matter_stale: "Last reading · stale", matter_unavailable: "Measurement unavailable",
     "tab.now": "Now", "tab.plan": "Plan", "tab.day": "Day", "tab.setup": "Setup",
@@ -166,7 +168,7 @@ const T = {
     receipt: "Receipt", bill: "Electricity bill", wear: "Battery wear", comfort: "Comfort given up", stores: "Store level adjustment", cost: "Cost of the day",
     without: "Same house, same battery, no hems", saved: "Saved", onBill: "…of it on the bill",
     bought: "Bought", made: "From the roof", reductionMin: "§ 14a reduction", respected: "Reduction respected", feedRespected: "Feed-in ceiling respected", yes: "yes", no: "no",
-    method: "How the saving is worked out", methodText: "The same day runs twice on the same house with the same battery: once with the plan, once with a self-consumption controller. The difference is the saving. A day that ends with emptier stores is charged for refilling them. Wear and comfort are priced, so a saving bought with a cold room or a tired battery does not count.",
+    method: "How the saving is worked out", methodText: "Both simulated households experience the same day. Bills can be compared when departure charge, room comfort, hot water and remaining stored energy qualify in both runs.",
     gridHistory: "Grid connection · inspect a quarter hour", historyDate: "Date in Berlin", historyQuarter: "Quarter hour starting", historyAverage: "Mean power", historyMin: "Minimum", historyMax: "Maximum", historySamples: "Samples recorded", historyUnknown: "Unavailable", historySign: "Positive means import, negative means export.", historyLoading: "Loading readings …", historyEmpty: "No reading was recorded for this quarter hour.", historyOff: "Local measurement history is not configured.", historyFailure: "The readings could not be loaded.", historyBusy: "The gateway is handling another history query.", historyRetry: "Try again",
     export: "Download local power history (JSON)", exportBusy: "Preparing the download …", exportDone: "Download ready.", exportPartial: "Partial download · Missing points: {points}.", exportFailed: "No file created. Could not load: {points}.", noReceipt: "The receipt is printed at midnight.",
     forOperator: "For your metering point operator", ski: "SKI", fp: "Certificate (SHA-256)", fpNote: "Stays the same after a restart.",
@@ -178,7 +180,7 @@ const T = {
     authorizeTransfer: "Authorize handover", revokeTransfer: "Revoke authorization", transferHelp: "{who} remains in control until the installer completes the transfer. Authorization lasts one hour.", transferConfirm: "Authorize your installer to transfer control to this gateway within one hour?",
     measuredMethod: "Both runs use the same measured household demand. Model error adds up the absolute cost differences against the meter each quarter hour. Only differences above this error count.",
     boughtBlock: "Grid charging", servedBlock: "Served by storage", blockMargin: "Margin after storage losses", blockCount: "{n} measured cycles",
-    planModel: "With plan (model)", idleModel: "Self-consumption (model)", replayErr: "Model error against meter", similarBill: "Within model error", netDifference: "Cost difference", matchedDays: "Conclusive comparison days · {n}", noComparison: "A comparison needs complete readings for equivalent service.",
+    planModel: "With plan (model)", idleModel: "Self-consumption (model)", replayErr: "Model error against meter", similarBill: "Within model error", netDifference: "Cost difference", gap_missing_interval: "Quarter-hour reading missing", gap_missing_price: "Price missing", gap_unverified_service: "Equivalent service unverified", gap_control_changed: "Controller changed", gap_grid_limits: "Different grid control limits", gap_thermal_comfort: "Room temperature outside the comfort band", gap_hot_water: "Hot-water service or stored heat differs", gap_vehicle_energy: "Vehicle charge did not qualify", gap_battery_inventory: "Different battery charge at day close", gap_appliance_programme: "Appliance programme unfinished", gap_shared_settlement: "Community settlement unavailable", comparisonCoverage: "Equivalent service verified on {n} of {total} recorded days", matchedDays: "Conclusive comparison days · {n}", noComparison: "A comparison needs complete readings for equivalent service.",
     shadowMode: "Observing", shadowReads: "This gateway measures. A separate controller operates the site.", watchedIntervals: "{n} intervals in observation mode", shadowPlan: "What the gateway would plan",
     monthlyBill: "Electricity cost for {n} fully priced days",
     measuredCost: "Imported electricity less export revenue", fixedCharges: "Share of annual fixed charges", pricedCoverage: "Partial bill · {n} of {total} intervals with readings and prices",
@@ -389,11 +391,21 @@ function car(h) {
   return `<h2 class="sec">${t("car")}</h2><div class="car"><div class="ring" style="--p:${p}"><span class="num">${d.soc != null ? Math.round(p * 100) + "%" : "–"}</span></div>
   <div><b>${charging ? t("carCharging", { kw: num(d.kw) }) : t("carIdle")}</b><p>${goalLine}</p></div></div>`;
 }
+function storageReading(d) {
+  const s = d.battery_control;
+  if (!s) return "";
+  const watts = w => w == null ? t("packUnknown") : w === 0 ? "0 W" : t(w > 0 ? "packCharge" : "packDischarge") + " · " + num(Math.abs(w), 0) + " W";
+  const line = (key, value) => `<span class="why">${t(key)} · ${value}</span>`;
+  return `<details id="packControl" class="why" aria-live="off"><summary>${t("packControl")}</summary>` + line("packRequested", watts(d.commanded_w)) + line("packConfirmed", s.pending ? t("packPending") : s.autonomous ? t("packAutonomous") : watts(s.confirmed_w))
+    + line("packMeasured", watts(d.measured_w) + (d.last_seen ? " · " + hhmm(d.last_seen) : ""))
+    + (s.last_confirmed ? line("packLast", hhmm(s.last_confirmed)) : "") + "</details>";
+}
 function row(h, d) {
   if (h.shadow) return `<div class="row"><span class="glyph">${glyph(d.kind)}</span><span class="name">${esc(label(h, d))}</span><span class="val num">${d.measured_w == null ? "–" : num(d.measured_w / 1000) + " kW"}</span></div>`;
   return `<div class="row"><span class="glyph ${d.why.key === "idle" ? "" : d.why.cause}">${glyph(d.kind)}</span>
   <span class="name">${esc(label(h, d))}</span><span class="val num">${Math.abs(d.kw ?? 0) > 0.05 ? num(d.kw) + " kW" : ""}</span>
   <span class="why">${why(d.why)}</span>${d.notice ? `<span class="notice">${t("notice_" + d.notice)}</span>` : ""}
+  ${storageReading(d)}
   ${d.kind === "hot_water" && h.tank_goal ? `<span class="why">${t("tankGoal", { c: num(h.tank_goal[0].target_c, 0), t: minToHHMM(h.tank_goal[0].by_minute) })}<span class="verdict v-${h.tank_goal[1]?.verdict}">${h.tank_goal[1] ? t("v_" + h.tank_goal[1].verdict) : ""}</span></span>` : ""}</div>`;
 }
 // While § 14a is in force: who gets what of the ceiling, by need, from the
@@ -416,7 +428,7 @@ function reductionChip(r) {
 function viewNow(h) {
   const g = h.grid_kw, r = h.reduction;
   // Resting means drawing nothing as well as being told nothing.
-  const still = (d) => !h.shadow && d.why.key === "idle" && !d.notice && Math.abs(d.kw ?? 0) <= 0.05;
+  const still = (d) => !d.battery_control && !h.shadow && d.why.key === "idle" && !d.notice && Math.abs(d.kw ?? 0) <= 0.05;
   const active = h.devices.filter((d) => d.kind !== "car" && !still(d));
   const resting = h.devices.filter((d) => d.kind !== "car" && still(d));
   return `<section class="hero"><div class="figure num">${g == null ? "–" : num(Math.abs(g))}<small>kW</small></div>
@@ -584,7 +596,9 @@ function month() {
   const billed = bills.reduce((cents, b) => cents + b.energy_ct + b.fixed_ct, 0);
   const delta = d => d.comparison ? d.comparison.without_plan_ct - d.comparison.with_plan_ct : d.money?.saved_ct;
   const blocks = [...by.values()].map(d => d.arbitrage).filter(Boolean);
-  const matched = [...by.values()].filter(d => d.comparison && Math.abs(delta(d)) > d.comparison.error_ct);
+  const observed = [...by.values()].filter(d => d.metered_bill);
+  const eligible = observed.filter(d => d.comparison);
+  const matched = eligible.filter(d => Math.abs(delta(d)) > d.comparison.error_ct);
   const values = [...by.values()].map(delta).filter(v => v != null);
   const W = 358, H = 132, top = 6, area = H - top - 20, neg = values.some(v => v < 0);
   const up = neg ? area * 0.68 : area, y0 = top + up, max = Math.max(50, ...values.map(Math.abs)), bw = W / len;
@@ -596,7 +610,9 @@ function month() {
     const sel = d.day === picked;
     if (delta(d) == null) svg += `<circle cx="${x + bw / 2}" cy="${y0}" r="2" fill="none" stroke="var(--ink3)"/>`;
     else { const v = delta(d), h = Math.max(1.5, (Math.abs(v) / max) * (v < 0 ? area - up : up - 4)); svg += `<rect x="${x + 1}" y="${v < 0 ? y0 : y0 - h}" width="${Math.max(1, bw - 2)}" height="${h}" rx="1.5" fill="${d.comparison && Math.abs(v) <= d.comparison.error_ct ? "var(--ink3)" : v < 0 ? "var(--bad)" : "var(--accent)"}" opacity="${picked && !sel ? .35 : 1}"/>`; }
-    svg += `<rect role="button" tabindex="0" aria-label="${d.day}" aria-pressed="${sel}" data-day="${d.day}" x="${x}" y="0" width="${bw}" height="${H}" fill="transparent"/>`;
+    const evidence = d.comparison_gap ? t("gap_" + d.comparison_gap.reason)
+      : delta(d) == null ? t("noComparison") : t("netDifference") + " " + eur(delta(d) / 100);
+    svg += `<rect role="button" tabindex="0" aria-label="${esc(d.day + " · " + evidence)}" aria-pressed="${sel}" data-day="${d.day}" x="${x}" y="0" width="${bw}" height="${H}" fill="transparent"/>`;
   }
   const title = new Date(Date.UTC(y, mo - 1, 15)).toLocaleDateString(locale(), { month: "long", year: "numeric" });
   const nav = (k, label, ch) => `<button type="button" class="step" ${k ? `data-month="${k}"` : "disabled"} aria-label="${label}">${ch}</button>`;
@@ -605,6 +621,7 @@ function month() {
   ${bills.length ? `<div class="mtotal num">${eur(billed / 100)}</div><div class="cap">${t("monthlyBill", {n: bills.length})}</div>` : ""}
   ${blocks.length ? `<div class="mtotal num">${eur(blocks.reduce((sum, b) => sum + b.avoided_ct - b.bought_ct, 0) / 100)}</div><div class="cap">${t("blockMargin")} · ${t("blockCount", {n: blocks.reduce((n, b) => n + b.blocks, 0)})}</div>` : ""}
   ${matched.length ? `<div class="mtotal num">${eur(matched.reduce((sum, d) => sum + delta(d), 0) / 100)} ± ${eur(matched.reduce((sum, d) => sum + d.comparison.error_ct, 0) / 100)}</div><div class="cap">${t("matchedDays", {n: matched.length})}</div>` : ""}
+  ${observed.length ? `<p class="cap">${t("comparisonCoverage", {n: eligible.length, total: observed.length})}</p>` : ""}
   ${svg}</svg></div>`;
 }
 function viewDay(h) {
@@ -622,10 +639,14 @@ function viewDay(h) {
     : li(t("measuredCost"), eur(bill.energy_ct / 100)) + li(t("fixedCharges"), eur(bill.fixed_ct / 100)) + li(t("bill"), eur((bill.energy_ct + bill.fixed_ct) / 100), "big");
   const c = day?.comparison;
   const diff = c && c.without_plan_ct - c.with_plan_ct;
+  const gap = day?.comparison_gap;
+  const gapText = gap && t("gap_" + gap.reason) + " · " + new Date(gap.at_unix_s * 1000).toLocaleTimeString(locale(), {
+    hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin", timeZoneName: "shortOffset"
+  });
   const model = c ? li(t(bill?.watched_intervals ? "planModel" : "idleModel"), eur((bill?.watched_intervals ? c.with_plan_ct : c.without_plan_ct) / 100))
     + li(t("replayErr"), eur(c.error_ct / 100))
-    + li(t("netDifference"), Math.abs(diff) <= c.error_ct ? t("similarBill") : eur(diff / 100), "big")
-    : bill?.fixed_ct != null ? `<p class="cap">${t("noComparison")}</p>` : "";
+    + li(t("netDifference"), Math.abs(diff) <= c.error_ct ? `${eur(diff / 100)} · ${t("similarBill")}` : eur(diff / 100), "big")
+    : gapText || bill?.fixed_ct != null ? `<p class="cap">${esc(gapText || t("noComparison"))}</p>` : "";
   const a = day?.arbitrage;
   const blockLine = (label, cents, wh, rate) => li(label, eur(cents / 100))
     + `<p class="cap">${num(wh / 1000)} kWh × ${num(rate / 1000, 2)} ct/kWh</p>`;
@@ -784,11 +805,12 @@ function supplyCard() {
   if (!supplyStatus) return "";
   const {active, next, next_at, expired, price_ct, estimated, can_import} = supplyStatus;
   const review = supplyDraft?.review, terms = review?.terms;
-  const when = (seconds) => new Date(seconds * 1000).toLocaleString(locale(), {timeZone: "Europe/Berlin"});
+  const price = (decimal) => lang === "de" ? decimal.replace(".", ",") : decimal;
+  const when = (seconds) => new Date(seconds * 1000).toLocaleString(locale(), {timeZone: "Europe/Berlin", timeZoneName: "shortOffset"});
   return `<section id="supplyCard"><h2 class="sec">${t("supply")}</h2><div class="group"><div class="slot"><b>${active ? esc(active.contract) : t("supplyLocal")}</b>
   ${expired ? `<p>${t("supplyExpired")} · ${esc(expired.contract)} (${esc(expired.priced_for_year)})</p>` : ""}
-  ${price_ct == null ? "" : `<p>${t(estimated ? "supplyEstimate" : "supplyCurrent")} · ${num(price_ct, 2)} ct/kWh</p>`}${next ? `<p>${t("supplyNext")} · ${esc(next.contract)} · ${esc(when(next_at))}</p>` : ""}</div>
-  ${!can_import ? "" : review ? `<div class="slot"><b>${esc(terms.contract)}</b><p>${t("supplyFrom")} · ${esc(when(review.effective_at))}</p><p>${t("supplyPeriod")} · ${esc(terms.priced_for_year)}</p>${terms.valid_until ? `<p>${t("supplyEnd")} · ${esc(terms.valid_until)}</p>` : ""}<p>${review.price_ct == null ? t("supplyNoPrice") : num(review.price_ct, 2) + " ct/kWh"}</p>
+  ${price_ct != null ? `<p>${t(estimated ? "supplyEstimate" : "supplyCurrent")} · ${esc(price(price_ct))} ct/kWh</p>` : active ? `<p>${t("supplyNoPrice")}</p>` : ""}${next ? `<p>${t("supplyNext")} · ${esc(next.contract)} · ${esc(when(next_at))}</p>` : ""}</div>
+  ${!can_import ? "" : review ? `<div class="slot"><b>${esc(terms.contract)}</b><p>${t("supplyFrom")} · ${esc(when(review.effective_at))}</p><p>${t("supplyPeriod")} · ${esc(terms.priced_for_year)}</p>${terms.valid_until ? `<p>${t("supplyEnd")} · ${esc(terms.valid_until)}</p>` : ""}<p>${review.price_ct == null ? t("supplyNoPrice") : esc(price(review.price_ct)) + " ct/kWh"}</p>
   <p>${t("supplySign")} · <bdi>${esc(terms.key_id)}</bdi></p>${(next ?? active ?? expired) && (next ?? active ?? expired).fingerprint !== terms.fingerprint ? `<p><strong>${t("supplyNewKey")}</strong></p>` : ""}<code style="overflow-wrap:anywhere">${esc(terms.fingerprint)}</code><p>${t("supplyCompare")}</p><div class="peerbtns"><button type="button" id="supplyCancel">${t("supplyCancel")}</button><button type="button" class="yes" id="supplyUse">${t("supplyUse")}</button></div></div>` : `<div class="slot"><label>${t("supplyFile")}<input type="file" id="supplyFile" accept=".jws,.jose,application/jose"></label></div>`}</div><p role="status" aria-live="polite">${esc(supplyMessage)}</p></section>`;
 }
 
@@ -862,8 +884,16 @@ function viewSignin() {
 }
 
 // ── Render and wire ─────────────────────────────────────────────────────────
+function announceStorage() {
+  const pack = view === "now" && !home?.shadow && home?.devices?.find(d => d.battery_control)?.battery_control;
+  const state = pack && (pack.pending ? "packPending" : pack.autonomous ? "packAutonomous" : pack.confirmed_w == null ? "packUnknown" : "packConfirmed");
+  const text = state ? t("packControl") + " · " + t(state) : "";
+  const region = $("#packAnnouncement");
+  if (region.textContent !== text) region.textContent = text;
+}
 function render(refreshDiscovery = false) {
   document.documentElement.lang = lang;
+  announceStorage();
   $(".tabs").setAttribute("aria-label", t("viewsLabel"));
   $("#scrub").setAttribute("aria-label", t("replayTime"));
   $("#play").setAttribute("aria-label", t(playing ? "replayPause" : "replayPlay"));
@@ -890,8 +920,12 @@ function render(refreshDiscovery = false) {
   s.classList.toggle("stale", wall ? missedPolls >= 3 : stale);
   if (view === "setup" && !refreshDiscovery && (supplyBusy || document.activeElement?.closest("#supplyCard") || (finding && s.querySelector("#find")) || document.activeElement?.closest("#discovery") || s.querySelector(".inverter-review[open]"))) return;
   if (view === "day" && !refreshDiscovery && (s.querySelector("#gridHistory[open]") || document.activeElement?.closest("#export"))) return;
+  const packOpen = $("#packControl")?.open;
+  const packFocused = document.activeElement?.matches("#packControl summary");
   const identityOpen = document.querySelector("#operatorIdentity")?.open;
   s.innerHTML = ({ now: viewNow, plan: viewPlan, day: viewDay, setup: viewSetup, glance: viewGlance, handover: viewHandover, record: viewRecord }[view] ?? viewNow)(home);
+  if (packOpen && $("#packControl")) $("#packControl").open = true;
+  if (packFocused) $("#packControl summary")?.focus({preventScroll:true});
   if (identityOpen && view === "setup") $("#operatorIdentity").open = true;
   wire();
 }

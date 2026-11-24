@@ -123,7 +123,18 @@ impl MeteredBill {
         let year_slots =
             Decimal::from(time::util::days_in_year(date.year())) * Decimal::from(slots);
         let day_offset = i64::from(date.ordinal() - 1) * slots;
+        let day = ems_core::prelude::Horizon::new(start, usize::from(bill.expected_intervals));
+        let mut intervals = std::collections::BTreeMap::new();
         for row in rows {
+            if let Some(i) = day.index_of(row.registers.slot) {
+                // Two claims for one interval cannot establish its charge.
+                intervals
+                    .entry(i)
+                    .and_modify(|value| *value = None)
+                    .or_insert(Some(row));
+            }
+        }
+        for row in intervals.into_values().flatten() {
             bill.watched_intervals += u16::from(row.watched);
             let Some(terms) = &row.terms else { continue };
             if let Some(contract) = &terms.contract
@@ -131,10 +142,12 @@ impl MeteredBill {
             {
                 bill.contracts.push(contract.clone());
             }
-            bill.priced_intervals += 1;
             let q = &row.registers;
-            variable = variable
-                .and_then(|sum| sum.checked_add(terms.net_charge(q.grid_draw, q.grid_feed_in)?));
+            let Some(charge) = terms.net_charge(q.grid_draw, q.grid_feed_in) else {
+                continue;
+            };
+            bill.priced_intervals += 1;
+            variable = variable.and_then(|sum| sum.checked_add(charge));
             // Differences of cumulative cents allocate every cent once, also
             // when two contracts cover different quarters of this day.
             let n = (q.slot.start() - start).whole_minutes() / 15 + day_offset;
@@ -168,6 +181,8 @@ pub struct ClosedDay {
     pub metered_bill: Option<MeteredBill>,
     /// Equal-service comparison where both matched energy traces cover the day.
     pub comparison: Option<crate::runtime::day::replay::Comparison>,
+    /// First interval with a recorded reason for withholding the comparison.
+    pub comparison_gap: Option<crate::runtime::day::replay::ComparisonGap>,
     /// Grid-charge margin on measured closed battery blocks.
     pub arbitrage: Option<crate::runtime::day::storage::Arbitrage>,
     /// What the day cost and saved, where it was priced.
@@ -230,6 +245,7 @@ impl ClosedDay {
             forecast: None,
             metered_bill: None,
             comparison: None,
+            comparison_gap: None,
             arbitrage: None,
             imported_wh: watt_hours(receipt.imported_kwh),
             produced_wh: watt_hours(receipt.produced_kwh),
@@ -275,6 +291,8 @@ pub struct Total {
     pub metered_days: u32,
     /// Variable and fixed charges of those complete bills, in cents.
     pub metered_cost_ct: i128,
+    /// Days with a complete matched comparison, including zero and inconclusive differences.
+    pub eligible_days: u32,
     /// Days whose matched comparison exceeds its observed model error.
     pub conclusive_days: u32,
     /// Signed difference on those days. A loss reduces the sum.
@@ -331,6 +349,7 @@ impl Days {
                 total.grid_charge_blocks += u32::from(a.blocks);
                 total.grid_charge_margin_ct += i128::from(a.avoided_ct) - i128::from(a.bought_ct);
             }
+            total.eligible_days += u32::from(day.comparison.is_some());
             if let Some(c) = day
                 .comparison
                 .filter(crate::runtime::day::replay::Comparison::conclusive)
@@ -376,7 +395,7 @@ impl Days {
 /// could read as a formula.
 pub const CSV_HEADER: &str = "day,bill_eur,wear_eur,comfort_eur,cost_eur,without_hems_eur,saved_eur,\
 saved_on_bill_eur,imported_kwh,produced_kwh,reduced_minutes,reductions,reduction_respected,\
-feed_in_respected,metered_energy_eur,fixed_charges_eur,priced_intervals,expected_intervals,watched_intervals,with_plan_eur,without_plan_eur,replay_error_eur,conclusive,grid_charge_blocks,bought_kwh,served_kwh,grid_charge_eur,avoided_import_eur,grid_charge_margin_eur,buy_ct_per_kwh,use_ct_per_kwh";
+feed_in_respected,metered_energy_eur,fixed_charges_eur,priced_intervals,expected_intervals,watched_intervals,with_plan_eur,without_plan_eur,replay_error_eur,conclusive,grid_charge_blocks,bought_kwh,served_kwh,grid_charge_eur,avoided_import_eur,grid_charge_margin_eur,buy_ct_per_kwh,use_ct_per_kwh,comparison_gap_at_unix_s,comparison_gap_reason";
 
 /// Whole hundredths or thousandths as a decimal, exactly.
 pub(crate) fn decimal(value: impl Into<i128>, places: u32) -> String {
@@ -464,6 +483,12 @@ pub fn csv(days: &[ClosedDay]) -> String {
                 .map_or_else(String::new, |a| decimal(a.buy_rate_mct_per_kwh, 3)),
             d.arbitrage
                 .map_or_else(String::new, |a| decimal(a.use_rate_mct_per_kwh, 3)),
+            d.comparison_gap
+                .map_or_else(String::new, |g| g.at_unix_s.to_string()),
+            // The JSON spelling of this closed enum is also a quoted CSV field.
+            d.comparison_gap.map_or_else(String::new, |g| {
+                serde_json::to_string(&g.reason).unwrap_or_default()
+            }),
         ];
         out.push_str(&row.join(","));
         out.push('\n');
@@ -622,14 +647,20 @@ mod tests {
         assert_eq!(lines[0], CSV_HEADER);
         assert_eq!(
             lines[1],
-            "2026-11-01,3.80,0.15,0.05,4.00,5.07,1.07,1.27,12.346,3.200,90,1,true,true,,,,,,,,,,,,,,,,,"
+            "2026-11-01,3.80,0.15,0.05,4.00,5.07,1.07,1.27,12.346,3.200,90,1,true,true,,,,,,,,,,,,,,,,,,,"
         );
         assert_eq!(
             lines[2],
-            "2026-11-02,,,,,,,,12.346,3.200,90,1,true,true,,,,,,,,,,,,,,,,,"
+            "2026-11-02,,,,,,,,12.346,3.200,90,1,true,true,,,,,,,,,,,,,,,,,,,"
         );
         let columns = CSV_HEADER.split(',').count();
         assert!(lines.iter().all(|l| l.split(',').count() == columns));
+        let mut excluded = days[1].clone();
+        excluded.comparison_gap = Some(crate::runtime::day::replay::ComparisonGap {
+            at_unix_s: 1_793_581_200,
+            reason: crate::runtime::day::replay::GapReason::VehicleEnergy,
+        });
+        assert!(csv(&[excluded]).ends_with(",1793581200,\"vehicle_energy\"\n"));
     }
 
     #[test]
@@ -682,6 +713,21 @@ mod tests {
             assert_eq!(switched.contracts, ["First", "Replacement"]);
             assert_eq!(switched.energy_ct, bill.energy_ct);
             assert_eq!(switched.fixed_ct, Some(150));
+            for wrong_slot in [
+                first.offset(-1),
+                first.offset(1),
+                first.offset(i64::from(count)),
+            ] {
+                rows[0].registers.slot = wrong_slot;
+                let incomplete = MeteredBill::from_registers(date, &rows);
+                assert!(incomplete.priced_intervals < count);
+                assert!(incomplete.energy_ct.is_none() && incomplete.fixed_ct.is_none());
+            }
+            rows[0].registers.slot = first;
+            rows[0].terms.as_mut().unwrap().export_ct = None;
+            let unpriced = MeteredBill::from_registers(date, &rows);
+            assert_eq!(unpriced.priced_intervals, count - 1);
+            assert!(unpriced.energy_ct.is_none());
             rows[0].terms = None;
             let gap = MeteredBill::from_registers(date, &rows);
             assert_eq!(gap.priced_intervals, count - 1);
@@ -733,6 +779,7 @@ mod tests {
             ),
             (2, 10, 3)
         );
+        assert_eq!(month.total.eligible_days, 3);
         assert_eq!(month.total.grid_charge_margin_ct, -2);
         assert!(csv(&month.days).contains("0.90,1.00,0.10,false,"));
     }

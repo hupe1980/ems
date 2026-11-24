@@ -575,8 +575,7 @@ impl Registry {
             // tick as on this one. It is reported once, as the fault it is, and
             // from then on the asset is one nothing drives: `uncommandable`
             // names it on the status surface instead of in the log every
-            // second. A SunSpec battery is the case — the standard's storage
-            // model carries rate limits and no setpoint.
+            // second. The gateway currently uses model 802 for battery telemetry.
             Err(DriverError::Unsupported(what)) => {
                 if self.refused.insert(setpoint.asset.clone()) {
                     Err(DriverError::Unsupported(what))
@@ -799,6 +798,8 @@ pub const SILENCE: Duration = Duration::seconds(10);
 /// Everything the drivers said, in the shape the control planes read.
 #[derive(Debug, Clone, Default)]
 pub struct Observed {
+    /// Current feedback from the commissioned storage driver.
+    pub storage_feedback: Option<(AssetId, ems_drv::StorageFeedback)>,
     /// Connected devices whose discovered model can accept a production ceiling.
     pub curtailable: BTreeSet<AssetId>,
     /// What the house is doing.
@@ -836,6 +837,10 @@ impl Registry {
     pub fn observe(&mut self, grid_meter: Option<&AssetId>, now: OffsetDateTime) -> Observed {
         self.absorb();
         Observed {
+            storage_feedback: self
+                .entries
+                .iter()
+                .find_map(|e| e.driver.storage_feedback(now).map(|f| (e.asset.clone(), f))),
             state: self.state(grid_meter, now),
             last_measured: self
                 .entries
@@ -1498,10 +1503,7 @@ mod tests {
 
     #[test]
     fn a_command_a_driver_cannot_express_is_a_fault_once_and_a_fact_after() {
-        // A SunSpec device handed a power setpoint: the standard's storage model
-        // carries rate limits and no setpoint, so the driver refuses. That is
-        // worth one loud line and a place on the status surface, not a line a
-        // second for as long as the box runs.
+        // A driver without an active-power actuator reports the unsupported command once.
         let s = site();
         let mut r = Registry::new();
         r.register(Box::new(SunSpec::new(id("pv"), 1, Cadence::default())), &s)

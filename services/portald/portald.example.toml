@@ -1,0 +1,5 @@
+collector_origin = "http://127.0.0.1:7780"
+assets_dir = "web/portal/dist"
+
+[service]
+listen = "127.0.0.1:7680"

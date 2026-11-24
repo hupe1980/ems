@@ -6,6 +6,10 @@ A **control** has implementation or test evidence. **Partial** identifies a rema
 
 The household gateway can send commands to equipment. The building and industrial demo servers serve synthetic data on loopback. Building community views restrict what each role sees. Industrial reconciliation reads a local JSON trace and reports meter discrepancies. Both demo servers expose read-only routes. The optional CEMS OpenADR command starts its own loopback aggregator and site client for a single simulation using process-local credentials.
 
+The operator desk binds each check-in to its enrolled site and filters reads by operator scope. Server receipt time measures contact. Feeder and closure times are gateway claims. A compromised gateway can misreport its own observations. The desk has no device-control actions.
+
+The browser ingress authenticates users with OIDC and maps the verified subject of one configured issuer to a scoped API bearer. Keep the identity-header listener private to that proxy. The customer gateway forwards the scoped bearer only to fixed collector routes, refuses redirects and rechecks downloads. The household receipt collector binds signed outlet evidence to its gateway key. A dedicated customer token reads one site’s latest receipt and up to 30 daily reports. Replayed partial evidence preserves the final register. A compromised signer can misstate its own measurements.
+
 ## Trust boundaries
 
 ```mermaid
@@ -192,6 +196,9 @@ development and CI — exists only in a build with the `house` feature.
 | `simulator-steuerbox-key-reused` — a box left trusting the simulator Steuerbox can be reduced by whoever holds its key file | low | The key is written `0600`; the configuration it writes keeps SHIP on loopback and off mDNS and says it is a simulator's | `house/steuerbox.rs` `a_kept_identity_keeps_its_ski_and_is_the_owners_alone` | Control |
 | `simulator-server-in-the-box` — the simulator's Modbus server ships inside every box | low | An optional dependency behind the `house` feature; CI fails if the default build's tree contains it | `.github/workflows/ci.yml` job `house` | Control |
 | `curtailment-on-the-wrong-register` — a production ceiling written at the wrong offset of SunSpec model 123 disconnects the inverter instead of limiting it | high | The address is the model body plus the published `WMaxLimPct` offset, held against an independently written server | `tests/virtual_house.rs` `every_device_is_discovered_read_and_obeyed_over_modbus` | Control |
+| A stale or invalid model 704 command changes the simulated battery balance | medium | Management requires an opted-in loopback battery, fresh local input and a matching device profile. The gateway checks the Modbus unit, transaction, write echo and register readback. The device releases after 30 simulated seconds. | `just house-storage-trial` | Control |
+
+The household OCPP departure trial binds an ephemeral loopback port, permits one authenticated station and validates its connector, transaction, sample time and register boundaries. A returned station needs a fresh register before the next profile. The receipt withholds its outlet total when the close is missing. Connection energy requires four consecutive, monotonic, directional readings from the separate loopback meter. [Departure trial](services/hemsd/src/house/departure.rs)
 
 ### The Steuerbox and the box's identity
 
@@ -267,3 +274,7 @@ plane could leak or be made to say:
 ## Commissioned historian registers
 
 A market location may occur at more than one site. Register reads bind the authenticated site as a query parameter, and MeterStore includes the site in its write identity. The historian locks a site before accepting a revision or changing its storage binding. A quarter and its nullable settlement attributes are one immutable assertion. The retention sweep covers both register tables. [Implementation](services/histd/src/registers.rs) · [Storage verification](services/histd/tests/meterstore_registers.rs)
+
+The building heating-reserve rehearsal reads one commissioned BACnet analog input over loopback. Faulted, invalid, expired and unavailable observations retain the heating reserve. HTTP requests read the recorded decisions and cannot trigger field traffic. [Building rehearsal](services/bemsd/src/comfort.rs)
+
+The EV feeder comparison accepts indicated power on the commissioned KNX source and group. Unmatched, future and expired readings cannot confirm the OCPP station total. The plain-UDP simulator is confined to connected loopback peers. [Feeder observation](services/bemsd/src/feeder.rs)

@@ -49,7 +49,7 @@ pub struct ModelMap {
 /// Deliberately short. A poll that read every model a device publishes would
 /// spend a control period on nameplate data that changes once a decade, and the
 /// guard is waiting.
-const POLLED: [u16; 6] = [103, 102, 101, 203, 802, 701];
+const POLLED: [u16; 10] = [103, 102, 101, 203, 201, 202, 204, 802, 701, 704];
 
 impl ModelMap {
     /// Note a model at an address.
@@ -137,16 +137,22 @@ impl ModelMap {
         self.curtail_scale = Some(scale);
     }
 
-    /// Forget it: a reconnect may be a different device.
-    pub(crate) fn forget_curtail_scale(&mut self) {
+    /// Discard all device-derived state while keeping the configured rating.
+    pub(crate) fn restart(&mut self) {
+        self.found.clear();
         self.curtail_scale = None;
+        self.rewind();
     }
 
     /// Where model 123 keeps `WMaxLimPct_SF` — the `sunspec` crate's offset.
     #[must_use]
     pub fn curtail_scale_address(&self) -> Option<u16> {
-        let (body, _) = *self.found.get(&123)?;
-        body.checked_add(sunspec::models::model123::Model123::W_MAX_LIM_PCT_SF.offset)
+        let (body, len) = *self.found.get(&123)?;
+        let offset = sunspec::models::model123::Model123::W_MAX_LIM_PCT_SF.offset;
+        if offset >= len {
+            return None;
+        }
+        body.checked_add(offset)
     }
 
     /// The registers that express a production ceiling, if the device can take one.
@@ -157,7 +163,10 @@ impl ModelMap {
     /// `None` too until the device's scale factor is known.
     #[must_use]
     pub fn curtailment_write(&self, ceiling: Power) -> Option<super::CurtailWrite> {
-        let (body, _) = *self.found.get(&123)?;
+        let (body, len) = *self.found.get(&123)?;
+        if sunspec::models::model123::Model123::W_MAX_LIM_ENA.offset >= len {
+            return None;
+        }
         let raw = super::curtail_register(ceiling, self.rating()?, self.curtail_scale?)?;
         // `WMaxLimPct` is the **fourth** point of the model, after the three
         // `Conn` registers, and `WMaxLim_Ena` the fourth after it — the offset

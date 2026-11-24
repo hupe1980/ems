@@ -43,3 +43,13 @@ CREATE TABLE IF NOT EXISTS site_day (
 -- index on it would be paid for on every insert and read by nothing. A schema is
 -- subject to the same rule as a module: one with no caller is not a feature.
 CREATE INDEX IF NOT EXISTS site_day_by_day ON site_day (day);
+
+-- Latest simulated outlet receipt for each household.
+CREATE TABLE IF NOT EXISTS departure_receipt (
+    site TEXT PRIMARY KEY,
+    departure TIMESTAMPTZ NOT NULL,
+    requested_wh INTEGER NOT NULL CHECK (requested_wh > 0),
+    opening_wh INTEGER NOT NULL CHECK (opening_wh >= 0),
+    rejoin_wh INTEGER NOT NULL CHECK (rejoin_wh >= opening_wh),
+    closing_wh INTEGER CHECK (closing_wh >= rejoin_wh)
+);

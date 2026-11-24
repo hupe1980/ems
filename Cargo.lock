@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "agentd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "agentplane",
  "anyhow",
@@ -964,6 +964,90 @@ dependencies = [
 ]
 
 [[package]]
+name = "bacnet-bip-codec"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19f1d0d61a2f1b3e94380ed21bbd498f9b0bf78a08d03b2d60e85f0137a427d1"
+
+[[package]]
+name = "bacnet-bip-core"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c1e1dcf3e07f4846e6ae6d482045eeb813e3f6e0cb7babe9bbe6d7857a72730"
+dependencies = [
+ "bacnet-bip-codec",
+ "bacnet-npdu",
+ "bacnet-time",
+]
+
+[[package]]
+name = "bacnet-encoding"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "209e6b2b29339858c0c96e248276da4e391d70a05f6b3c2a92f02113ee1485d7"
+dependencies = [
+ "bacnet-npdu",
+ "bacnet-types",
+ "bytes",
+]
+
+[[package]]
+name = "bacnet-kit"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c1e373638b5f4239985d2e2a00930765d9ec9282ad9ebfaa906e5e1dbaf0d41"
+dependencies = [
+ "bacnet-bip-core",
+ "bacnet-encoding",
+ "bacnet-mstp-codec",
+ "bacnet-npdu",
+ "bacnet-services",
+ "bacnet-types",
+ "bytes",
+]
+
+[[package]]
+name = "bacnet-mstp-codec"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fee9b70c8374e0536394648eb8328ac27b3cdc6677197f8b89d9277934779de"
+
+[[package]]
+name = "bacnet-npdu"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d00e872b8df4e1d1971616bf6ce394b250846e51adec15b91ed0c706cc5d79d7"
+
+[[package]]
+name = "bacnet-services"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2f85e8129f061e3d96db4c790e9c10aa64b8899c9606761b2b1693c913a411c"
+dependencies = [
+ "bacnet-encoding",
+ "bacnet-types",
+ "bytes",
+]
+
+[[package]]
+name = "bacnet-time"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59fe4d3a21b4b1acbb70556fcb71a09d9c10fd29dd6dc66a0a6b81c0ce73c7dd"
+
+[[package]]
+name = "bacnet-types"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "035904d771da718e3b9261d1d7cdbd2c3519dabc13ffe395cf68cd47f21dd5e8"
+dependencies = [
+ "bacnet-npdu",
+ "bitflags",
+ "smallvec",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -983,16 +1067,18 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bemsd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
+ "bacnet-kit",
  "base64 0.23.1",
  "clap",
  "ems-core",
  "ems-drv",
  "ems-grid",
  "ems-service",
+ "knx",
  "ocpp-kit",
  "rust_decimal",
  "serde",
@@ -1258,11 +1344,12 @@ dependencies = [
 
 [[package]]
 name = "cemsd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "ems-core",
  "ems-service",
  "ems-sim",
  "openadr",
@@ -2934,7 +3021,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "ems-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "metering",
  "serde",
@@ -2946,7 +3033,7 @@ dependencies = [
 
 [[package]]
 name = "ems-device"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
  "serde",
@@ -2954,7 +3041,7 @@ dependencies = [
 
 [[package]]
 name = "ems-drv"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "eebus",
  "ems-core",
@@ -2971,7 +3058,7 @@ dependencies = [
 
 [[package]]
 name = "ems-events"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.23.1",
  "hmac 0.13.0",
@@ -2984,7 +3071,7 @@ dependencies = [
 
 [[package]]
 name = "ems-flex"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
  "ems-device",
@@ -2997,11 +3084,9 @@ dependencies = [
 
 [[package]]
 name = "ems-forecast"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
- "metering",
- "rust_decimal",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -3010,7 +3095,7 @@ dependencies = [
 
 [[package]]
 name = "ems-grid"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
  "metering",
@@ -3022,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "ems-optimizer"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
  "ems-forecast",
@@ -3037,7 +3122,7 @@ dependencies = [
 
 [[package]]
 name = "ems-realtime"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
  "ems-device",
@@ -3048,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "ems-service"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3081,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "ems-sim"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ems-core",
@@ -3093,7 +3178,7 @@ dependencies = [
 
 [[package]]
 name = "ems-tariff"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
  "ems-grid",
@@ -3108,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "ems-wasm"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ems-core",
  "ems-device",
@@ -3279,7 +3364,7 @@ dependencies = [
 
 [[package]]
 name = "fleetd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3333,7 +3418,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forecastd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3687,7 +3772,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hemsd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "arrow 59.3.3",
@@ -3713,6 +3798,7 @@ dependencies = [
  "hex",
  "if-addrs",
  "metering",
+ "ocpp-kit",
  "qrcode",
  "rcgen",
  "redb",
@@ -3724,6 +3810,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sunspec",
+ "tempfile",
  "thiserror 2.0.21",
  "time",
  "tokio",
@@ -3763,7 +3850,7 @@ dependencies = [
 
 [[package]]
 name = "histd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3850,6 +3937,12 @@ dependencies = [
  "http-body",
  "pin-project-lite",
 ]
+
+[[package]]
+name = "http-range-header"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
 
 [[package]]
 name = "httparse"
@@ -4448,6 +4541,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "knx"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dd4d4b5bd071ffd028872cf69a6fad2102d9901d0d7281a3d7410593fd47f92"
+
+[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4769,6 +4868,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5848f5a9e8117cf94f2f90faac24a87ff81600ff8628c1e3deaab572e76bfa1"
 
 [[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4981,7 +5090,7 @@ dependencies = [
 
 [[package]]
 name = "obsd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5424,6 +5533,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
 dependencies = [
  "portable-atomic",
+]
+
+[[package]]
+name = "portald"
+version = "0.9.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "ems-service",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tower-http 0.7.1",
 ]
 
 [[package]]
@@ -7005,7 +7130,7 @@ checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
 name = "tariffd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -7442,9 +7567,14 @@ dependencies = [
  "bitflags",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
+ "http-range-header",
+ "httpdate",
+ "mime",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "tokio",
@@ -7654,6 +7784,12 @@ dependencies = [
  "serde",
  "web-time 1.1.0",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f"
 
 [[package]]
 name = "unicode-bidi"
@@ -8191,7 +8327,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ems-events",

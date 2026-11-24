@@ -4,7 +4,7 @@ use axum::extract::State;
 use ems_drv::ocpp::DateTime;
 use std::{fmt::Write as _, sync::Arc};
 
-use axum::{Json, Router, extract::Query, response::IntoResponse, routing::get};
+use axum::{Json, Router, extract::Query, http::StatusCode, response::IntoResponse, routing::get};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Default, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -16,6 +16,7 @@ enum Case {
     AboveRequest,
     IdleStation,
     DelayedArrival,
+    StationRejoin,
     StaleCharger,
     Stale,
     OverLimit,
@@ -28,6 +29,9 @@ enum Moment {
     Requested,
     Observed,
     Deadline,
+    Rejoined,
+    Buffered,
+    Restored,
     #[default]
     Handover,
 }
@@ -38,6 +42,9 @@ impl Moment {
             Self::Requested => timeline.requested_at,
             Self::Observed => timeline.first_sample_at,
             Self::Deadline => timeline.deadline_at,
+            Self::Rejoined => timeline.rejoined_at,
+            Self::Buffered => timeline.buffered_at,
+            Self::Restored => timeline.restored_at,
             Self::Handover => timeline.handover_at,
         }
     }
@@ -47,6 +54,9 @@ impl Moment {
             Self::Requested => "Anforderung",
             Self::Observed => "Erste Messung",
             Self::Deadline => "Stichtag",
+            Self::Rejoined => "Wieder verbunden",
+            Self::Buffered => "Gepufferte Messung",
+            Self::Restored => "Neue Messung",
             Self::Handover => "Übergabe",
         }
     }
@@ -140,6 +150,7 @@ impl Handover {
         let stations = recording.stations(
             match case {
                 Case::AboveRequest => Outcome::Above,
+                Case::StationRejoin => Outcome::Rejoin,
                 Case::IdleStation => Outcome::Zero,
                 Case::DelayedArrival => Outcome::Delayed,
                 Case::Unconfirmed => Outcome::Missing,
@@ -155,6 +166,7 @@ impl Handover {
             .sum::<Option<f64>>();
         let heating_kw = 20;
         let charging_kw = 24;
+        let final_sample_at = final_sample_kw.and(stations[0].final_measured_at);
         Self {
             simulated: true,
             charging_source: "ocpp-1.6j-station-telemetry",
@@ -180,7 +192,7 @@ impl Handover {
             first_sample_at: first_sample_kw.map(|_| recording.timeline.first_sample_at),
             first_sample_kw,
             final_sample_due_at,
-            final_sample_at: final_sample_kw.map(|_| final_sample_due_at),
+            final_sample_at,
             final_sample_kw,
             stations,
             delivery: if at < final_sample_due_at {
@@ -216,9 +228,23 @@ fn replay_link(case: Case, moment: Moment) -> String {
     )
 }
 
+impl Case {
+    fn moments(self) -> &'static [Moment] {
+        use clap::ValueEnum as _;
+        match self {
+            Self::StationRejoin => Moment::value_variants(),
+            _ => &[
+                Moment::Requested,
+                Moment::Observed,
+                Moment::Deadline,
+                Moment::Handover,
+            ],
+        }
+    }
+}
+
 fn timeline_nav(html: &mut String, selection: &Selection) {
-    use clap::ValueEnum as _;
-    let moments = Moment::value_variants();
+    let moments = selection.case.moments();
     let index = moments.iter().position(|m| *m == selection.moment).unwrap();
     let _ = write!(
         html,
@@ -246,6 +272,9 @@ async fn page(
     State(recording): State<Arc<Recording>>,
     Query(selection): Query<Selection>,
 ) -> impl IntoResponse {
+    if !selection.case.moments().contains(&selection.moment) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     let h = Handover::replay(selection.case, selection.moment, &recording);
     let mut html = format!(
         r#"<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{} · Westgebäude</title><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/replay.css"><main class="screen building"><p class="cap">Simuliertes Gebäude · 22. November 2026</p><h1>Westgebäude</h1><h2 id="zeitpunkt" tabindex="-1">{} · {} MEZ</h2><p><strong>{}</strong></p>"#,
@@ -260,12 +289,16 @@ async fn page(
         h.requested_kw,
         local_time(h.request_at)
     );
-    match (h.final_sample_kw, h.first_sample_kw, h.delivery) {
-        (Some(kw), _, _) => {
+    match (
+        h.final_sample_kw.zip(h.final_sample_at),
+        h.first_sample_kw,
+        h.delivery,
+    ) {
+        (Some((kw, measured)), _, _) => {
             let _ = write!(
                 html,
                 "<p>{kw} kW gemessen um {} MEZ.</p>",
-                local_time(h.final_sample_due_at)
+                local_time(measured)
             );
         }
         (None, first, delivery) => {
@@ -290,13 +323,28 @@ async fn page(
     }
     if h.final_sample_kw.is_some()
         && let Some(arrival) = h.stations.iter().filter_map(|s| s.final_received_at).max()
-        && arrival > h.final_sample_due_at
+        && h.final_sample_at.is_some_and(|measured| arrival > measured)
     {
         let _ = write!(
             html,
             "<p>Nachträglich bestätigt · letzter Eingang {} MEZ.</p>",
             local_time(arrival)
         );
+    }
+    if matches!(selection.case, Case::StationRejoin) {
+        let station = &h.stations[1];
+        let message = if !station.connected {
+            "West-02 ist getrennt. Die letzte Messung bleibt im Verlauf."
+        } else if station.final_kw.is_some() {
+            "Die aktuelle Messung von West-02 zählt wieder zur Ladegruppe."
+        } else if station.buffered_received_at.is_some() {
+            "West-02 hat eine ältere Messung nachgeliefert. Die aktuelle Leistung ist offen."
+        } else if h.at >= recording.timeline.rejoined_at {
+            "West-02 ist wieder verbunden. Eine aktuelle Leistungsmessung steht aus."
+        } else {
+            "Beide Ladestationen sind verbunden."
+        };
+        let _ = write!(html, "<p>{message}</p>");
     }
     html.push_str(r#"<p class="cap">Quelle: OCPP-Ladestationstelemetrie</p>"#);
     timeline_nav(&mut html, &selection);
@@ -305,8 +353,10 @@ async fn page(
         snapshot(&mut html, &h);
     }
     case_selector(&mut html, selection.moment);
-    html.push_str("</main></html>");
-    ems_service::edge::file(html, "text/html; charset=utf-8")
+    html.push_str(
+        r#"<p><a href="/comfort">Heizreserve und Ladeleistung vergleichen</a></p></main></html>"#,
+    );
+    ems_service::edge::file(html, "text/html; charset=utf-8").into_response()
 }
 
 fn station_evidence(html: &mut String, h: &Handover) {
@@ -317,12 +367,22 @@ fn station_evidence(html: &mut String, h: &Handover) {
             Some(true) => "angenommen",
             Some(false) => "nicht angenommen",
         };
-        let observed = if let Some((kw, received)) = station.final_kw.zip(station.final_received_at)
-        {
+        let observed = if let (Some(kw), Some(measured), Some(received)) = (
+            station.final_kw,
+            station.final_measured_at,
+            station.final_received_at,
+        ) {
             format!(
                 "{kw} kW gemessen um {} MEZ · Eingang {} MEZ",
-                local_time(h.final_sample_due_at),
+                local_time(measured),
                 local_time(received)
+            )
+        } else if !station.connected
+            && let Some((kw, measured)) = station.initial_kw.zip(h.first_sample_at)
+        {
+            format!(
+                "Verbindung getrennt · letzter Messwert {kw} kW um {} MEZ",
+                local_time(measured)
             )
         } else if h.delivery == Delivery::Pending {
             station.initial_kw.map_or_else(
@@ -332,9 +392,20 @@ fn station_evidence(html: &mut String, h: &Handover) {
         } else {
             "Kein zeitgleicher Messwert".into()
         };
+        let mut observed = observed;
+        if let Some(received) = station.buffered_received_at
+            && let Some(measured) = h.first_sample_at
+        {
+            let _ = write!(
+                observed,
+                " · frühere Messung um {} MEZ, nachgeliefert um {} MEZ",
+                local_time(measured),
+                local_time(received)
+            );
+        }
         let _ = write!(
             html,
-            "<dt>{}</dt><dd>Profil {profile} · {observed}</dd>",
+            "<dt>{}</dt><dd>Angefordertes Profil {profile} · {observed}</dd>",
             station.id
         );
     }
@@ -373,6 +444,7 @@ fn snapshot(html: &mut String, h: &Handover) {
 fn case_selector(html: &mut String, moment: Moment) {
     html.push_str(r#"<details><summary>Beispielfall wechseln</summary><nav><ul>"#);
     for (case, label) in [
+        (Case::StationRejoin, "West-02 nach Verbindungsabbruch"),
         (Case::DelayedArrival, "Verspäteter Eingang"),
         (Case::Confirmed, "Bestätigt"),
         (Case::AboveRequest, "Ladegrenze überschritten"),
@@ -387,7 +459,14 @@ fn case_selector(html: &mut String, moment: Moment) {
         let _ = write!(
             html,
             r#"<li><a href="{}">{label}</a></li>"#,
-            replay_link(case, moment)
+            replay_link(
+                case,
+                if case.moments().contains(&moment) {
+                    moment
+                } else {
+                    Moment::Deadline
+                }
+            )
         );
     }
     html.push_str("</ul></nav></details>");
@@ -405,7 +484,10 @@ pub(super) fn router(recording: Recording) -> Router {
             "/v1/demo/building",
             get(
                 async |State(recording): State<Arc<Recording>>, Query(q): Query<Selection>| {
-                    Json(Handover::replay(q.case, q.moment, &recording))
+                    if !q.case.moments().contains(&q.moment) {
+                        return StatusCode::BAD_REQUEST.into_response();
+                    }
+                    Json(Handover::replay(q.case, q.moment, &recording)).into_response()
                 },
             ),
         )
@@ -494,6 +576,40 @@ mod tests {
             serde_json::to_value(altered(Moment::Deadline)).unwrap()
         );
         assert_eq!(altered(Moment::Handover).final_sample_kw, Some(14.0));
+    }
+
+    #[tokio::test]
+    async fn rejoined_station_needs_fresh_measurement_before_counting_again() {
+        let mut data: serde_json::Value =
+            serde_json::from_str(include_str!("../examples/charging-bank.json")).unwrap();
+        for (watts, expected) in [("14000", 26.0), ("0", 12.0)] {
+            data["west_02"]["after_rejoin"]["payload"][0]["meterValue"][0]["sampledValue"][0]["value"] =
+                watts.into();
+            let recording = Recording::simulate(&data.to_string()).await.unwrap();
+            let view = |moment| Handover::replay(Case::StationRejoin, moment, &recording);
+            for moment in [Moment::Deadline, Moment::Rejoined, Moment::Buffered] {
+                let handover = view(moment);
+                assert!(handover.stations[0].connected);
+                assert_eq!(handover.stations[0].final_kw, Some(12.0));
+                assert_eq!(handover.stations[1].connected, moment != Moment::Deadline);
+                assert_eq!(
+                    handover.stations[1].buffered_received_at.is_some(),
+                    moment == Moment::Buffered
+                );
+                assert_eq!(handover.final_sample_kw, None);
+            }
+            let fresh = view(Moment::Restored);
+            assert_eq!(fresh.final_sample_kw, Some(expected));
+            assert_eq!(fresh.final_sample_at, Some(recording.timeline.restored_at));
+            assert_eq!(view(Moment::Deadline).stations[1].final_received_at, None);
+        }
+        data["west_02"]["after_rejoin"]["payload"][0]["meterValue"][0]["timestamp"] =
+            data["timeline"]["first_sample_at"].clone();
+        let recording = Recording::simulate(&data.to_string()).await.unwrap();
+        assert_eq!(
+            Handover::replay(Case::StationRejoin, Moment::Restored, &recording).delivery,
+            Delivery::Unconfirmed
+        );
     }
 
     #[tokio::test]

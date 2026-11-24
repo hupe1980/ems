@@ -557,9 +557,10 @@ pub async fn run(
     registry: Shared,
     on: Attached,
     settings: ShipSettings,
-    ski: Ski,
+    health: ems_service::Health,
     shutdown: Shutdown,
 ) {
+    let ski = node.ski();
     let Attached { driver, asset } = on;
     let port = listener.local_addr().map_or(0, |a| a.port());
     let mut mdns = announce(&settings, &ski, port);
@@ -640,7 +641,9 @@ pub async fn run(
         );
         // The one slot is taken, so nothing should be told this box is free.
         withdraw(&mut mdns);
+        health.good("grid", time::OffsetDateTime::now_utc());
         session(connection, &registry, driver, &asset, &shutdown).await;
+        health.bad("grid", "the Steuerbox disconnected");
         registry
             .lock()
             .await

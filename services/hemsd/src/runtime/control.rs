@@ -71,6 +71,8 @@ use crate::runtime::transport::Shared;
 /// What the control loop has decided, as a screen would show it.
 #[derive(Debug, Clone, Default)]
 pub struct Status {
+    /// Device-confirmed setting and last confirmation time for the managed pack.
+    pub storage_feedback: Option<(AssetId, ems_drv::StorageFeedback)>,
     /// Device writes are disabled by the commissioning configuration.
     pub shadow: bool,
     /// When the last tick ran.
@@ -207,6 +209,8 @@ pub struct Status {
 /// fourth gets added in the wrong order.
 #[derive(Debug, Clone)]
 pub struct Managed {
+    /// Commissioned battery requiring a fresh decision to renew its control.
+    pub storage_control: Option<AssetId>,
     /// Observe device telemetry and keep all planned actions hypothetical.
     pub shadow: bool,
     /// The only flexible device on this site, if any, is solar generation.
@@ -869,11 +873,13 @@ async fn close_the_day(
             day,
             bill,
             comparison,
+            comparison_gap,
             arbitrage,
         })) => {
             let mut receipt = crate::month::ClosedDay::of_report(&day);
             receipt.metered_bill = Some(bill);
             receipt.comparison = comparison;
+            receipt.comparison_gap = comparison_gap;
             receipt.arbitrage = arbitrage;
             match guard.put_closed_day(&receipt) {
                 Ok(closed) => carried.last_day = closed,
@@ -1067,6 +1073,42 @@ async fn teach(
             .scored
             .observe(published.get(&carried.delivered_slot), pv, load.get());
     }
+}
+
+/// A lease may be renewed only from the current tick's usable measurements.
+pub(crate) fn decide(
+    arbiter: &Arbiter,
+    tick: Tick<'_>,
+    managed_id: Option<&AssetId>,
+) -> ems_realtime::Decision {
+    use ems_core::prelude::{Command, FallbackCause, Reason, Setpoint};
+    let state = tick.state;
+    let now = tick.now;
+    let age = arbiter.config().guard.max_measurement_age;
+    let mut decision = arbiter.tick_with_refresh(tick, managed_id);
+    let Some(id) = managed_id else {
+        return decision;
+    };
+    let eligible = state
+        .grid
+        .is_some_and(|m| m.at <= now && m.fresh_power(now, age).is_some())
+        && state
+            .asset(id)
+            .is_some_and(|m| m.at <= now && m.fresh_power(now, age).is_some() && m.soc.is_some());
+    if eligible && decision.commanded.contains_key(id) {
+        return decision;
+    }
+    decision.setpoints.retain(|sp| &sp.asset != id);
+    decision.commanded.remove(id);
+    if let Ok(release) = Setpoint::new(
+        id.clone(),
+        Command::OnOff(false),
+        Reason::Fallback(FallbackCause::DriverLost),
+        now,
+    ) {
+        decision.setpoints.push(release);
+    }
+    decision
 }
 
 /// Send what the arbiter decided to the drivers that speak for each asset.
@@ -1613,23 +1655,22 @@ async fn tick(
         .map_or_else(Vec::new, |(slot, saved)| {
             respect_household_goals(&mut cem, &managed.site, &observed, slot, saved, now)
         });
-    let decision = arbiter.tick(Tick {
-        now,
-        site: &managed.site,
-        state: &observed.state,
-        limits: &observed.limits,
-        // No plan: `tariffd` and `forecastd` are not called yet, so there are no
-        // prices and no forecast to plan against. The arbiter falls back to
-        // tracking the measured surplus, which is what keeps the house safe and
-        // sensible with the WAN cut — and the *reason* it is doing so is
-        // reported rather than assumed.
-        plan,
-        overrides: &wanted,
-        cem: &cem,
-        previous: &carried.previous,
-        delivered: &carried.delivered,
-        phases: &carried.phases,
-    });
+    let decision = decide(
+        arbiter,
+        Tick {
+            now,
+            site: &managed.site,
+            state: &observed.state,
+            limits: &observed.limits,
+            plan,
+            overrides: &wanted,
+            cem: &cem,
+            previous: &carried.previous,
+            delivered: &carried.delivered,
+            phases: &carried.phases,
+        },
+        managed.storage_control.as_ref(),
+    );
 
     // ── 3. Back to the hardware ─────────────────────────────────────────────
     if !managed.shadow {
@@ -1748,6 +1789,7 @@ fn tick_status(
     let reasons = reasons_of(&decision);
     (
         Status {
+            storage_feedback: observed.storage_feedback.clone(),
             shadow: managed.shadow,
             at: Some(now),
             // Carried, not recomputed: the roof's verdict is settled once a day

@@ -112,6 +112,11 @@ pub enum DriverError {
 /// Nothing here blocks and nothing here allocates a runtime. A driver that
 /// needs to wait says so with [`Driver::poll_deadline`] and is called back.
 pub trait Driver {
+    /// Confirmed battery control state, where the device implements bounded dispatch.
+    fn storage_feedback(&self, _now: OffsetDateTime) -> Option<StorageFeedback> {
+        None
+    }
+
     /// Which asset this driver speaks for.
     ///
     /// One driver, one asset. A device that presents several — a hybrid
@@ -195,4 +200,17 @@ pub trait Driver {
     /// `None` means "only when bytes arrive". A driver with a heartbeat should
     /// never return `None`: that is what makes the failsafe reachable.
     fn poll_deadline(&self) -> Option<OffsetDateTime>;
+}
+
+/// Last bounded storage setting confirmed by the device.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StorageFeedback {
+    /// A write or its verification read is outstanding on the current link.
+    pub pending: bool,
+    /// Fresh readback shows external watt control is disabled.
+    pub autonomous: bool,
+    /// Current confirmed target, in household load convention.
+    pub confirmed: Option<ems_core::prelude::Power>,
+    /// Most recent matched command readback, including explicit release.
+    pub last_confirmed: Option<OffsetDateTime>,
 }

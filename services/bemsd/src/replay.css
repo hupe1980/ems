@@ -22,3 +22,12 @@
 .building details { border-block-start: 1px solid var(--muted); }
 .building summary { font-weight: 600; }
 .building details dd { margin-block-end: .75rem; font-weight: normal; }
+
+.reserve-decision { margin-block: 1.5rem; padding-block-start: .5rem; border-block-start: 1px solid var(--muted); }
+.reserve-decision meter { display: block; width: 100%; height: 1rem; accent-color: var(--accent); }
+.reserve-decision dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .4rem 1rem; }
+.reserve-decision dd { margin: 0; text-align: end; }
+@media (max-width: 24rem) {
+  .reserve-decision dl { display: block; }
+  .reserve-decision dd { text-align: start; margin-block-end: .65rem; }
+}

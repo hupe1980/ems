@@ -208,6 +208,39 @@
         ],
         "type": "object"
       },
+      "BatteryControl": {
+        "description": "Device feedback for the opted-in household battery.",
+        "properties": {
+          "autonomous": {
+            "description": "Whether a fresh device read showed autonomous operation.",
+            "type": "boolean"
+          },
+          "confirmed_w": {
+            "description": "Signed household watts from correlated register readback.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "last_confirmed": {
+            "description": "Most recent successful command readback.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending": {
+            "description": "A write or its verification read is outstanding on the current link.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pending",
+          "autonomous"
+        ],
+        "type": "object"
+      },
       "BoostConfirmation": {
         "additionalProperties": false,
         "description": "A price and saved goal the household has reviewed.",
@@ -376,6 +409,17 @@
             ],
             "description": "Equal-service comparison where both matched energy traces cover the day."
           },
+          "comparison_gap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComparisonGap"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "First interval with a recorded reason for withholding the comparison."
+          },
           "day": {
             "description": "The local day, `YYYY-MM-DD`.",
             "type": "string"
@@ -479,6 +523,25 @@
           "with_plan_ct",
           "without_plan_ct",
           "error_ct"
+        ],
+        "type": "object"
+      },
+      "ComparisonGap": {
+        "description": "Recorded explanation for an unavailable comparison on a day receipt.",
+        "properties": {
+          "at_unix_s": {
+            "description": "Start of the first affected observation interval in Unix seconds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/GapReason",
+            "description": "Evidence that prevented comparison."
+          }
+        },
+        "required": [
+          "at_unix_s",
+          "reason"
         ],
         "type": "object"
       },
@@ -691,6 +754,17 @@
       "Device": {
         "description": "One device, as the page shows it.",
         "properties": {
+          "battery_control": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatteryControl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Feedback for a gateway-managed battery."
+          },
           "commanded_w": {
             "description": "Latest command in watts.",
             "format": "double",
@@ -1217,6 +1291,66 @@
           "load_pct"
         ],
         "type": "object"
+      },
+      "GapReason": {
+        "description": "Evidence missing from the first affected quarter of a closed day.",
+        "oneOf": [
+          {
+            "const": "missing_interval",
+            "description": "The gateway has no register for the quarter.",
+            "type": "string"
+          },
+          {
+            "const": "missing_price",
+            "description": "The interval cannot be priced under both alternatives.",
+            "type": "string"
+          },
+          {
+            "const": "unverified_service",
+            "description": "The available readings do not establish equal service.",
+            "type": "string"
+          },
+          {
+            "const": "control_changed",
+            "description": "Responsibility for control changed during the day.",
+            "type": "string"
+          },
+          {
+            "const": "grid_limits",
+            "description": "The simulation arms operated under different grid control regimes.",
+            "type": "string"
+          },
+          {
+            "const": "thermal_comfort",
+            "description": "Room temperature left the household comfort band.",
+            "type": "string"
+          },
+          {
+            "const": "hot_water",
+            "description": "Hot-water delivery, deadline or terminal tank inventory differed.",
+            "type": "string"
+          },
+          {
+            "const": "vehicle_energy",
+            "description": "Vehicle energy at departure or at day close did not qualify.",
+            "type": "string"
+          },
+          {
+            "const": "battery_inventory",
+            "description": "End-of-day battery inventories differed.",
+            "type": "string"
+          },
+          {
+            "const": "appliance_programme",
+            "description": "A requested appliance programme did not finish.",
+            "type": "string"
+          },
+          {
+            "const": "shared_settlement",
+            "description": "The supply meter alone cannot price the community allocation.",
+            "type": "string"
+          }
+        ]
       },
       "GoalAnswer": {
         "description": "The answer a household gets the moment it sets a goal.",
@@ -3045,7 +3179,7 @@
             ]
           },
           "price_ct": {
-            "description": "Gross import price in the current published plan.",
+            "description": "Gross import price for the active terms in the current quarter.",
             "type": [
               "string",
               "null"
@@ -3411,6 +3545,12 @@
             "minimum": 0,
             "type": "integer"
           },
+          "eligible_days": {
+            "description": "Days with a complete matched comparison, including zero and inconclusive differences.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "grid_charge_blocks": {
             "description": "Number of measured, closed grid-charge blocks.",
             "format": "uint32",
@@ -3469,6 +3609,7 @@
           "priced_days",
           "metered_days",
           "metered_cost_ct",
+          "eligible_days",
           "conclusive_days",
           "compared_delta_ct",
           "compared_error_ct",
@@ -3624,7 +3765,7 @@
   "info": {
     "description": "The local API of a hems box. A request authenticated by the session cookie that changes anything must carry `Content-Type: application/json`.",
     "title": "hemsd",
-    "version": "0.8.0"
+    "version": "0.9.0"
   },
   "openapi": "3.1.0",
   "paths": {

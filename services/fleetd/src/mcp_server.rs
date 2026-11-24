@@ -79,7 +79,7 @@ impl Handler {
     /// Every enrolled box and what it is on.
     #[tool(
         description = "Every enrolled box: the configuration version the fleet wants it on, \
-                       the version it last SAID it is running, when it last said anything, \
+                       the version it last SAID it is running, when it enrolled or reported configuration, \
                        and whether the two agree. `converged` is the question a rollout is \
                        actually about — a fleet that can only push cannot answer it, which \
                        is why a box reports back rather than being assumed to have complied. \
@@ -99,7 +99,7 @@ impl Handler {
             .into_iter()
             // Scoped, so a shared deployment does not answer one tenant with
             // another's households (D112).
-            .filter(|b| caller.sites().covers(&b.site))
+            .filter(|b| caller.may_read(&b.site))
             .map(|b| {
                 let silent = b
                     .last_seen
@@ -120,7 +120,7 @@ impl Handler {
             .count();
         json(&serde_json::json!({
             "boxes": rows,
-            "enrolled": registry.enrolled(),
+            "enrolled": rows.len(),
             "converged": converged,
         }))
     }
@@ -170,10 +170,8 @@ impl Handler {
 
     /// The boxes that have gone quiet.
     #[tool(
-        description = "Boxes that have not reported within the fleet's silence window, and \
-                       boxes that are not on the configuration the fleet wants. Two different \
-                       problems: a silent box may be perfectly compliant and unreachable, and \
-                       an unconverged one may be talking and refusing.",
+        description = "Sites with an overdue configuration report and sites reporting a different \
+                       configuration version. Use the operator desk for gateway contact.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn list_stragglers(
@@ -186,7 +184,7 @@ impl Handler {
         let states: Vec<_> = registry
             .states()
             .into_iter()
-            .filter(|b| caller.sites().covers(&b.site))
+            .filter(|b| caller.may_read(&b.site))
             .collect();
         let silent: Vec<&str> = states
             .iter()
@@ -210,7 +208,7 @@ impl Handler {
         json(&serde_json::json!({
             "silent": silent,
             "unconverged": unconverged,
-            "enrolled": registry.enrolled(),
+            "enrolled": states.len(),
         }))
     }
 
@@ -250,18 +248,9 @@ impl Handler {
             PromptMessage::new_text(Role::User, "Did the configuration change land?"),
             PromptMessage::new_text(
                 Role::Assistant,
-                "1. `list_stragglers`. It separates the two failures, which have the same \
-                 symptom on a dashboard and different causes.\n\
-                 2. **Silent** is a box nobody has heard from. It may be perfectly compliant \
-                 and simply unreachable — a household router, a power cut, a WAN outage — and \
-                 the § 14a guard on it does not need this service to keep working.\n\
-                 3. **Unconverged** is a box that is talking and is on a different version \
-                 from the one the fleet wants. That is a real rollout problem.\n\
-                 4. `converged` comes from what the box *reported*, never from what was \
-                 pushed. A fleet that assumed compliance would report a rollout as finished \
-                 the moment it was started.\n\
-                 5. Nothing here can change any of it. Enrolment, configuration and releases \
-                 are writes and deliberately not tools.",
+                "List configuration stragglers. Check the reported version against the desired \
+                 version. An overdue configuration report leaves the current version uncertain. \
+                 Consult the operator desk for the latest gateway and feeder timestamps.",
             ),
         ]
     }
@@ -301,9 +290,9 @@ impl ServerHandler for Handler {
              the moment it started.\n\
              \n\
              ## Silent and unconverged are different problems\n\
-             A **silent** box may be perfectly compliant and unreachable: the § 14a guard runs \
-             on the box and needs nothing from here. An **unconverged** box is talking and is \
-             on the wrong version. Only the second is a rollout problem.\n\
+             Silence here measures elapsed time since enrolment or a configuration report. \
+             The operator desk tracks gateway contact independently. Compare the reported \
+             version with the desired version to assess rollout progress.\n\
              \n\
              ## Tools\n\
              - `list_boxes()` — every enrolled box and what it is on\n\
@@ -327,4 +316,48 @@ pub fn router(
     shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
     ems_service::mcp::router(auth, shutdown, move || Handler::new(Arc::clone(&state)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fleet_tools_count_only_visible_enrolments() {
+        let mut registry = Registry::default();
+        for site in ["owned", "foreign"] {
+            registry.adopt(
+                site,
+                format!("token-{site}"),
+                time::OffsetDateTime::UNIX_EPOCH,
+            );
+        }
+        let credentials = ems_service::Credentials::default()
+            .with_operator_of(ems_service::SiteScope::One("owned".into()), "operator");
+        let handler = Handler::new(Arc::new(State {
+            registry: Arc::new(RwLock::new(registry)),
+            silent_after: time::Duration::minutes(1),
+            auth: McpAuth::PerCaller(Arc::new(credentials)),
+        }));
+        let request = || {
+            Extension(
+                http::Request::builder()
+                    .header("Authorization", "Bearer operator")
+                    .body(())
+                    .unwrap()
+                    .into_parts()
+                    .0,
+            )
+        };
+        for result in [
+            handler.list_boxes(request()).await,
+            handler.list_stragglers(request()).await,
+        ] {
+            let value = serde_json::to_value(result.unwrap()).unwrap();
+            let text = value["content"][0]["text"].as_str().unwrap();
+            let report: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert_eq!(report["enrolled"], 1);
+            assert!(!text.contains("foreign"));
+        }
+    }
 }

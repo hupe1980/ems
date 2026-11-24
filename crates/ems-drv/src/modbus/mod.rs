@@ -34,6 +34,7 @@ pub mod frame;
 pub mod probe;
 pub mod registers;
 mod scan;
+mod storage;
 
 pub use scan::{Discovery, ModelMap};
 
@@ -122,6 +123,7 @@ pub struct SunSpec {
     /// A ceiling waiting for the device's `WMaxLimPct_SF` before it can be
     /// written.
     awaiting_scale: Option<Power>,
+    storage: Option<storage::Control>,
 }
 
 /// A request that has gone out and not yet come back.
@@ -135,6 +137,12 @@ struct Pending {
 /// Why a request was sent, so its answer can be understood.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Purpose {
+    /// Battery target write and verification use one outstanding transaction.
+    StorageWrite { address: u16, target: Option<i32> },
+    StorageReadback {
+        target: Option<i32>,
+        sent: OffsetDateTime,
+    },
     /// Looking for the `SunS` marker at one of the three base addresses.
     Marker(u16),
     /// Reading a model header while walking the chain.
@@ -208,6 +216,7 @@ impl SunSpec {
             listens_only: false,
             block: Vec::new(),
             awaiting_scale: None,
+            storage: None,
         }
     }
 
@@ -259,9 +268,12 @@ impl SunSpec {
             self.read(address, count, purpose, now);
             return;
         }
+        self.kind = Some(self.models.kind());
+        if self.storage.is_none() && matches!(self.models.next_poll(), Some((704, _, _))) {
+            self.models.advance_poll();
+        }
         if self.link != LinkState::Up {
             self.link = LinkState::Up;
-            self.kind = Some(self.models.kind());
             self.events.push(DriverEvent::Link(LinkState::Up));
         }
         // Then the poll, when it is due.
@@ -296,8 +308,13 @@ impl Driver for SunSpec {
         &self.asset
     }
 
+    fn storage_feedback(&self, now: OffsetDateTime) -> Option<crate::StorageFeedback> {
+        self.storage_feedback(now)
+    }
+
     fn can_limit_production(&self) -> bool {
         !self.listens_only
+            && self.kind.is_some()
             && self.models.has(123)
             && self.models.rating().is_some()
             && self.models.curtail_scale_address().is_some()
@@ -318,7 +335,7 @@ impl Driver for SunSpec {
         // Only a device that publishes model 701 can say what it *could*
         // produce; see the module note. Guessing here would be the difference
         // between a curtailment that lifts and one that does not.
-        if self.models.reports_available_power() {
+        if self.models.kind() == Kind::Inverter && self.models.reports_available_power() {
             base.with_available_power()
         } else {
             base
@@ -339,7 +356,7 @@ impl Driver for SunSpec {
                     // longer aligned; keeping the rest would decode rubbish at
                     // an offset. Dropping it is the only honest recovery.
                     self.inbox.clear();
-                    self.pending = None;
+                    self.on_link(LinkState::Stale, now);
                     return Err(DriverError::Malformed(e.to_string()));
                 }
             }
@@ -370,10 +387,13 @@ impl Driver for SunSpec {
         self.partial = None;
         self.block.clear();
         self.awaiting_scale = None;
-        self.models.forget_curtail_scale();
+        self.models.restart();
+        if let Some(s) = &mut self.storage {
+            s.reset();
+        }
+        self.kind = None;
         self.due = None;
         self.discovery.restart();
-        self.models.rewind();
         if self.link != state {
             self.link = state;
             self.events.push(DriverEvent::Link(state));
@@ -403,12 +423,26 @@ impl Driver for SunSpec {
                 self.events.push(DriverEvent::Link(LinkState::Stale));
             }
             self.discovery.restart();
-            self.models.rewind();
+            self.models.restart();
+            if let Some(s) = &mut self.storage {
+                s.reset();
+            }
+            self.kind = None;
+            self.outbox.clear();
+            self.inbox.clear();
         }
         self.advance(now);
     }
 
     fn command(&mut self, command: &Command, now: OffsetDateTime) -> Result<(), DriverError> {
+        if self.listens_only {
+            return Err(DriverError::Unsupported(
+                "this SunSpec driver is read-only".into(),
+            ));
+        }
+        if self.storage.is_some() {
+            return self.command_storage(command, now);
+        }
         let Command::ProductionCeiling(ceiling) = command else {
             return Err(DriverError::Unsupported(format!("{command:?}")));
         };
@@ -417,7 +451,7 @@ impl Driver for SunSpec {
         // *yet* — answering "this device cannot be curtailed" about a device
         // nobody has spoken to is a diagnosis of the wrong thing, and it is the
         // one an operator would act on.
-        if self.link != LinkState::Up {
+        if self.link != LinkState::Up || self.kind.is_none() {
             return Err(DriverError::NotConnected);
         }
         // Refused here, before anything is sent, where the device has no
@@ -467,14 +501,12 @@ impl Driver for SunSpec {
     }
 
     fn poll_deadline(&self) -> Option<OffsetDateTime> {
-        // Whichever comes first: an outstanding request giving up, or the next
-        // poll falling due. Never `None` — a driver that offered no deadline
-        // would be woken only by bytes, and a silent device sends none.
-        let timeout = self.pending.as_ref().map(|p| p.at + self.cadence.timeout);
-        match (timeout, self.due) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        // Only one request can be in flight. An overdue poll cannot run until
+        // the current reply arrives or times out.
+        self.pending
+            .as_ref()
+            .map(|p| p.at + self.cadence.timeout)
+            .or(self.due)
     }
 }
 
@@ -503,6 +535,34 @@ impl SunSpec {
         true
     }
 
+    fn fold_poll(&mut self, id: u16, address: u16, len: u16, regs: &[u16], now: OffsetDateTime) {
+        self.block.extend_from_slice(regs);
+        let have = u16::try_from(self.block.len()).unwrap_or(u16::MAX);
+        // A model longer than one read is fetched in pieces and folded
+        // whole. An empty answer ends it: a device that returns nothing
+        // would otherwise be asked for the same registers for ever.
+        if let (true, false, Some(next)) = (have < len, regs.is_empty(), address.checked_add(have))
+        {
+            self.read(
+                next,
+                (len - have).min(frame::MAX_REGISTERS_PER_READ),
+                Purpose::Poll { id, address, len },
+                now,
+            );
+        } else {
+            let block = core::mem::take(&mut self.block);
+            if let Some(m) = self.partial.as_mut() {
+                decode::fold(id, &block, m);
+                if id == 704
+                    && let Some(s) = &mut self.storage
+                {
+                    s.observe(&block, now);
+                }
+            }
+            self.models.advance_poll();
+        }
+    }
+
     /// Fold one answer into whatever it was asked for.
     fn handle(&mut self, response: &Response, now: OffsetDateTime) {
         let Some(pending) = self.pending.clone() else {
@@ -511,11 +571,14 @@ impl SunSpec {
             // into a fresh measurement.
             return;
         };
-        if pending.transaction != response.transaction {
+        if response.unit != self.unit || pending.transaction != response.transaction {
             return;
         }
         self.pending = None;
 
+        if self.handle_storage(&pending, response, now) {
+            return;
+        }
         match (&pending.purpose, &response.body) {
             // A device that refuses the write, or refuses to be read back, has
             // not been curtailed. It is a *command* answer and not a discovery
@@ -533,6 +596,14 @@ impl SunSpec {
                     detail: Some(format!("the device refused it, exception {code}")),
                 }));
             }
+            (Purpose::Poll { id, .. }, ResponseBody::Exception { .. }) => {
+                if *id == 704
+                    && let Some(s) = &mut self.storage
+                {
+                    s.observe(&[], now);
+                }
+                self.models.advance_poll();
+            }
             // An exception while walking is how a device says "no model there".
             (_, ResponseBody::Exception { .. }) => {
                 self.discovery.refused(pending.purpose, &mut self.models);
@@ -543,35 +614,15 @@ impl SunSpec {
             (Purpose::Header(address), ResponseBody::Registers(regs)) => {
                 self.discovery.saw_header(*address, regs, &mut self.models);
             }
-            (Purpose::Poll { id, address, len }, ResponseBody::Registers(regs)) => {
-                self.block.extend_from_slice(regs);
-                let have = u16::try_from(self.block.len()).unwrap_or(u16::MAX);
-                // A model longer than one read is fetched in pieces and folded
-                // whole. An empty answer ends it: a device that returns nothing
-                // would otherwise be asked for the same registers for ever.
-                if let (true, false, Some(next)) =
-                    (have < *len, regs.is_empty(), address.checked_add(have))
-                {
-                    let (id, address, len) = (*id, *address, *len);
-                    self.read(
-                        next,
-                        (len - have).min(frame::MAX_REGISTERS_PER_READ),
-                        Purpose::Poll { id, address, len },
-                        now,
-                    );
-                } else {
-                    let block = core::mem::take(&mut self.block);
-                    if let Some(m) = self.partial.as_mut() {
-                        decode::fold(*id, &block, m);
-                    }
-                    self.models.advance_poll();
-                }
+            (Purpose::Poll { id, address, len }, ResponseBody::Registers(regs))
+                if response.function == 3 =>
+            {
+                self.fold_poll(*id, *address, *len, regs, now);
             }
-            (Purpose::Scale, ResponseBody::Registers(regs)) => {
+            (Purpose::Scale, ResponseBody::Registers(regs)) if regs.len() == 1 => {
                 // An unimplemented scale factor reads `0x8000`, which `scaled`
                 // treats as no scaling.
-                self.models
-                    .set_curtail_scale(regs.first().map_or(0, |r| r.cast_signed()));
+                self.models.set_curtail_scale(regs[0].cast_signed());
                 if let Some(ceiling) = self.awaiting_scale.take()
                     && !self.write_ceiling(ceiling, now)
                 {
@@ -585,7 +636,13 @@ impl SunSpec {
                     }));
                 }
             }
-            (Purpose::Curtail { address, wanted }, ResponseBody::WriteAccepted { .. }) => {
+            (
+                Purpose::Curtail { address, wanted },
+                ResponseBody::WriteAccepted {
+                    address: echoed,
+                    count,
+                },
+            ) if address == echoed && *count == CURTAIL_REGISTERS => {
                 // Nothing is reported yet. The write went out well formed,
                 // which is all this answer says; the outcome is what comes back
                 // off the registers.
@@ -601,7 +658,14 @@ impl SunSpec {
                 let outcome = self.readback(*wanted, regs, now);
                 self.events.push(DriverEvent::Command(outcome));
             }
-            _ => {}
+            _ => {
+                self.awaiting_scale = None;
+                self.abandon_command(
+                    pending.purpose,
+                    "unexpected Modbus response to the control request",
+                    now,
+                );
+            }
         }
     }
 
@@ -617,7 +681,11 @@ impl SunSpec {
     fn abandon_command(&mut self, purpose: Purpose, why: &str, now: OffsetDateTime) {
         if matches!(
             purpose,
-            Purpose::Curtail { .. } | Purpose::Readback { .. } | Purpose::Scale
+            Purpose::Curtail { .. }
+                | Purpose::Readback { .. }
+                | Purpose::Scale
+                | Purpose::StorageWrite { .. }
+                | Purpose::StorageReadback { .. }
         ) {
             self.events.push(DriverEvent::Command(CommandOutcome {
                 accepted: false,

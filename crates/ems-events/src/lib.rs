@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod departure;
 pub mod envelope;
 pub mod webhook;
 
@@ -56,6 +57,8 @@ pub const SITE_BALANCE_DIVERGED: &str = "de.ems.site.balance.diverged";
 ///
 /// Keyed by site and local day so a retransmission can update the original day.
 pub const SITE_DAY_REPORTED: &str = "de.ems.site.day.reported";
+/// A simulated household outlet reported departure evidence.
+pub const SITE_DEPARTURE_REHEARSED: &str = "de.ems.site.departure.rehearsed";
 /// A local day closed, as the household's receipt: whole cents, Wh and the
 /// § 14a lines. Sent to the systems a household subscribed, not to the fleet —
 /// a type of its own because its `data` is not [`SITE_DAY_REPORTED`]'s.
@@ -117,6 +120,7 @@ pub const ALL: &[&str] = &[
     SITE_SETPOINT_ISSUED,
     SITE_BALANCE_DIVERGED,
     SITE_DAY_REPORTED,
+    SITE_DEPARTURE_REHEARSED,
     SITE_DAY_CLOSED,
     SITE_GOAL_AT_RISK,
     DEVICE_DISCOVERED,
