@@ -25,11 +25,11 @@ def verify(browser, base):
     requests, errors = [], []
     page.on("request", lambda request: requests.append(request.url))
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.goto(base + "/")
-    assert not any(".wasm" in url for url in requests), "landing page fetched Wasm"
     with page.expect_response(lambda response: ".wasm" in response.url) as module:
-        page.locator('main a[href$="/peak-challenge/"]').first.click()
+        page.goto(base + "/")
     assert module.value.ok and module.value.headers["content-type"].startswith("application/wasm")
+    page.locator(".hero-actions").get_by_role("link", name="Try the peak challenge").click()
+    expect(page).to_have_url(base + "/#peak-challenge")
     early = page.get_by_role("button", name="Start now", exact=True)
     delayed = page.get_by_role("button", name="Wait two minutes", exact=True)
     reveal = page.get_by_role("button", name="Reveal the meter close", exact=True)
@@ -56,8 +56,18 @@ def verify(browser, base):
     expect(meter).to_be_visible()
     expect(meter).to_contain_text("1,140")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert sum(url.endswith("/ems.wasm") for url in requests) == 1
     assert not errors, errors
     assert all(url.startswith(base + "/") for url in requests), requests
+    page.close()
+
+    page = browser.new_page(viewport={"width": 320, "height": 760})
+    page.route("**/*.wasm*", lambda route: route.abort())
+    page.goto(base + "/#simulators")
+    for scenario in ("solar", "peak"):
+        expect(page.locator(f"#{scenario}-example table")).to_be_visible()
+        expect(page.locator(f"#{scenario}-controls")).to_be_hidden()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.close()
 
     for mode in ("offline-module", "invalid-reading", "no-script"):
@@ -87,7 +97,8 @@ def verify(browser, base):
 def verify_solar(browser, base):
     page = browser.new_page(viewport={"width": 320, "height": 760}, color_scheme="light")
     page.goto(base + "/")
-    page.get_by_role("link", name="Try solar EV charging").click()
+    page.locator(".hero-actions").get_by_role("link", name="Try solar EV charging").click()
+    expect(page).to_have_url(base + "/#solar-charging")
     slider = page.get_by_role("slider", name="Surplus solar power")
     readings = page.locator(".solar-reading")
     expect(readings).to_have_text(["2.00 kW", "Paused"])

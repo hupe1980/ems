@@ -29,6 +29,10 @@
 {%- include "partials/schema.html" %}
 {% endblock %}
 
+{% block styles %}
+<link rel="stylesheet" href="{{ get_url(path='solar/charging.css') }}">
+<link rel="stylesheet" href="{{ get_url(path='peak/challenge.css') }}">
+{% endblock %}
 {% block content %}
 <section class="hero">
   <div class="hero-inner">
@@ -36,8 +40,8 @@
       <h1>Energy management for the <em>German grid.</em></h1>
       <p>Run a home gateway, trace a building’s charging limit or reconcile an industrial demand peak. Each system runs locally.</p>
       <div class="hero-actions">
-        <a class="btn btn-primary" href="{{ get_url(path='@/peak-challenge.md') }}">Try the peak challenge</a>
-        <a class="btn btn-secondary" href="{{ get_url(path='@/docs/getting-started.md') }}">Run a local demo</a>
+        <a class="btn btn-primary" href="#solar-charging">Try solar EV charging</a>
+        <a class="btn btn-secondary" href="#peak-challenge">Try the peak challenge</a>
       </div>
     </div>
     <figure class="gateway-preview">
@@ -57,7 +61,7 @@
         <h3>Home <small>HEMS</small></h3>
         <p>Schedule EV charging, hot water and battery use around household goals, prices and grid limits. Connect supported equipment or use the simulator.</p>
         <a href="{{ get_url(path='@/docs/household.md') }}">Read the household guide</a>
-        <a href="{{ get_url(path='@/solar-charging.md') }}">Try solar EV charging</a>
+        <a href="#solar-charging">Try solar EV charging</a>
       </section>
       <section>
         <h3>Building <small>BEMS</small></h3>
@@ -67,11 +71,19 @@
       <section>
         <h3>Industrial <small>CEMS</small></h3>
         <p>Choose when the battery starts, then reveal how the original quarter hour closed. Compare the measured mean with the modelled alternative.</p>
-        <a href="{{ get_url(path='@/docs/simulation.md') }}#replay-an-industrial-shift">Replay a peak decision</a>
+        <a href="#peak-challenge">Try the peak challenge</a>
       </section>
     </div>
   </div>
 </section>
+
+<div class="home-simulators" id="simulators">
+  {% set embedded = true %}
+  {% set scenario = get_page(path="solar-charging.md") %}
+  {% include "partials/solar-charging.html" %}
+  {% set scenario = get_page(path="peak-challenge.md") %}
+  {% include "partials/peak-challenge.html" %}
+</div>
 
 <section class="band faq-band" id="faq">
   <div class="band-inner faq-layout">

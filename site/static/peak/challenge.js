@@ -1,13 +1,12 @@
+import { modelExports } from "../simulation.js";
+
 const controls = document.getElementById("peak-controls");
 const example = document.getElementById("peak-example");
 const formatter = new Intl.NumberFormat("en-GB");
 const format = value => formatter.format(value);
 
 async function start() {
-  const response = await fetch(new URL("../ems.wasm", import.meta.url));
-  if (!response.ok) throw new Error("Peak model unavailable");
-  const { instance } = await WebAssembly.instantiate(await response.arrayBuffer());
-  const model = instance.exports;
+  const model = await modelExports;
   const buttons = [...controls.querySelectorAll("[data-choice]")];
   const reveal = document.getElementById("peak-reveal");
   const disclosure = reveal.querySelector("button");

@@ -1,3 +1,5 @@
+import { modelExports } from "../simulation.js";
+
 const controls = document.querySelector("#solar-controls");
 const slider = document.querySelector("#solar-surplus");
 const example = document.querySelector("#solar-example");
@@ -12,10 +14,7 @@ function fallback() {
 }
 
 async function start() {
-  const response = await fetch(new URL("../ems.wasm", import.meta.url));
-  if (!response.ok) throw new Error("Household model unavailable");
-  const { instance } = await WebAssembly.instantiate(await response.arrayBuffer());
-  const charge = instance.exports.solar_charge_w;
+  const charge = (await modelExports).solar_charge_w;
   function update() {
     const surplus = slider.valueAsNumber;
     const results = [charge(surplus, 1), charge(surplus, 3)];

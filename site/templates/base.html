@@ -80,6 +80,7 @@
   <nav class="site-nav" aria-label="Site">
     <a class="brand" href="{{ get_url(path='@/_index.md') }}"{% if section is defined and section.relative_path == "_index.md" %} aria-current="page"{% endif %}><span class="mark" aria-hidden="true">⚡</span>ems</a>
     <div class="links">
+      <a href="{{ get_url(path='@/_index.md') }}#simulators">Simulators</a>
       <a href="{{ get_url(path='@/docs/_index.md') }}"{% if section is defined and section.relative_path == "docs/_index.md" %} aria-current="page"{% endif %}>Documentation</a>
       <a href="{{ get_url(path='@/docs/getting-started.md') }}"{% if page is defined and page.relative_path == "docs/getting-started.md" %} aria-current="page"{% endif %}>Get started</a>
       <a href="{{ get_url(path='@/docs/background.md') }}"{% if page is defined and page.relative_path == "docs/background.md" %} aria-current="page"{% endif %}>Background</a>

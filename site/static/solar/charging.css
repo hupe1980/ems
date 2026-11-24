@@ -9,7 +9,7 @@
 .solar-scale, #solar-unit, .solar-reason { font-size: .9rem; color: var(--fg-muted); }
 .solar-modes { border-top: 1px solid var(--line); padding-top: 1rem; }
 .solar-modes section { flex: 1; min-width: 0; }
-.solar-modes h2 { font-size: 1rem; margin: 0; }
+.solar-modes :is(h2, h3) { font-size: 1rem; margin: 0; }
 .solar-reading { font-size: clamp(1.3rem, 4vw, 2.2rem); font-weight: 700; margin: .3rem 0; font-variant-numeric: tabular-nums; }
 .solar-modes meter { display: block; width: 100%; }
 #solar-example table { width: 100%; white-space: normal; }
