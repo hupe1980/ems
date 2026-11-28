@@ -27,6 +27,7 @@ break anything, and says so here.
 
 ### Fixed
 
+- Commissioning keeps the language switch and meter identity within a 320-pixel viewport.
 - Gateway sign-in restores the requested view. Losing access to a departure receipt preserves visible energy history.
 - EV planning accounts for midnight departures and complete charging quarters. The gateway checks write acknowledgements, and the simulated outlet accounts for partial-interval charging.
 - A full heat-pump request permits full output. The tank distinguishes unmet hot-water demand from standing losses.
