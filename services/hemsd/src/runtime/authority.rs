@@ -104,14 +104,17 @@ pub(super) fn enter(
             matches!(
                 d,
                 crate::config::DriverSettings::Sunspec(_)
+                    | crate::config::DriverSettings::SerialSunspec(_)
                     | crate::config::DriverSettings::Registers(_)
             )
         })
         .collect::<Vec<_>>();
-    let scope = hex::encode(digest(
-        &SHA256,
-        &serde_json::to_vec(&(&settings.site, meters_and_actuators))?,
-    ));
+    let scope_bytes = if settings.serial_buses.is_empty() {
+        serde_json::to_vec(&(&settings.site, meters_and_actuators))?
+    } else {
+        serde_json::to_vec(&(&settings.site, meters_and_actuators, &settings.serial_buses))?
+    };
+    let scope = hex::encode(digest(&SHA256, &scope_bytes));
     if settings.mode == OperatingMode::Shadow {
         let controller = settings
             .external_limit_controller

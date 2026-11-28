@@ -85,6 +85,12 @@ fn meter(regs: &[u16], into: &mut Measurement) {
     let Ok(m) = Model203::parse(regs) else {
         return;
     };
+    if m.w == i16::MIN
+        || !SCALE_FACTOR_RANGE.contains(&m.w_sf)
+        || !SCALE_FACTOR_RANGE.contains(&m.tot_wh_sf)
+    {
+        return;
+    }
     into.power = Some(Power::new(scaled(i64::from(m.w), m.w_sf)));
     // A meter's frequency scale factor is optional in the model; an absent one
     // is an exponent of zero rather than a reason to drop the reading.

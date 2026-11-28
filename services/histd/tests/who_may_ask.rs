@@ -33,11 +33,20 @@ fn credentials() -> Credentials {
     .collect();
     Credentials::resolve(
         &sites,
-        &std::collections::BTreeMap::new(),
-        &[ems_service::OperatorCredential {
-            token: Secret::literal(NETZ),
-            tenant: "*".into(),
-        }],
+        &BTreeMap::from([(
+            "other".into(),
+            std::collections::BTreeSet::from(["haus-2".into()]),
+        )]),
+        &[
+            ems_service::OperatorCredential {
+                token: Secret::literal(NETZ),
+                tenant: "*".into(),
+            },
+            ems_service::OperatorCredential {
+                token: Secret::literal("tok-other"),
+                tenant: "other".into(),
+            },
+        ],
     )
     .unwrap()
 }
@@ -379,4 +388,65 @@ async fn an_operator_may_not_write_the_record_it_is_judged_by() {
         403
     );
     trigger.trigger();
+}
+
+#[tokio::test]
+async fn desk_energy_requires_site_authority_and_returns_one_closed_meter_day() {
+    let (addr, stop) = start_with_register_meter(true).await;
+    let path = "/v1/desk/energy?site=haus-1&day=2026-01-15";
+    assert_eq!(request(addr, "GET", path, None, None).await, 401);
+    assert_eq!(request(addr, "GET", path, Some(HAUS_1), None).await, 403);
+    assert_eq!(
+        request(addr, "GET", path, Some("tok-other"), None).await,
+        403
+    );
+    let (status, body) = exchange(addr, "GET", path, Some(NETZ), None).await;
+    assert_eq!(status, 200);
+    let day: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        day["intervals"],
+        serde_json::json!([{
+            "start_unix_s": NOW.unix_timestamp(), "import_kwh":"0", "export_kwh":"0"
+        }])
+    );
+    for (date, count) in [("2025-03-30", 92), ("2025-10-26", 100)] {
+        let url = format!("/v1/desk/energy?site=haus-1&day={date}");
+        let (status, body) = exchange(addr, "GET", &url, Some(NETZ), None).await;
+        assert_eq!(status, 200);
+        let day: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            day["end_unix_s"].as_i64().unwrap() - day["start_unix_s"].as_i64().unwrap(),
+            count * 900
+        );
+        assert_eq!(day["intervals"], serde_json::json!([]));
+    }
+    for (end, days, quarters) in [("2025-03-30", 7, 668), ("2025-10-26", 90, 8644)] {
+        let url = format!("/v1/desk/energy?site=haus-1&day={end}&days={days}");
+        let (status, body) = exchange(addr, "GET", &url, Some(NETZ), None).await;
+        assert_eq!(status, 200);
+        let window: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(window["days"], days);
+        assert_eq!(
+            window["end_unix_s"].as_i64().unwrap() - window["start_unix_s"].as_i64().unwrap(),
+            quarters * 900
+        );
+    }
+    for days in [0, 91] {
+        assert_eq!(
+            request(
+                addr,
+                "GET",
+                &format!("{path}&days={days}"),
+                Some(NETZ),
+                None
+            )
+            .await,
+            400
+        );
+    }
+    for date in ["0001-01-01", "9999-12-31", "2025-02-30"] {
+        let url = format!("/v1/desk/energy?site=haus-1&day={date}");
+        assert_eq!(request(addr, "GET", &url, Some(NETZ), None).await, 400);
+    }
+    stop.trigger();
 }

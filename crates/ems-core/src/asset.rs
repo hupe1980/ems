@@ -412,7 +412,7 @@ pub use metering::grid::para14a::SteuVeFallgruppe as Fallgruppe;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum HeatPumpControl {
-    /// Two relay contacts carrying the four SG Ready states.
+    /// Two relay contacts carrying the three SG Ready 1.1 operating states.
     ///
     /// Coarse — the states are "blocked", "normal", "recommended on",
     /// "commanded on", not a power value — and from 1 July 2027 no longer enough

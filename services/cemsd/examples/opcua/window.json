@@ -1,0 +1,23 @@
+{
+  "meter": {
+    "device": "North incomer",
+    "applicationUri": "urn:ems:grid-meter",
+    "node": {
+      "namespace": "urn:ems:plant",
+      "id": "s=GridImportWh"
+    }
+  },
+  "start": "2026-10-25T00:45:00Z",
+  "end": "2026-10-25T01:15:00Z",
+  "tolerance_wh": 1,
+  "closed": [
+    {
+      "at": "2026-10-25T00:45:00Z",
+      "wh": 285000
+    },
+    {
+      "at": "2026-10-25T01:00:00Z",
+      "wh": 274999
+    }
+  ]
+}

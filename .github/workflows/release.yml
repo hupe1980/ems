@@ -4,9 +4,6 @@ name: Release
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
-  # A manual run builds, packages and smoke-tests everything and publishes
-  # nothing: the two publishing jobs are gated on the trigger being a tag. That
-  # is the dry run, and it needs no flag anybody could forget to set.
   workflow_dispatch:
 
 permissions: {}
@@ -21,6 +18,11 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  interfaces:
+    uses: ./.github/workflows/interfaces.yml
+    permissions:
+      contents: read
+
   verify:
     name: Verify
     runs-on: ubuntu-latest
@@ -106,7 +108,7 @@ jobs:
         with:
           tool: cargo-auditable
 
-      - run: cargo auditable build --release --locked -p hemsd -p bemsd -p cemsd
+      - run: cargo auditable build --release --locked -p hemsd -p bemsd -p cemsd --features cemsd/opcua
 
       - name: Smoke test
         run: |
@@ -124,11 +126,16 @@ jobs:
             cp "target/release/$daemon" LICENSE-MIT LICENSE-APACHE "services/$daemon/README.md" "dist/$name/"
             if [[ "$daemon" == hemsd ]]; then
               cp services/hemsd/{hemsd.example.toml,openapi.json} "dist/$name/"
+              serial_version=$(python3 -c 'import tomllib; print(next(p["version"] for p in tomllib.load(open("Cargo.lock", "rb"))["package"] if p["name"] == "serialport"))')
+              printf 'serialport %s is distributed under MPL-2.0 (https://mozilla.org/MPL/2.0/).\nUnmodified source: https://static.crates.io/crates/serialport/serialport-%s.crate\n' "$serial_version" "$serial_version" > "dist/$name/THIRD-PARTY.txt"
             elif [[ "$daemon" == bemsd ]]; then
               cp -R services/bemsd/examples "dist/$name/"
             else
               mkdir "dist/$name/examples"
               cp crates/ems-sim/fixtures/shift-trace.json "dist/$name/examples/"
+              cp -R services/cemsd/examples/opcua "dist/$name/examples/"
+              cp services/cemsd/OPCUA-NOTICES.txt "dist/$name/"
+              "dist/$name/cemsd" commission-meter --contract "dist/$name/examples/opcua/contract.json" --readings "dist/$name/examples/opcua/readings.ndjson" --window "dist/$name/examples/opcua/window.json"
               "dist/$name/cemsd" reconcile "dist/$name/examples/shift-trace.json"
             fi
             tar -C dist -czf "dist/$name.tar.gz" "$name"
@@ -153,10 +160,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p sbom
-          cargo cyclonedx --manifest-path Cargo.toml --format json
-          for daemon in hemsd bemsd cemsd; do
+          cargo cyclonedx --manifest-path Cargo.toml --features cemsd/opcua --format json
+          for daemon in hemsd bemsd cemsd tariffd; do
             inventory="services/$daemon/$daemon.cdx.json"
             jq -e --arg daemon "$daemon" '.metadata.component.name == $daemon and any(.components[]; .name == "ems-service")' "$inventory"
+            if [[ "$daemon" == cemsd ]]; then
+              jq -e 'any(.components[]; .name == "opcua-kit")' "$inventory"
+            fi
             cp "$inventory" "sbom/$daemon-${{ needs.verify.outputs.version }}.cdx.json"
           done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -165,22 +175,73 @@ jobs:
           path: sbom/*.json
           if-no-files-found: error
 
+  images:
+    name: Promote tested OCI manifests
+    if: github.event_name == 'push'
+    needs: [interfaces, verify, binaries, sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: oci-*
+          path: images
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: contracts-*
+          path: contracts
+          merge-multiple: true
+      - name: Assemble each version tag from measured architecture manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y skopeo
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for arch in amd64 arm64; do
+            receipt="contracts/interfaces-$arch.json"
+            jq -e --arg p "linux/$arch" '.platform == $p and (.ports | keys == ["cloudevents","mcp","rest","webhooks"]) and all(.ports[]; .result == "passed")' "$receipt"
+            for role in hemsd tariffd; do
+              archive="oci-archive:images/oci-$arch/$role.tar"
+              expected=$(jq -er --arg r "$role" '.images[$r].manifest' "$receipt")
+              actual="sha256:$(skopeo inspect --raw "$archive" | sha256sum | cut -d' ' -f1)"
+              test "$expected" = "$actual"
+              skopeo copy --preserve-digests "$archive" "docker://$prefix-$role:$GITHUB_SHA-$arch"
+            done
+          done
+          for role in hemsd tariffd; do
+            repo="$prefix-$role"
+            manifests=()
+            for arch in amd64 arm64; do
+              digest=$(jq -er --arg r "$role" '.images[$r].manifest' "contracts/interfaces-$arch.json")
+              manifests+=("$repo@$digest")
+            done
+            docker buildx imagetools create --tag "$repo:$VERSION" "${manifests[@]}"
+          done
+
   # ── 4. The GitHub release ───────────────────────────────────────────────────
   release:
     name: GitHub release
-    needs: [verify, binaries, sbom]
+    needs: [verify, binaries, sbom, images]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # Build provenance: a signed statement, in a public transparency log, that
-      # these artefacts came out of this workflow at this commit. It is what lets
-      # somebody who downloaded a tarball check that it is the one we built.
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Read the published changelog entry
+        run: |
+          awk -v heading="## [${GITHUB_REF_NAME#v}]" '$1 == "##" { if (found) exit; found = index($0, heading " ") == 1; next } found { print }' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
+          pattern: "{edge-*,contracts-*,sbom}"
           path: artifacts
           merge-multiple: true
 
@@ -193,12 +254,14 @@ jobs:
 
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: artifacts/*.tar.gz
+          subject-path: |
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: ems ${{ needs.verify.outputs.version }}
-          generate_release_notes: true
+          body_path: release-notes.md
           fail_on_unmatched_files: true
           files: |
             artifacts/*.tar.gz
@@ -211,8 +274,6 @@ jobs:
     needs: [release]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    # Named so crates.io's trusted publishing can be scoped to it, and so a
-    # required reviewer can be added later without touching this file.
     environment: crates-io
     permissions:
       id-token: write

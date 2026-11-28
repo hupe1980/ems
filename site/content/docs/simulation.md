@@ -14,13 +14,64 @@ Choose the boundary you want to exercise. All peers below run on the same machin
 | `cargo test -p hemsd --features house --test virtual_house` | The household gateway reads SunSpec registers over Modbus TCP and receives grid limits over EEBUS. | Virtual equipment, grid signals and household demand |
 | `just matter-recovery` | The gateway reads appliance power through a schema-11-compatible Matter Server WebSocket API. | The commissioner peer, its readings and a connection loss. The test ends at the commissioner API. |
 | `cargo run -p bemsd -- demo` | Two charging stations exchange OCPP 1.6J messages with a local charging management system. | Station loads, meter timestamps and delivery delays |
+| `just opcua-meter-trial` | An independent simulated OPC UA server supplies a source-timed import register over an encrypted session. | Register identity, capture quality and exact Wh against independent closes |
 | `cargo run -p cemsd --features openadr -- openadr` | A site client exchanges an event and a metered report with an OpenADR 3.1 server over HTTP. | Aggregator request, industrial meter trace and alternative battery dispatch times |
+
+## Check a winter hot-water target
+
+From the workspace root, save the receipt and open it in a browser. Omit `--html` for JSON.
+
+```sh
+cargo run --locked -p hemsd --features house -- thermal-trial --target-wh 2300 --html > winter.html
+```
+
+Two simulated tanks start in the same state. S2 requests full power from one and half power from the other. Independent appliance readings show 2,380 Wh and 2,005 Wh of usable heat at the deadline. Only the first meets the 2,300 Wh goal. The SunSpec meter measures whole-house import.
+
+Use `--missing-close` to inspect an incomplete receipt, `--disconnect` to let an instruction expire, or `--departure-wh 3600` to follow the same meter through an OCPP departure at 07:00 UTC.
+
+## Read a winter day with storage
+
+`cargo run --locked -p hemsd --features house -- winter-day` prints the Berlin winter day from midnight to midnight. Open **Day → Winter trial** in the household demo built with the `house` feature, or use `--html` to save the report and inspect any quarter offline. Use `--json` for the 97 cumulative meter readings and the battery’s opening and closing state of charge. Each arm runs the same rooftop production, household demand and self-managed battery. Only the morning heater request differs. Use `--target-wh` and `--departure-wh` to change the service goals.
+
+The default run imports 6,592 Wh with the full heater request and 6,467 Wh with the half request. Both batteries finish at 9.77% after standby losses. The lower-import run misses the 06:15 UTC hot-water target by 295 Wh. Room and water observations cover that morning quarter. The electrical day runs in accelerated time.
+
+<a href="../../screens/winter-meter-day.png"><img src="../../screens/winter-meter-day.png" width="600" style="max-width:100%;height:auto" loading="lazy" alt="Winter receipt comparing meter totals, battery charge and the baseline hot-water shortfall"></a>
 
 ## Reconcile the virtual household meter
 
 Run `just house-meter-trial` from the workspace root. It reads import and export over Modbus TCP for three Berlin dates, advancing the plant one second at a time. Winter has 96 quarters, the spring clock change has 92 and the autumn change has 100. The closing midnight reading belongs to the last quarter of the preceding day. Each quarter must agree with integrated device power within 1 Wh per direction. It also compares the daily totals with a separately stepped minute model. The allowance in each direction is the larger of 50 Wh and 1% of that model’s total. The printed fixture bill uses 25 ct/kWh for import before 18:00 Berlin time, 40 ct/kWh thereafter, and 8 ct/kWh for export. It must agree with the plant calculation within one cent.
 
 For a live session run `cargo run -p hemsd --features house -- house --run --at 16:58`. The gateway manages the inverter and reads the connection meter and the self-managed battery. The virtual Steuerbox sends its scheduled reduction over EEBUS. The `grid` entry in `/readyz` shows whether the paired Steuerbox is connected. Setup shows the last LPC heartbeat. Keep the owner-only `.steuerbox.pem` beside the generated configuration to preserve the paired identity across restarts.
+
+### Measure space and water heating
+
+Add either flag to `house --run`, or combine them. Both appliances run on loopback. The gateway reads temperature (0.1 °C) at holding register 0 and measured electrical power (W) at register 1. Their actual draw appears at the same connection meter.
+
+| Flag | Modbus unit | Control at holding register 2 |
+|---|---|---|
+| `--with-tank` | 4 · hot-water cylinder | 0 switches the relay off, 1 enables the heater. Draws and standing losses cool the tank. |
+| `--with-room` | 5 · space heating | 1 limits the compressor to zero, 2 uses the normal thermostat, 3 raises its target to the top of the comfort band. |
+
+### Verify a vehicle departure
+
+Run `hemsd house --day winter --at 03:00 --with-ev --run` to commission a three-phase wallbox over loopback Modbus TCP. The winter car starts at 18 kWh and needs 38 kWh at 07:00 Berlin simulation time. Open the household view to pause or boost charging. The connection meter includes the rest of the house. Add `--with-room --with-tank --manage-storage` to share the meter with heating and storage. Run `just house-session-trial` to compare a 01:30 and a 02:00 start at 6 A per phase through the 07:00 departure. The outlet measures AC energy. The car reports its stored energy at departure.
+
+| Charging starts | Outlet delivery | Car at 07:00 | 38 kWh target |
+|---|---:|---:|---|
+| 01:30 | 22.770 kWh | 38.946 kWh | Met |
+| 02:00 | 20.700 kWh | 37.044 kWh | Short by 0.956 kWh |
+
+To compare a running gateway with a fresh reference planner, start the house in an empty working directory. In a second terminal there, run the planner after the gateway writes its configuration.
+
+```sh
+hemsd house --run --day winter --with-room --with-tank --with-ev --manage-storage --keep-history
+```
+
+```sh
+hemsd simulate --day winter --cold-start --site-from house.toml --json > reference.json
+```
+
+The gateway retains its quarters and closed-day reports in `house.toml.redb`. The reference uses the same installed ratings with its own clock, weather and prices. Inspect `battery_soc_end` and `tank_closing_kwh` alongside service at the deadlines before comparing cost.
 
 ## Check an EV departure
 

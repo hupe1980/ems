@@ -15,8 +15,12 @@
 <label><span data-word="fuse">Hauptsicherung je Phase (A)</span> <input name="fuse" type="number" required min="1" max="400"></label></fieldset>
 <fieldset><legend data-word="device">Anschlusszähler</legend>
 <p data-word="meterHint">Gleichen Sie die erkannten Geräte mit den Typenschildern ab.</p>
+<label id="meter-connection" hidden><span data-word="linkType">Verbindung</span> <select name="link"><option value="tcp">Modbus TCP</option><option value="serial">RS-485 · Modbus RTU</option></select></label>
+<div id="meter-tcp">
 <label><span data-word="address">IP-Adresse</span> <input name="host" required placeholder="192.168.1.40"></label>
 <label>Port <select name="port"><option>502</option><option>1502</option></select></label>
+</div>
+<label id="meter-bus" hidden><span data-word="serialBus">Serieller Bus</span> <select name="bus" disabled></select></label>
 <label>Modbus Unit <input type="number" name="unit" min="0" max="255" value="1" required></label></fieldset>
 <fieldset><legend><label><input type="checkbox" name="roof"><span data-word="roof">PV-Anlage beobachten</span></label></legend>
 <fieldset id="roof-fields" hidden disabled>

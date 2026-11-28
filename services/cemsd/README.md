@@ -1,6 +1,6 @@
 # cemsd
 
-The daemon serves the industrial replay from `ems_sim::peak`. Try the [peak challenge](https://hupe1980.github.io/ems/peak-challenge/) in your browser, or start the local replay to explore meter gaps, battery limits and the repeated clock hour.
+Commission an industrial import meter and compare its register with independently closed quarter hours. Try the [peak challenge](https://hupe1980.github.io/ems/peak-challenge/) in your browser, or start the local replay to explore meter gaps, battery limits and the repeated clock hour.
 
 ```sh
 cargo run -p cemsd -- demo
@@ -20,6 +20,33 @@ cargo run -p cemsd -- reconcile --format html crates/ems-sim/fixtures/shift-trac
 Open `review.html` offline and follow **Go to first exception**. Each quarter shows its Berlin offset, UTC start, register increase, independent close and signed difference. JSON is the default. Valid exceptions produce a report and a nonzero exit. Invalid input produces only a diagnostic.
 
 In the Linux archive, run `./cemsd reconcile examples/shift-trace.json` from the extracted directory.
+
+## Commission an OPC UA import meter
+
+Build with `cargo build --locked -p cemsd --features opcua`. Start with the supplied capture or collect one from an approved endpoint. The contract selects one scalar import register in Wh by namespace URI and node identifier. Confirm the meter’s direction, reset behavior and boundary latching against the site's point list.
+
+From the workspace root, open an offline review of two quarters spanning Berlin’s repeated hour:
+
+```sh
+meter=services/cemsd/examples/opcua
+target/debug/cemsd commission-meter --contract "$meter/contract.json" \
+  --readings "$meter/readings.ndjson" --window "$meter/window.json" --format html > review.html
+```
+
+In the Linux archive, use `./cemsd` and `examples/opcua`. Omit `--format html` for JSON. If a quarter lacks a boundary or exceeds tolerance, the command still writes the report and exits nonzero. Invalid input produces a diagnostic on stderr.
+
+To acquire fresh evidence, use the approved server leaf, trusted client application certificate and matching private key in DER. The endpoint must allow the anonymous user on its certificate-authenticated, encrypted session.
+
+```sh
+target/debug/cemsd capture-meter --contract contract.json \
+  --endpoint opc.tcp://meter.example:4840 --server-cert server.der \
+  --client-uri urn:plant:commissioner --client-cert client.der --client-key client-key.der \
+  --samples 65 --period-seconds 15 > shift.ndjson
+```
+
+When a reading is excluded, the review identifies its NDJSON line, reason and available UTC source time. A status exclusion preserves the full OPC UA code. Select the quarter link to inspect the surrounding meter evidence.
+
+Choose a new output filename. The session emits NDJSON once the requested reads succeed. Use an integer-preserving reader for UInt64 counters above 2⁵³. Polling an instantaneous counter rarely captures an exact quarter boundary. Use a source-timestamped, latched register and obtain the close window independently from the site metering system. `just opcua-meter-trial` runs the acquisition and review on a simulated meter.
 
 ## Rehearse an OpenADR event
 

@@ -447,8 +447,13 @@ impl Arbiter {
                 .and_then(|s| s.target(id))
                 .map_or(ems_core::prelude::ThermalMode::Heat, |t| t.mode);
             thermal.insert(id.clone(), direction);
+            // Reaching nameplate power is ordinary full-load operation. A lower
+            // device ceiling or another binding rule still requires curtailment.
+            let limited = guard_rule.is_some_and(|rule| {
+                rule != GuardRule::DeviceLimit || envelope.ceiling < asset.ratings().ceiling
+            });
             let decision = ems_device::Decision::new(smoothed)
-                .guard_limited(guard_rule.is_some())
+                .guard_limited(limited)
                 .in_phase_mode(mode)
                 .in_thermal_mode(direction);
             for command in ems_device::commands_for(asset, decision) {

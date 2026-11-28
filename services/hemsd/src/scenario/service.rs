@@ -10,6 +10,11 @@ use ems_tariff::PriceStack;
 use rust_decimal::prelude::ToPrimitive;
 use time::OffsetDateTime;
 
+/// Maximum room-band excursion accepted by both daily and wire comparisons.
+pub(crate) const ROOM_TOLERANCE_MK: i32 = 100;
+/// Maximum hot-water shortfall accepted in a service comparison.
+pub(crate) const WATER_TOLERANCE_WH: f64 = 1.0;
+
 /// End-of-tick device state. All energies are Wh. Water deficits are cumulative.
 #[derive(Clone, Copy)]
 pub(crate) struct Frame {
@@ -66,12 +71,21 @@ fn service(
     if states.iter().any(|s| s.limited) {
         return Some(GapReason::GridLimits);
     }
-    if states.iter().any(|s| s.outside_band_k > 0.1) {
+    if states
+        .iter()
+        .any(|s| s.outside_band_k > f64::from(ROOM_TOLERANCE_MK) / 1000.0)
+    {
         return Some(GapReason::ThermalComfort);
     }
-    if states.iter().any(|s| s.water_short.get() > 1.0)
+    if states
+        .iter()
+        .any(|s| s.water_short.get() > WATER_TOLERANCE_WH)
         || tank_deadline.is_some_and(|(by, target)| {
-            planned.at < by && by <= at && states.iter().any(|s| target.get() - s.tank.get() > 1.0)
+            planned.at < by
+                && by <= at
+                && states
+                    .iter()
+                    .any(|s| target.get() - s.tank.get() > WATER_TOLERANCE_WH)
         })
     {
         return Some(GapReason::HotWater);

@@ -758,15 +758,7 @@ fn check_stats(root: &Path) -> Result<()> {
 
 /// Every count `README.md` states in prose.
 ///
-/// The README argues that a figure nothing compares is wrong within a fortnight,
-/// and states five of its own. It also stated the citation count **twice**, and
-/// the two copies had drifted apart from each other as well as from the build —
-/// which is why this checks every occurrence of an anchor rather than the first:
-/// two statements of one number are two chances to be wrong.
-///
-/// A missing pattern is a failure rather than a skip. Otherwise rewording the
-/// sentence silently removes the check, which is how a guard stops guarding
-/// without anybody deciding to.
+/// Validate every occurrence of each required published figure.
 fn readme_figures(
     root: &Path,
     citations: usize,
@@ -852,19 +844,15 @@ fn readme_figures(
     Ok(wrong)
 }
 
-/// The crates `just purity` holds to "no clock, no socket".
-/// Every `#[test]` and `#[tokio::test]` in the workspace.
-///
-/// The attributes rather than a `cargo test` summary, so the guard costs a file
-/// walk instead of a full run — and it is the same number a reader would get by
-/// counting. Doctests are not included and are a handful; the figure on the
-/// landing page is "tests", which these are.
+/// Count Rust test attributes for the published workspace statistics.
 fn count_tests(root: &Path) -> Result<usize> {
     let mut tests = 0usize;
-    for file in rust_sources(root)? {
+    let mut files = rust_sources(root)?;
+    collect(&root.join("tools"), &mut files)?;
+    for file in files {
         for line in std::fs::read_to_string(&file)?.lines() {
             let line = line.trim();
-            if line == "#[test]" || line == "#[tokio::test]" {
+            if line == "#[test]" || line == "#[tokio::test]" || line.starts_with("#[tokio::test(") {
                 tests += 1;
             }
         }
@@ -872,6 +860,7 @@ fn count_tests(root: &Path) -> Result<usize> {
     Ok(tests)
 }
 
+/// Count the crates listed in the purity recipe.
 fn pure_crates(root: &Path) -> Result<usize> {
     let justfile = std::fs::read_to_string(root.join("justfile"))?;
     Ok(justfile

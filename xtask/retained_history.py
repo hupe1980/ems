@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import secrets
+import shutil
 import ssl
 import subprocess
 import sys
@@ -198,7 +199,10 @@ if __name__ == "__main__":
         raise SystemExit("usage: uv run xtask/retained_history.py HEMSD SEED_HISTORY")
     with tempfile.TemporaryDirectory() as workspace:
         directory = Path(workspace)
-        binary, seeder = (str(Path(p).resolve()) for p in sys.argv[1:])
+        # Cargo can replace target/debug/hemsd during the long fixture import.
+        binary = shutil.copy(sys.argv[1], directory / Path(sys.argv[1]).name)
+        subprocess.run([binary, "house", "--help"], check=True, stdout=subprocess.DEVNULL)
+        seeder = Path(sys.argv[2]).resolve()
         end = int(time.time()) // 3600 * 3600
         subprocess.run([seeder, directory / "series", str(end)], check=True)
         export_snapshot(binary, directory, end)

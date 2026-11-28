@@ -128,9 +128,10 @@ impl Handler for Controller {
 }
 
 /// Outlet readings for one completed transaction across its two socket sessions.
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct Receipt {
     grid: grid::Balance,
+    #[serde(with = "time::serde::rfc3339")]
     departure: time::OffsetDateTime,
     goal: i32,
     start: i32,
@@ -154,11 +155,12 @@ impl Receipt {
     ///
     /// # Errors
     /// Returns an error for insecure transport, rejected evidence or failed delivery.
-    pub async fn publish(&self, origin: &str, site: &str, secret: &[u8]) -> Result<()> {
-        ensure!(
-            !secret.is_empty(),
-            "a departure receipt needs a site signing key"
-        );
+    pub async fn publish(
+        &self,
+        origin: &str,
+        site: &str,
+        secret: &ems_events::webhook::Webhook,
+    ) -> Result<()> {
         let endpoint = format!("{}/v1/departures", origin.trim_end_matches('/'));
         crate::report::is_confidential(&endpoint)?;
         let evidence = ems_events::departure::SimulatedDeparture {
@@ -258,6 +260,22 @@ fn admit_station(
 /// # Errors
 /// Returns an error for an invalid goal, a failed local protocol exchange, or missing rejoin evidence.
 pub async fn rehearse(goal: i32, missing_close: bool) -> Result<Receipt> {
+    let at = time::macros::datetime!(2026-01-15 06:15 UTC);
+    let mut grid = super::grid::Grid::start(at).await?;
+    let opening = grid.sample().await?;
+    rehearse_on(goal, missing_close, &mut grid, opening).await
+}
+
+pub(super) async fn rehearse_on(
+    goal: i32,
+    missing_close: bool,
+    grid: &mut super::grid::Grid,
+    opening: ems_core::prelude::Measurement,
+) -> Result<Receipt> {
+    ensure!(
+        opening.at == time::macros::datetime!(2026-01-15 06:15 UTC),
+        "departure needs the 06:15 opening register"
+    );
     ensure!((1..=10000).contains(&goal), "goal must be 1–10000 Wh");
     let times = Times {
         start: DateTime::parse("2026-01-15T06:15:00Z")?,
@@ -289,7 +307,15 @@ pub async fn rehearse(goal: i32, missing_close: bool) -> Result<Receipt> {
         })
         .build()?;
     let central = csms.handle();
-    let exercise = peer::drive(&central, addr, password, times, goal, &meter, missing_close);
+    let exercise = peer::drive(
+        &central,
+        addr,
+        password,
+        times,
+        (goal, missing_close),
+        &meter,
+        (grid, opening),
+    );
     let grid = tokio::select! {
         r = csms.serve_on(listener) => anyhow::bail!("local controller ended: {r:?}"),
         r = timeout(Duration::from_secs(10), exercise) => r.context("household OCPP exchange timed out")??,
@@ -331,51 +357,19 @@ fn allowed_watts(
     requested: i32,
     grid: ems_core::prelude::Measurement,
 ) -> Result<i32> {
-    use ems_core::prelude::{AssetTarget, Horizon, Measurement, Plan, Power, Slot, SlotPlan};
-    use ems_realtime::{
-        Arbiter, ArbiterConfig, Tick,
-        guard::{GridLimits, SiteState},
-    };
     use rust_decimal::prelude::ToPrimitive;
-    use std::collections::BTreeMap;
     let now = time::OffsetDateTime::from_unix_timestamp(at.timestamp().as_second())?;
     let outlet = home.evse.as_ref().context("missing household outlet")?;
-    let state = SiteState {
-        grid: Some(grid),
-        assets: BTreeMap::from([(outlet.clone(), Measurement::power(now, Power::ZERO))]),
-        ..SiteState::default()
-    };
-    let mut plan = Plan::empty(Horizon::new(now, 1), now);
-    plan.slots.push(SlotPlan {
-        slot: Slot::containing(now),
-        targets: vec![AssetTarget::fixed(
-            outlet.clone(),
-            Power::new(f64::from(requested)),
-        )],
-        marginal_eur_per_kwh: None,
-        flexibility_eur_per_kwh: None,
-    });
-    let decision = crate::runtime::control::decide(
-        &Arbiter::new(ArbiterConfig::default()),
-        Tick {
-            now,
-            site: &home.site,
-            state: &state,
-            limits: &GridLimits::default(),
-            plan: Some(&plan),
-            cem: &BTreeMap::new(),
-            overrides: &BTreeMap::new(),
-            previous: &BTreeMap::new(),
-            delivered: &BTreeMap::new(),
-            phases: &BTreeMap::new(),
-        },
-        None,
-    );
-    decision
-        .commanded
-        .get(outlet)
-        .and_then(|p| p.get().to_i32())
-        .context("gateway did not authorize an outlet target")
+    super::allowed_power(
+        home,
+        outlet,
+        now,
+        ems_core::prelude::Power::new(f64::from(requested)),
+        grid,
+    )?
+    .get()
+    .to_i32()
+    .context("outlet target exceeds integer range")
 }
 
 #[cfg(test)]

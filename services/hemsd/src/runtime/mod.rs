@@ -39,6 +39,7 @@ pub mod day;
 pub mod first_run;
 pub mod fleet;
 pub mod handover;
+pub mod heat_meter;
 pub mod installation;
 #[cfg(feature = "matter")]
 pub mod matter;
@@ -49,6 +50,7 @@ pub mod problem;
 pub mod push;
 pub mod quote;
 pub mod s2;
+mod serial;
 pub mod ship;
 pub mod tls;
 pub mod transport;
@@ -202,6 +204,10 @@ pub fn assemble(
     kept: Option<&crate::store::Store>,
     now: time::OffsetDateTime,
 ) -> Result<Running, StartError> {
+    settings.validate_serial().map_err(StartError::Build)?;
+    if let Some(goal) = &settings.charging {
+        goal.validate().map_err(StartError::Build)?;
+    }
     let config = settings.site.household()?;
     let household = Household::build(&config).map_err(|e| StartError::Build(e.to_string()))?;
 
@@ -223,6 +229,7 @@ pub fn assemble(
                 !matches!(
                     driver,
                     DriverSettings::Sunspec(_)
+                        | DriverSettings::SerialSunspec(_)
                         | DriverSettings::Registers(_)
                         | DriverSettings::EebusEv(_)
                 )
@@ -703,6 +710,14 @@ fn build_driver(
         })
     };
     match settings {
+        DriverSettings::SerialSunspec(s) => Ok(Box::new(ems_drv::modbus::Meter::new(
+            asset(&s.asset)?,
+            s.unit,
+            Cadence {
+                poll: time::Duration::milliseconds(s.poll_ms.cast_signed()),
+                timeout: time::Duration::milliseconds(s.timeout_ms.cast_signed()),
+            },
+        ))),
         DriverSettings::Sunspec(s) => Ok(Box::new(sunspec_driver(s, site, &asset(&s.asset)?)?)),
         DriverSettings::EebusLpc(s) => {
             // The household's own § 14a minimum where none is configured.
@@ -819,20 +834,13 @@ fn sunspec_driver(
     Ok(driver)
 }
 
-/// Where each configured driver's plain TCP socket is.
-///
-/// EEBUS has none, and that is not an omission: its session is TLS with mutual
-/// authentication under a WebSocket under a SHIP handshake, and it is
-/// `runtime::ship`'s rather than the byte-pump's.
+/// Endpoint for drivers served by the plain TCP transport.
 fn transport_address(settings: &DriverSettings) -> Option<String> {
     match settings {
         DriverSettings::Sunspec(s) => Some(s.address.clone()),
         DriverSettings::Registers(s) => Some(s.address.clone()),
-        // Both EEBUS kinds, and for the same reason in opposite directions: the
-        // session is TLS with mutual authentication under a WebSocket under a
-        // SHIP handshake, and it is `runtime::ship`'s rather than the
-        // byte-pump's — whether this box accepts it or opens it.
-        DriverSettings::EebusLpc(_)
+        DriverSettings::SerialSunspec(_)
+        | DriverSettings::EebusLpc(_)
         | DriverSettings::EebusDhw(_)
         | DriverSettings::EebusEv(_)
         | DriverSettings::EebusHeatPump(_) => None,
@@ -1170,6 +1178,7 @@ fn start_drivers(
     shutdown: &Shutdown,
 ) -> Result<Sessions, StartError> {
     let mut unreachable = Vec::new();
+    let mut serial_devices: BTreeMap<&str, Vec<serial::Meter>> = BTreeMap::new();
     let mut dialled = Vec::new();
     let mut eebus_asset = None;
     for (driver, id) in settings.drivers.iter().zip(running.drivers.iter().copied()) {
@@ -1177,7 +1186,16 @@ fn start_drivers(
             asset: driver.asset().to_string(),
             detail: e.to_string(),
         })?;
-        if let Some(address) = transport_address(driver) {
+        if let DriverSettings::SerialSunspec(m) = driver {
+            serial_devices
+                .entry(&m.bus)
+                .or_default()
+                .push(serial::Meter {
+                    on: Attached { driver: id, asset },
+                    unit: m.unit,
+                    timeout: std::time::Duration::from_millis(m.timeout_ms),
+                });
+        } else if let Some(address) = transport_address(driver) {
             tokio::spawn(transport::tcp(
                 Arc::clone(&running.registry),
                 Attached { driver: id, asset },
@@ -1211,6 +1229,14 @@ fn start_drivers(
             ));
             unreachable.push(asset);
         }
+    }
+    for (name, devices) in serial_devices {
+        tokio::spawn(serial::run(
+            settings.serial_buses[name].clone(),
+            devices,
+            Arc::clone(&running.registry),
+            shutdown.clone(),
+        ));
     }
     if !unreachable.is_empty() {
         // The one state this daemon must never be quiet about: a § 14a
@@ -1447,9 +1473,14 @@ async fn start_planner(
             // The one charge point that can say whether a car is on it. A
             // second would be two departure times for one household, and a
             // household has one car park rather than one per driver.
-            charging: settings.drivers.iter().find_map(|d| match d {
-                DriverSettings::EebusEv(s) => Some(s.clone()),
-                _ => None,
+            charging: settings.charging.clone().or_else(|| {
+                settings.drivers.iter().find_map(|d| match d {
+                    DriverSettings::EebusEv(s) => Some(crate::config::ChargingSettings {
+                        departure: s.departure.clone(),
+                        target_soc: s.target_soc,
+                    }),
+                    _ => None,
+                })
             }),
             household_kwh_per_year: settings.site.household_kwh_per_year,
             goal: running.goal.clone(),

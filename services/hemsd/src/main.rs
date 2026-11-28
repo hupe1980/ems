@@ -1,6 +1,5 @@
 //! `hemsd` — the hems edge daemon.
 
-#[cfg(feature = "house")]
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use hemsd::{HouseholdConfig, Scenario};
@@ -97,6 +96,47 @@ enum Command {
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=90))]
         days: u16,
     },
+    /// Replay a Berlin winter electrical day with storage and morning S2 and OCPP service.
+    #[cfg(feature = "house")]
+    WinterDay {
+        /// Export a standalone report with a table of metered quarters.
+        #[arg(long, conflicts_with = "json")]
+        html: bool,
+        /// Export both sets of timestamped cumulative register readings.
+        #[arg(long)]
+        json: bool,
+        /// Usable heat required at the end of the morning water draw, in Wh.
+        #[arg(long, default_value_t = 2300, value_parser = clap::value_parser!(u32).range(0..=20000))]
+        target_wh: u32,
+        /// Energy requested at the outlet by departure, in Wh.
+        #[arg(long, default_value_t = 3600, value_parser = clap::value_parser!(i32).range(1..=10000))]
+        departure_wh: i32,
+    },
+    /// Run a winter hot-water trial over loopback S2 and print the peer observations.
+    #[cfg(feature = "house")]
+    ThermalTrial {
+        /// Continue on the same meter through a 45-minute OCPP departure with this outlet goal.
+        #[arg(long, value_parser = clap::value_parser!(i32).range(1..=10000))]
+        departure_wh: Option<i32>,
+        /// Disconnect the managed controller after its first five-minute lease.
+        #[arg(long)]
+        disconnect: bool,
+        /// Render a standalone HTML receipt instead of JSON.
+        #[arg(long)]
+        html: bool,
+        /// Withhold the final sensor observation.
+        #[arg(long)]
+        missing_close: bool,
+        /// Water promised at the deadline, in Wh of usable heat.
+        #[arg(long, default_value_t = 1800, value_parser = clap::value_parser!(u32).range(0..=20000))]
+        target_wh: u32,
+    },
+    #[cfg(feature = "house")]
+    #[command(hide = true)]
+    ThermalPeer {
+        #[arg(long)]
+        missing_close: bool,
+    },
     /// Rehearse a household departure with an OCPP wallbox that loses power for 15 minutes.
     #[cfg(feature = "house")]
     EvDeparture {
@@ -141,10 +181,22 @@ enum Command {
         /// is kept beside it so the SKI in the file stays true.
         #[arg(long, default_value = "house.toml")]
         out: PathBuf,
+        /// Retain gateway quarters and closed-day reports beside the configuration.
+        #[arg(long)]
+        keep_history: bool,
         /// Start the box that manages the house as well — the real product, in
         /// one command.
         #[arg(long)]
         run: bool,
+        /// Include a hot-water tank with measured temperature, power and a writable relay.
+        #[arg(long)]
+        with_tank: bool,
+        /// Include the occupied-room sensor and three-state heat pump.
+        #[arg(long)]
+        with_room: bool,
+        /// Connect the scenario vehicle to a three-phase Modbus wallbox on loopback.
+        #[arg(long)]
+        with_ev: bool,
         /// Authorize the gateway to control the loopback battery with bounded watt commands.
         #[arg(long)]
         manage_storage: bool,
@@ -164,6 +216,9 @@ enum Command {
         /// Which day to run.
         #[arg(long, value_enum, default_value_t = Day::Winter)]
         day: Day,
+        /// Read installed site and asset ratings from a gateway TOML configuration.
+        #[arg(long, value_name = "GATEWAY.toml")]
+        site_from: Option<PathBuf>,
         /// Report as JSON rather than a table.
         #[arg(long)]
         json: bool,
@@ -517,6 +572,14 @@ async fn manage(
     .with_settings(settings.clone())
     .with_registry(std::sync::Arc::clone(&running.registry))
     .with_push(push.clone());
+    let local = if let Some(point) = &settings.heat_meter {
+        local.with_heat_meter(hemsd::runtime::heat_meter::Observer::start(
+            point,
+            signal.clone(),
+        )?)
+    } else {
+        local
+    };
     let _control_box_gauge = local.publish_control_box_health()?;
     #[cfg(feature = "matter")]
     let local = if let Some(meter) = meter {
@@ -691,7 +754,7 @@ fn main() -> anyhow::Result<()> {
                 if let Some(installer) = &installer {
                     if !runtime.block_on(installer.candidate_ready())? {
                         tracing::warn!(
-                            "reviewed inverter is unavailable or changed; restoring the previous configuration"
+                            "a reviewed device changed or is unavailable; restoring the previous configuration"
                         );
                         installer.rollback()?;
                     }
@@ -725,6 +788,7 @@ async fn execute(command: Command) -> anyhow::Result<()> {
     // The long-running gateway takes its tracing settings from the household configuration.
     if !matches!(command, Command::Run { .. }) {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_default_env()
                     .unwrap_or_else(|_| "hemsd=info".into()),
@@ -817,6 +881,46 @@ async fn execute(command: Command) -> anyhow::Result<()> {
             return hemsd::demo::serve(demo, listen).await;
         }
         #[cfg(feature = "house")]
+        Command::WinterDay {
+            html,
+            json,
+            target_wh,
+            departure_wh,
+        } => {
+            let receipt = hemsd::house::winter::trial(target_wh, departure_wh).await?;
+            if html {
+                println!("{}", receipt.html());
+            } else if json {
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            } else {
+                println!("{receipt}");
+            }
+        }
+        #[cfg(feature = "house")]
+        Command::ThermalTrial {
+            departure_wh,
+            disconnect,
+            missing_close,
+            target_wh,
+            html,
+        } => {
+            let receipt =
+                hemsd::house::thermal::trial(target_wh, missing_close, disconnect, departure_wh)
+                    .await?;
+            println!(
+                "{}",
+                if html {
+                    receipt.html()
+                } else {
+                    serde_json::to_string_pretty(&receipt)?
+                }
+            );
+        }
+        #[cfg(feature = "house")]
+        Command::ThermalPeer { missing_close } => {
+            return hemsd::house::thermal::peer(missing_close).await;
+        }
+        #[cfg(feature = "house")]
         Command::EvDeparture {
             goal_wh,
             missing_close,
@@ -827,7 +931,9 @@ async fn execute(command: Command) -> anyhow::Result<()> {
             if let Some(origin) = report_to {
                 let secret = std::env::var("EMS_OBSD_SECRET")
                     .context("set EMS_OBSD_SECRET to the site's signing key")?;
-                receipt.publish(&origin, &site, secret.as_bytes()).await?;
+                receipt
+                    .publish(&origin, &site, &ems_events::webhook::parse_secret(&secret)?)
+                    .await?;
             }
             println!("{receipt}");
         }
@@ -839,8 +945,12 @@ async fn execute(command: Command) -> anyhow::Result<()> {
             ship,
             api,
             out,
+            keep_history,
             run,
             manage_storage,
+            with_tank,
+            with_room,
+            with_ev,
             exposed,
         } => {
             return house(HouseArgs {
@@ -850,14 +960,19 @@ async fn execute(command: Command) -> anyhow::Result<()> {
                 ship,
                 api,
                 out,
+                keep_history,
                 exposed,
                 run,
                 manage_storage,
+                with_tank,
+                with_room,
+                with_ev,
             })
             .await;
         }
         Command::Simulate {
             day,
+            site_from,
             json,
             cold_start,
             wear_eur_per_kwh,
@@ -875,15 +990,28 @@ async fn execute(command: Command) -> anyhow::Result<()> {
             site,
             sharing,
         } => {
-            let mut config = HouseholdConfig::default();
+            let mut config = if let Some(path) = site_from {
+                #[derive(serde::Deserialize)]
+                struct Installed {
+                    site: hemsd::config::SiteSettings,
+                }
+                let text = std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading installed site from {}", path.display()))?;
+                toml::from_str::<Installed>(&text)
+                    .with_context(|| format!("loading [site] from {}", path.display()))?
+                    .site
+                    .household()?
+            } else {
+                HouseholdConfig::default()
+            };
             if let (Some(wear), Some(battery)) = (wear_eur_per_kwh, &mut config.battery) {
                 battery.wear_eur_per_kwh = wear;
             }
             if let Some(evse) = &mut config.evse {
-                evse.switchable = !no_phase_switching;
+                evse.switchable &= !no_phase_switching;
             }
             if let Some(heat_pump) = &mut config.heat_pump {
-                heat_pump.modulating = !heat_pump_on_off;
+                heat_pump.modulating &= !heat_pump_on_off;
             }
             if imsys && let Some(pv) = &mut config.pv {
                 // The network operator's first successful Ansteuerbarkeit test
@@ -895,6 +1023,9 @@ async fn execute(command: Command) -> anyhow::Result<()> {
                 pv.para9.relief = ems_core::prelude::CapRelief::ImsysWithControl;
             }
             let mut scenario = scenario_for(day, config);
+            if scenario.config.dishwasher.is_none() {
+                scenario.dishwasher = None;
+            }
             if cold_start {
                 scenario.warm_up_days = 0;
             }
@@ -927,7 +1058,7 @@ async fn execute(command: Command) -> anyhow::Result<()> {
                 let before = scenario.date;
                 scenario = scenario.on_a_day_sharing_reaches();
                 if scenario.date != before {
-                    println!(
+                    eprintln!(
                         "  § 42c reaches this household from {}, so the same day runs on {}",
                         ems_grid::sharing::SHARING_START,
                         scenario.date
@@ -964,7 +1095,7 @@ async fn execute(command: Command) -> anyhow::Result<()> {
                     // platform's own store. A box on a wall reads its own
                     // `[service.http]` and may pin instead.
                     &ems_service::HttpSettings::default(),
-                    secret.as_bytes(),
+                    &ems_events::webhook::parse_secret(&secret)?,
                     &site,
                     &result.kpis(&site, scenario.date),
                     store.as_deref(),
@@ -1082,7 +1213,7 @@ fn record_day(
         store.put_control_event(event)?;
     }
     let backlog = store.backlog()?;
-    println!(
+    eprintln!(
         "\n  kept in {}\n  …waiting for the fleet      {} events, {} quarter hours",
         path.display(),
         backlog.events,
@@ -1114,7 +1245,7 @@ fn record_day(
 async fn report_day(
     url: &str,
     http: &ems_service::HttpSettings,
-    secret: &[u8],
+    secret: &ems_events::webhook::Webhook,
     site: &str,
     kpis: &ems_core::report::DayKpis,
     store: Option<&std::path::Path>,
@@ -1147,10 +1278,10 @@ async fn report_day(
         None => None,
     };
 
-    let signature = ems_events::webhook::sign(secret, &event.id, now, &body);
+    let signature = ems_events::webhook::sign(secret, &event.id, now, &body)?;
     match hemsd::report::post_event(&endpoint, http, body, &signature.headers()).await {
         Ok(status) if (200..300).contains(&status) => {
-            println!("\n  reported to {endpoint} — HTTP {status}");
+            eprintln!("\n  reported to {endpoint} — HTTP {status}");
             if let (Some(path), Some(id)) = (store, queued) {
                 // Taken, so out of the backlog — by the row identifier the queue
                 // handed back rather than by a search through it, which on a box
@@ -1172,7 +1303,6 @@ async fn report_day(
     Ok(())
 }
 
-/// The scenario for one named day.
 /// `HH:MM` as a duration since midnight.
 #[cfg(feature = "house")]
 fn time_of_day(text: &str) -> Result<time::Duration, String> {
@@ -1192,8 +1322,12 @@ struct HouseArgs {
     ship: std::net::SocketAddr,
     api: std::net::SocketAddr,
     out: PathBuf,
+    keep_history: bool,
     exposed: bool,
     manage_storage: bool,
+    with_tank: bool,
+    with_room: bool,
+    with_ev: bool,
     run: bool,
 }
 
@@ -1210,9 +1344,13 @@ async fn house(args: HouseArgs) -> anyhow::Result<()> {
         ship,
         api,
         out,
+        keep_history,
         exposed,
         run,
         manage_storage,
+        with_tank,
+        with_room,
+        with_ev,
     } = args;
     anyhow::ensure!(
         !manage_storage || listen.ip().is_loopback(),
@@ -1227,13 +1365,31 @@ async fn house(args: HouseArgs) -> anyhow::Result<()> {
         household: Some(ship),
         at,
         identity: Some(out.with_extension("steuerbox.pem")),
+        appliances: house::Appliances {
+            tank: with_tank,
+            room: with_room,
+            ev: with_ev,
+        },
         exposed,
     })
     .await?;
-    std::fs::write(
-        out,
-        house::configuration(&house, &scenario, Some(ship), api, manage_storage)?,
-    )?;
+    let mut config = String::new();
+    if keep_history {
+        let store = std::path::absolute(out)?.with_added_extension("redb");
+        config.push_str(&toml::to_string(&std::collections::BTreeMap::from([(
+            "store_path",
+            &store,
+        )]))?);
+        println!("  history    {}", store.display());
+    }
+    config.push_str(&house::configuration(
+        &house,
+        &scenario,
+        Some(ship),
+        api,
+        manage_storage,
+    )?);
+    std::fs::write(out, config)?;
 
     let minutes = house.clock.since_midnight().whole_minutes();
     println!(
@@ -1246,6 +1402,15 @@ async fn house(args: HouseArgs) -> anyhow::Result<()> {
         "  modbus     {}  — inverter (unit 1), meter (2), battery (3)",
         house.modbus
     );
+    if with_ev {
+        println!("  wallbox    current limit, vehicle charge and outlet Wh (unit 6)");
+    }
+    if with_room {
+        println!("  room heat  indoor temperature, power and operating state (unit 5)");
+    }
+    if with_tank {
+        println!("  hot water  relay and measured tank temperature (unit 4)");
+    }
     if let Some(ski) = &house.steuerbox_ski {
         println!("  steuerbox  SKI {ski}, dialling {ship}");
     }

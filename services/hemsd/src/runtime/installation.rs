@@ -64,9 +64,26 @@ pub struct Receipt {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum MeterEndpoint {
+    Tcp { address: std::net::SocketAddr },
+    Serial { bus: crate::config::SerialBus },
+}
+
+impl MeterEndpoint {
+    pub(super) async fn inspect(&self, unit: u8) -> Option<ems_drv::modbus::probe::Identity> {
+        match self {
+            Self::Tcp { address } => super::handover::inspect(*address, unit).await,
+            Self::Serial { bus } => super::serial::inspect(bus, unit).await,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Device {
     pub(super) role: DeviceRole,
-    address: std::net::SocketAddr,
+    #[serde(flatten)]
+    endpoint: MeterEndpoint,
     unit: u8,
     manufacturer: String,
     model: String,
@@ -76,13 +93,13 @@ pub(super) struct Device {
 impl Device {
     pub(super) fn from_identity(
         role: DeviceRole,
-        address: std::net::SocketAddr,
+        endpoint: MeterEndpoint,
         unit: u8,
         identity: &ems_drv::modbus::probe::Identity,
     ) -> Self {
         Self {
             role,
-            address,
+            endpoint,
             unit,
             manufacturer: identity.manufacturer.clone(),
             model: identity.model.clone(),
@@ -212,7 +229,9 @@ impl Installer {
             &review.toml,
             vec![Device::from_identity(
                 DeviceRole::Pv,
-                review.address,
+                MeterEndpoint::Tcp {
+                    address: review.address,
+                },
                 review.unit,
                 identity,
             )],
@@ -237,9 +256,11 @@ impl Installer {
     /// # Errors
     /// Returns a read error for an inaccessible configuration file.
     pub fn empty_site(&self) -> io::Result<bool> {
-        Ok(fs::read_to_string(&self.path)?
-            .lines()
-            .all(|line| line.trim().is_empty() || line.trim_start().starts_with('#')))
+        let source = fs::read_to_string(&self.path)?;
+        let table: toml::Table = toml::from_str(&source).map_err(io::Error::other)?;
+        Ok(table
+            .keys()
+            .all(|key| matches!(key.as_str(), "serial_buses" | "heat_meter")))
     }
 
     fn register(&self, block: &str, devices: Vec<Device>) -> String {
@@ -285,7 +306,17 @@ impl Installer {
         if hash(&original) != proposals.source {
             return Err(ApplyError::Stale);
         }
-        let mut candidate = original.clone();
+        // The initial proposal includes all provisioned bus tables. Appending its
+        // root fields after a TOML table would change their scope.
+        let mut candidate = if proposal
+            .devices
+            .first()
+            .is_some_and(|d| d.role == DeviceRole::ConnectionMeter)
+        {
+            Vec::new()
+        } else {
+            original.clone()
+        };
         candidate.extend_from_slice(b"\n");
         candidate.extend_from_slice(proposal.block.as_bytes());
         let transaction = Journal {
@@ -338,7 +369,9 @@ impl Installer {
             return Ok(false);
         }
         for device in journal.devices {
-            let matches = super::handover::inspect(device.address, device.unit)
+            let matches = device
+                .endpoint
+                .inspect(device.unit)
                 .await
                 .is_some_and(|id| {
                     device.role.supports(&id)

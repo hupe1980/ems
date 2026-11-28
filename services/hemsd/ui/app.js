@@ -79,6 +79,8 @@ const T = {
     heartbeatAge: "Letzter Heartbeat vor {s} s", trust_heard: "Die Steuerbox ist gekoppelt und meldet sich.", trust_silent: "Die Steuerbox ist gekoppelt, schweigt aber.", trust_failsafe: "Die Steuerbox schweigt — der Failsafe-Wert gilt.", trust_unpaired: "Eine Steuerbox ist vorgesehen, aber nicht gekoppelt.",
     id_kept: "Die Box hat dieselbe Identität wie vor dem Neustart.", id_ephemeral: "Die Box behält ihre Identität nicht — nach einem Neustart muss neu gekoppelt werden.",
     find: "Geräte im Netz", findHosts: "Adressen, z. B. 192.168.1.40", findGo: "Suchen", findNone: "Nichts gefunden.",
+    heatMeter:"Wärmezähler", heatTotal:"Abgegebene Wärme gesamt", heatAddress:"Adresse", heat_waiting:"Erste Messung ausstehend", heat_live:"Aktuell", heat_unavailable:"Keine aktuelle Messung · Wandler und Leitung prüfen", heat_wrong_meter:"Anderer Zähler · Adresse, Hersteller und Nummer prüfen", heat_invalid_reply:"Messwert unbrauchbar · Zählerstatus und Register prüfen",
+    serialMeters:"Serielle Zähler", serialFresh:"Aktuell", serialSilent:"Keine aktuelle Messung", serialNever:"Noch kein Messwert", serialLast:"Letzte Messung", serialImport:"Bezug", serialExport:"Einspeisung", serialPower:"Wirkleistung",
     meter_restarting: "Gateway startet neu und wartet auf die gewählten Geräte.", meter_applied: "Einrichtung abgeschlossen · alle gewählten Geräte melden Messwerte.", meter_restored: "Vorherige Konfiguration wiederhergestellt. Gewählte Geräte und Modbus-Units prüfen.",
     applyPv: "Übernehmen und Gateway neu starten", applyConfirm: "Diesen Wechselrichter messen und begrenzen? Das Gateway startet neu.", change_restarting: "Gateway startet neu und wartet auf den Wechselrichter.", change_applied: "Wechselrichter eingerichtet · Messung empfangen.", change_restored: "Vorherige Konfiguration wiederhergestellt. Verbindung zum Wechselrichter prüfen.", change_superseded: "Die Konfiguration wurde außerhalb der Einrichtung geändert.", change_unknown: "Verbindung unterbrochen. Das Ergebnis wird beim Wiederverbinden angezeigt.",
     deviceClaim: "Geräteangabe", reviewPv: "PV-Wechselrichter prüfen", reviewRole: "PV-Leistung messen und begrenzen", reviewOk: "Konfiguration gültig", reviewCancel: "Prüfung schließen", reviewUnsupported: "Für diese Einrichtung werden ein unterstütztes PV-Modell und SunSpec 123 benötigt.", unitLabel: "Modbus-Unit",
@@ -196,6 +198,8 @@ const T = {
     heartbeatAge: "Last heartbeat {s} s ago", trust_heard: "The control box is paired and reporting.", trust_silent: "The control box is paired but silent.", trust_failsafe: "The control box is silent — the failsafe value applies.", trust_unpaired: "A control box is expected but not paired.",
     id_kept: "The box has the same identity as before the restart.", id_ephemeral: "The box does not keep its identity — it must be paired again after a restart.",
     find: "Devices on the network", findHosts: "Addresses, e.g. 192.168.1.40", findGo: "Search", findNone: "Nothing found.",
+    heatMeter:"Heat meter", heatTotal:"Total heat delivered", heatAddress:"Address", heat_waiting:"Awaiting first reading", heat_live:"Live", heat_unavailable:"Reading unavailable · check converter and wiring", heat_wrong_meter:"Unexpected meter · check address, manufacturer and ID", heat_invalid_reply:"Unusable reading · check meter status and register profile",
+    serialMeters:"Serial meters", serialFresh:"Live", serialSilent:"Reading unavailable", serialNever:"Awaiting first reading", serialLast:"Last reading", serialImport:"Import", serialExport:"Export", serialPower:"Active power",
     meter_restarting: "Gateway restarting · waiting for the selected devices.", meter_applied: "Setup complete · all selected devices are reporting.", meter_restored: "Previous configuration restored. Check the selected devices and Modbus units.",
     applyPv: "Apply and restart gateway", applyConfirm: "Measure and limit this inverter? The gateway will restart.", change_restarting: "Gateway restarting · waiting for the inverter.", change_applied: "Inverter configured · measurement received.", change_restored: "Previous configuration restored. Check the inverter connection.", change_superseded: "The configuration was changed outside Setup.", change_unknown: "Connection interrupted. The outcome will appear when the gateway reconnects.",
     deviceClaim: "Reported by device", reviewPv: "Review PV inverter", reviewRole: "Measure and limit PV output", reviewOk: "Configuration valid", reviewCancel: "Close review", reviewUnsupported: "Setup requires a supported PV inverter model and SunSpec 123.", unitLabel: "Modbus unit",
@@ -332,7 +336,7 @@ async function load() {
   try {
     home = await api(home?.demo && at != null ? `/v1/home?at=${at}` : "/v1/home");
     missedPolls = 0; stale = false; lastOk = new Date();
-    if (view === "signin") view = location.hash.slice(1) || "now";
+    if (view === "signin") view = requestedView();
     if (view === "setup" && !home.demo) {
       const [diagnostics, peers, change, supply] = await Promise.all(["/v1/trust", "/v1/pairing", "/v1/commissioning/change", "/v1/tariff"].map(path => api(path).catch(() => null)));
       trust = diagnostics; pairing = peers; supplyStatus = supply;
@@ -665,6 +669,7 @@ function viewDay(h) {
   const coverage = day?.forecast;
   const comparison = coverage ? `<p class="cap">${t("forecastCoverage")} · ${t("forecastBands", {pv: num(coverage.pv_pct, 0), load: num(coverage.load_pct, 0)})}</p>` : "";
   return `${bon}${watched}${comparison}${forecastLearning()}${h.levies_year ? `<p class="cap" style="margin:10px 16px 0;color:var(--warn)">${t("leviesYear", { y: h.levies_year })}</p>` : ""}${month()}
+  ${h.thermal_trial ? `<a class="link" href="/thermal-trial" hreflang="en">${lang === "de" ? "Wintertest: Wärme und Warmwasser (Englisch)" : "Winter trial: room comfort and hot water"} ›</a>` : ""}
   ${h.demo ? "" : `<details id="gridHistory"><summary>${t("gridHistory")}</summary><div class="history-body"></div></details>`}
   <details><summary>${t("method")}</summary><p>${t(h.demo ? "methodText" : "measuredMethod")}</p></details>
   ${days?.length || !h.demo ? `<div class="group export-links">${days?.length ? `<a class="link" href="/v1/days.csv" download>${t("csv")}</a>` : ""}${h.demo ? "" : `<button class="link" id="export" type="button">${t("export")}</button><p id="exportStatus" role="status"></p>`}</div>` : ""}`;
@@ -853,11 +858,36 @@ function deviceHealth(h) {
   ${issues.length && trust.support_contact ? `<div class="slot">${esc(trust.support_contact)}</div>` : ""}
   ${issues.map((d) => `<div class="slot"><b>${esc(d.asset)}</b><p>${d.state === "waiting" ? t("healthUnknown") : t("notice_" + d.state)} · ${t(d.state === "disobedient" ? "healthResponse" : "healthCheck")}</p></div>`).join("")}</div>`;
 }
+function heatMeter(meter) {
+  if (!meter) return "";
+  const state = stale ? "unavailable" : meter.state;
+  let total = "";
+  if (state === "live" && meter.delivered_heat_wh != null) {
+    const [integer, fraction] = meter.delivered_heat_wh.split(".");
+    const value = BigInt(integer).toLocaleString(locale()) + (fraction ? (lang === "de" ? "," : ".") + fraction : "");
+    total = `<p>${t("heatTotal")} <strong>${esc(value)} Wh</strong></p>`;
+  }
+  const last = meter.last_read_at == null ? "" : new Date(meter.last_read_at * 1000).toLocaleString(locale(), { dateStyle: "short", timeStyle: "medium" });
+  return `<h2 class="sec">${t("heatMeter")}</h2><section class="group" aria-label="${t("heatMeter")}"><div class="slot"><b>${esc(meter.manufacturer)} ${esc(meter.meter_id)}</b>
+    <p>M-Bus · ${t("heatAddress")} ${esc(meter.address)}</p><span class="when ${state === "live" ? "ok" : "no"}">${t("heat_" + state)}</span>${total}
+    ${last ? `<p>${t("serialLast")} · ${esc(last)}</p>` : ""}</div></section>`;
+}
+function serialMeters() {
+  if (!trust?.serial_meters?.length) return "";
+  const energy = wh => wh == null ? "—" : num(wh / 1000, 3) + " kWh";
+  return `<h2 class="sec">${t("serialMeters")}</h2><div class="group">${trust.serial_meters.map(m =>
+    `<section class="slot"><b>${esc(pretty(m.asset))}</b><p>${esc(m.bus)} · Unit ${esc(m.unit)} · SunSpec 203</p>
+    ${m.identity ? `<p>${esc(m.identity)}</p>` : ""}
+    <span class="when ${m.fresh && !stale ? "ok" : "no"}">${t(m.fresh && !stale ? "serialFresh" : m.last_read_at == null ? "serialNever" : "serialSilent")}</span>
+    ${m.fresh && !stale ? `<p>${t("serialPower")} ${m.power_w == null ? "—" : num(m.power_w, 0) + " W"} · ${t("serialImport")} ${energy(m.import_wh)} · ${t("serialExport")} ${energy(m.export_wh)}</p>` : ""}
+    ${m.last_read_at != null ? `<p>${t("serialLast")} · ${esc(new Date(m.last_read_at * 1000).toLocaleString(locale(), { dateStyle: "short", timeStyle: "medium" }))}</p>` : ""}
+    </section>`).join("")}</div>`;
+}
 function viewSetup(h) {
   const historyIssue = !h.demo && ["repair_pending", "busy", "unavailable"].includes(trust?.history);
   const groups = (s) => (s || "").replace(/[^0-9a-fA-F]/g, "").match(/.{1,4}/g)?.map((g) => `<span>${g}</span>`).join(" ") ?? "–";
   const p = pairing ?? { trusted: [], waiting: [] };
-  return `${installationOutcome && !h.demo ? `<div class="slot" role="status">${t((installationOutcome.role === "connection-meter" && ["restarting","applied","restored"].includes(installationOutcome.outcome) ? "meter_" : "change_") + installationOutcome.outcome)}</div>` : ""}${deviceHealth(h)}
+  return `${installationOutcome && !h.demo ? `<div class="slot" role="status">${t((installationOutcome.role === "connection-meter" && ["restarting","applied","restored"].includes(installationOutcome.outcome) ? "meter_" : "change_") + installationOutcome.outcome)}</div>` : ""}${deviceHealth(h)}${h.demo ? "" : serialMeters() + (trust?.heat_meter ? `<div id="heatMeterReading">${heatMeter(trust.heat_meter)}</div>` : "")}
   ${historyIssue ? `<h2 class="sec">${t("historyRepairTitle")}</h2><div class="group"><div class="slot" role="status" data-history-status>${t("history_" + trust.history)}</div></div>` : ""}
   ${h.shadow && transfer ? `<h2 class="sec">${t("shadowMode")}</h2><div class="group"><div class="slot"><p>${t("transferHelp", {who: esc(transfer.controller)})}</p>${transfer.readiness !== "ready" ? `<p>${t(transfer.readiness === "meter_missing" ? "transferMeter" : "transferActuator")}</p>` : ""}<button type="button" class="step" ${transfer.readiness !== "ready" && !(transfer.approved_until > Date.now()/1000) ? "disabled" : ""} id="control-transfer" data-transfer-approve="${!(transfer.approved_until > Date.now()/1000)}">${t(transfer.approved_until > Date.now()/1000 ? "revokeTransfer" : "authorizeTransfer")}</button></div></div>` : ""}
   <h2 class="sec">${t("steuerbox")}</h2><div class="group">${trustLines()}
@@ -918,7 +948,11 @@ function render(refreshDiscovery = false) {
   if (view === "plan" && s.querySelector("[data-editing]")) return;
   s.classList.toggle("demo", !asBox);
   s.classList.toggle("stale", wall ? missedPolls >= 3 : stale);
-  if (view === "setup" && !refreshDiscovery && (supplyBusy || document.activeElement?.closest("#supplyCard") || (finding && s.querySelector("#find")) || document.activeElement?.closest("#discovery") || s.querySelector(".inverter-review[open]"))) return;
+  if (view === "setup" && !refreshDiscovery && (supplyBusy || document.activeElement?.closest("#supplyCard") || (finding && s.querySelector("#find")) || document.activeElement?.closest("#discovery") || s.querySelector(".inverter-review[open]"))) {
+    const reading = $("#heatMeterReading");
+    if (reading) reading.innerHTML = heatMeter(trust?.heat_meter);
+    return;
+  }
   if (view === "day" && !refreshDiscovery && (s.querySelector("#gridHistory[open]") || document.activeElement?.closest("#export"))) return;
   const packOpen = $("#packControl")?.open;
   const packFocused = document.activeElement?.matches("#packControl summary");
@@ -932,7 +966,7 @@ function render(refreshDiscovery = false) {
 function wire() {
   wireSupply();
   const f = $("#signin");
-  if (f) f.onsubmit = async (e) => { e.preventDefault(); if (await signIn($("#tok").value.trim())) { view = "now"; load(); } else $("#err").hidden = false; };
+  if (f) f.onsubmit = async (e) => { e.preventDefault(); if (await signIn($("#tok").value.trim())) { view = requestedView(); await load(); enterView(true); } else $("#err").hidden = false; };
   const st = $("#strip");
   if (st) { const pick = (e) => { const r = st.getBoundingClientRect(); focus = Math.max(0, Math.min(home.plan.length - 1, Math.floor(((e.clientX - r.left) / r.width) * home.plan.length))); render(); }; st.onpointerdown = pick; st.onpointermove = (e) => e.buttons && pick(e); }
   document.querySelectorAll("[data-goal]").forEach((card) => {
@@ -1335,22 +1369,35 @@ function takeOrder() {
   try { order = decodeURIComponent(rec[1]).replace(/[^\x21-\x7e]/g, "").slice(0, 64); } catch { order = ""; }
   history.replaceState(null, "", location.pathname + location.search + "#record");
 }
+function requestedView() {
+  const route = location.hash.slice(1);
+  return VIEWS.includes(route) ? route : "now";
+}
+function enterView(moveFocus = false) {
+  if (view === "signin") return;
+  view = requestedView();
+  if (view === "setup") { loadPairing(); loadPush(); loadTrust(); loadHooks(); }
+  else { hookSecret = null; }
+  if (view === "handover") loadSheet();
+  if (view === "day" || view === "plan") loadDays();
+  render(true);
+  if (moveFocus) { $("#screen").focus({preventScroll:true}); window.scrollTo(0, 0); }
+}
 async function start() {
   // A sign-in link from the handover sheet carries the code in the fragment,
   // which never reaches a server log; exchange it once and wipe it.
   const m = location.hash.match(/^#t=([\w-]+)$/);
-  if (m) { await signIn(m[1]); history.replaceState(null, "", location.pathname + "#now"); }
+  if (m) { await signIn(m[1]); history.replaceState(null, "", location.pathname + location.search + "#now"); }
   // An order system's link can carry the order number, so nobody types a UUID
   // at the wall: <box>/#record=<reference>.
   takeOrder();
-  view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "now";
-  window.addEventListener("hashchange", () => { takeOrder(); const v = location.hash.slice(1); if (view !== "signin" && VIEWS.includes(v)) { view = v; if (v === "setup") { loadPairing(); loadPush(); loadTrust(); loadHooks(); } else { hookSecret = null; } if (v === "handover") loadSheet(); if (v === "day" || v === "plan") loadDays(); render(); window.scrollTo(0, 0); } });
+  view = requestedView();
+  $(".skip").onclick = event => { event.preventDefault(); $("#screen").focus(); };
+  window.addEventListener("hashchange", () => { takeOrder(); enterView(true); });
   $("#scrub").addEventListener("input", (e) => { at = +e.target.value; playing = false; load(); });
   $("#play").addEventListener("click", () => { playing = !playing; render(); });
   await load();
-  if (view === "setup") { loadPush(); loadHooks(); }
-  if (view === "handover") loadSheet();
-  if (view === "day" || view === "plan") loadDays();
+  enterView();
   setInterval(() => { if (home?.demo) { if (playing) { at = ((at ?? 0) + 5) % 1440; load(); } } else if (view !== "signin") load(); }, home?.demo ? 350 : 5000);
 }
 // The capture hook: move the replay to `minute` of the day and render it.

@@ -12,6 +12,11 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  interfaces:
+    uses: ./.github/workflows/interfaces.yml
+    permissions:
+      contents: read
+
   portal:
     runs-on: ubuntu-latest
     steps:
@@ -23,7 +28,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: pipx install uv==0.13.6
-      - run: just portal-trial
+      - name: Exercise the customer portal, winter receipt and operator rehearsal
+        run: |
+          just portal-trial
+          git diff --exit-code -- services/fleetd/src/api/assets
+          just opcua-meter-trial
+          just serial-meter-trial
+          just heat-meter-trial
+          just thermal-trial
+          just canary-trial
         env:
           CHROME: /usr/bin/google-chrome
 
@@ -54,20 +67,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-      # The guard, the arbiter and the planner take time as a parameter. The
-      # moment one of them reads a clock, a whole winter day stops being a unit
-      # test — so this is a build failure, not a review comment.
       - run: just purity
 
   test:
     name: Tests
     runs-on: ubuntu-latest
-    # The fleet daemons deploy on PostgreSQL and their queries are tested against
-    # PostgreSQL (D159). A **service container** rather than testcontainers here:
-    # the runner has Docker either way, but a service is started once for the job
-    # instead of once per test binary, and `EMS_TEST_POSTGRES` is the documented
-    # way to point the suite at one. Pinned to the same major the fixture starts
-    # locally, so a green CI and a green laptop mean the same thing.
+    # Share one PostgreSQL instance across the fleet integration tests.
     services:
       postgres:
         image: postgres:18-alpine
@@ -130,19 +135,11 @@ jobs:
       # Every regulatory citation resolves to an indexed document, every
       # CloudEvents type is in the catalogue, and every crate's manifest names
       # files that exist. All of those failures are otherwise silent.
+      - run: python3 -m unittest discover -s tools/conformance
+      - run: python3 tools/conformance/contracts.py
       - run: cargo xtask check-all
 
-  # ── The one resolution nothing else performs ────────────────────────────────
-  #
-  # `cargo publish` resolves every dependency against **crates.io**, where every
-  # other job here resolves against the tree. A self-dependency, a path
-  # dependency with no version, or a version bump that outran a sibling's
-  # published one therefore fails in this job and in no other — and, before this
-  # job existed, at `git push --tags`, which is the most expensive place to find
-  # out.
-  #
-  # Four seconds: `--no-verify` makes the check the *resolution* rather than a
-  # second build of what `test` already built.
+  # Check resolution of the publishable crates as a workspace.
   publishable:
     name: Publishable
     runs-on: ubuntu-latest
@@ -187,7 +184,7 @@ jobs:
         env:
           CHROME: /usr/bin/google-chrome
         run: |
-          cargo build --locked -p hemsd -p bemsd -p cemsd
+          cargo build --locked -p hemsd -p bemsd -p cemsd --features cemsd/opcua
           target/debug/hemsd demo --days 1 &
           home_pid=$!
           target/debug/bemsd demo &
@@ -246,6 +243,7 @@ jobs:
       - run: cargo test --locked -p hemsd --features house --lib departure_is_closed
       - run: cargo test --locked -p hemsd --features house --lib gateway_storage_trial
       - run: cargo test --locked -p hemsd --features house --lib berlin_meter_days_reconcile_on_the_wire -- --nocapture
+      - run: cargo test --locked -p hemsd --features house --lib a_winter_departure_is_visible_on_the_occupied_house_meter -- --nocapture
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: flexiblepower/s2-analyzer

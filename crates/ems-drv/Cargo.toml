@@ -13,6 +13,8 @@ homepage.workspace     = true
 rust-version.workspace = true
 
 [dependencies]
+mbus-kit = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
 matter-kit = { workspace = true, optional = true }
 ocpp-kit = { workspace = true, optional = true }
 ems-core = { workspace = true }
@@ -30,6 +32,8 @@ sunspec   = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [features]
+## Wired M-Bus heat-meter readout.
+mbus = ["dep:mbus-kit", "dep:rust_decimal"]
 ## Matter Electrical Power Measurement attributes.
 matter = ["dep:matter-kit"]
 ## Read-only OCPP 1.6J metering and profile acknowledgements.
@@ -39,7 +43,7 @@ default = ["serde"]
 serde = ["dep:serde", "ems-core/serde"]
 ## EEBUS: the Controllable System of LPC/LPP — the § 14a side of a household.
 eebus = ["dep:eebus", "dep:ems-grid", "dep:serde_json"]
-## SunSpec over Modbus TCP: inverters, meters and batteries.
+## Modbus TCP device drivers and read-only RTU meter framing.
 modbus = ["dep:sunspec"]
 
 [dev-dependencies]

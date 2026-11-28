@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "TestPing": {
+      "description": "`de.ems.test.ping`: sent on request, to check a receiver.",
+      "properties": {
+        "test": {
+          "description": "Always `true`; a receiver can tell a test from an event by its type.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "test"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.test.ping.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Sent on request, to check a receiver",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/TestPing"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.test.ping.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.test.ping"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.test.ping",
+  "type": "object"
+}

@@ -120,7 +120,7 @@ pub const CONTROL_PERIOD: Duration = Duration::minutes(1);
 /// constant here for the same reason the roof's tilt is read from the site model
 /// rather than repeated: the simulator and the plan must not be able to disagree
 /// about which way the house is pointing.
-const FACADE_AZIMUTH_DEG: f64 = 180.0;
+pub(crate) const FACADE_AZIMUTH_DEG: f64 = 180.0;
 
 /// How often the planner re-solves.
 ///
@@ -150,7 +150,7 @@ fn compressor_sim() -> ems_sim::CompressorSim {
 /// of the difference: noise at 11 kW, a tenth of the throughput at 1,4. A
 /// simulator that used one figure for both would let a controller switch
 /// conductors for free and report a saving nobody would ever see on a bill.
-const SINGLE_PHASE_EFFICIENCY: f64 = 0.85;
+pub(crate) const SINGLE_PHASE_EFFICIENCY: f64 = 0.85;
 
 /// How the day should go.
 #[derive(Debug, Clone)]
@@ -993,6 +993,10 @@ pub struct DayResult {
     /// setting: a plan can respect it and the arbiter still spend it between
     /// re-plans, which is why the guard enforces it too.
     pub battery_soc_min: f64,
+    /// Stationary battery state of charge at the closing meter boundary, 0–1.
+    pub battery_soc_end: f64,
+    /// Usable hot water remaining at the same boundary, kWh of heat.
+    pub tank_closing_kwh: f64,
     /// Energy delivered to the car, kWh.
     pub ev_charged_kwh: f64,
     /// Electrical energy used by the heat pump, kWh.
@@ -1612,7 +1616,7 @@ fn run_with(
         // report what the planner's minimum runtime actually bought. Without it
         // the constraint is stated in every plan and observed by nothing.
         compressor: (!house.heat_pump.modulating).then(compressor_sim),
-        ..BuildingSim::new(21.0)
+        ..BuildingSim::new(OPENING_ROOM_C)
     };
     let mut inverter = PvSim::default();
     let stored_at_start = |battery: &BatterySim, tank: &TankSim| -> f64 {
@@ -1647,6 +1651,7 @@ fn run_with(
     // look like it was broken by a standing loss.
     battery.stored = house.battery.kwh * house.battery.reserve_soc.fraction().max(0.30);
     let mut evse = EvseSim::new();
+    evse.max_current = house.evse.max_current;
     if house.evse.switchable {
         evse = evse.switchable();
     }
@@ -2845,6 +2850,8 @@ fn run_with(
         .map(ems_tariff::SlotPrice::import_f64)
         .sum::<f64>()
         / prices.slots.len().max(1) as f64;
+    result.battery_soc_end = battery.soc().fraction();
+    result.tank_closing_kwh = tank.stored.kwh();
     result.cost.stored_eur =
         ((stores_open - stored_at_start(&battery, &tank)) * mean_import).max(0.0);
     // …and the car, which is a different entry for a reason. Both households own
@@ -3407,7 +3414,7 @@ fn baseline_cost(
         // report what the planner's minimum runtime actually bought. Without it
         // the constraint is stated in every plan and observed by nothing.
         compressor: (!house.heat_pump.modulating).then(compressor_sim),
-        ..BuildingSim::new(21.0)
+        ..BuildingSim::new(OPENING_ROOM_C)
     };
     let mut thermostat_on = false;
     let mut cost = CostBreakdown::default();
@@ -3760,9 +3767,8 @@ fn score_slot(
     }
 }
 
-/// The car both households own.
-///
-/// One constant rather than two, because every comparison in this file rests on
-/// the two sides having the same vehicle: a managed household charging a 60 kWh
-/// car against a baseline charging a smaller one is measuring the car.
-const VEHICLE_CAPACITY: Energy = Energy::new_const(60_000.0);
+/// Initial room temperature shared by the native and wire simulations.
+pub(crate) const OPENING_ROOM_C: f64 = 21.0;
+
+/// Usable capacity of the vehicle in the household reference scenarios.
+pub(crate) const VEHICLE_CAPACITY: Energy = Energy::new_const(60_000.0);

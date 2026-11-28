@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "FailsafeEntered": {
+      "description": "`de.ems.grid.lpc.failsafe.entered`: the control box fell silent.",
+      "properties": {
+        "failsafe_w": {
+          "description": "The failsafe ceiling now in force, W.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpc.failsafe.entered.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The control box fell silent; the failsafe value applies",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/FailsafeEntered"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpc.failsafe.entered.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.grid.lpc.failsafe.entered"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.grid.lpc.failsafe.entered",
+  "type": "object"
+}

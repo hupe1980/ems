@@ -187,6 +187,16 @@ impl Probe {
         };
     }
 
+    /// Body of the confirmed three-phase meter model.
+    pub(super) fn meter_block(&self) -> Option<(u16, u16)> {
+        self.found
+            .as_ref()
+            .filter(|identity| identity.connection_meter)?;
+        self.models
+            .iter()
+            .find_map(|(id, address, len)| (id == 203).then_some((address, len)))
+    }
+
     /// What was found, once [`request`](Self::request) has nothing left to ask.
     #[must_use]
     pub fn found(&self) -> Option<&Identity> {

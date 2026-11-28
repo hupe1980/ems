@@ -1,0 +1,18 @@
+mode = "shadow"
+external_limit_controller = "Conformance trial"
+store_path = "/var/lib/hemsd/box.redb"
+
+[[drivers]]
+kind = "sunspec"
+asset = "netzanschluss-zaehler"
+address = "127.0.0.1:1502"
+unit = 1
+listens_only = true
+
+[service]
+listen = "0.0.0.0:8080"
+
+[api]
+tls = false
+insecure_lan = true
+token = "env:HEMS_TOKEN"

@@ -18,6 +18,31 @@ It is also checked in as
 [`services/hemsd/openapi.json`](https://github.com/hupe1980/ems/blob/main/services/hemsd/openapi.json),
 and the build fails if a response type changes and the document does not.
 
+## Verify a replacement
+
+The EMS household profile targets level L4. Each release measures four ports on Linux amd64 and arm64. The sender's event ID ties the CloudEvent, signature and delivery together.
+
+| Port | Service | Passing observation |
+|---|---|---|
+| REST with OpenAPI | `hemsd` | The contract lists the gateway event types. Household status requires a bearer token and returns the site identity. |
+| CloudEvents 1.0 | `hemsd` | A subscribed receiver gets a structured test event from that site, with an event ID and a versioned payload schema. |
+| Standard Webhooks | `hemsd` | The receiver verifies the exact delivered bytes with the one-time subscription key. Revocation stops subsequent test deliveries. |
+| MCP over HTTP | `tariffd` | An authenticated MCP 2026-07-28 client discovers the server, lists the tools and calls `get_coverage` for four quarter-hours. An empty cache is a valid answer. |
+
+Each published JSON Schema describes a complete envelope. Its `#/properties/data` fragment describes the payload and is the URI carried in `dataschema`. Schemas include their transitive definitions for offline use. [Test ping schema](../../contracts/events/v1/de.ems.test.ping.json) · [All gateway event contracts](https://github.com/hupe1980/ems/tree/main/schemas/events)
+
+**Rehearse both images.** Run `just interfaces` with Docker Buildx, a running Docker Engine and Python 3.11+. The kit runs a shadow gateway, tariff service and private callback receiver on an isolated bridge. It records the four outcomes and both OCI manifest and configuration digests in `target/interfaces/evidence.json`.
+
+**Qualify another implementation.** From the checkout or extracted release contract bundle, set `HEMS_TOKEN` and `MCP_TOKEN` in the environment. Use an authorized test household with one available subscription slot. Supply the address where the gateway can reach the probe on your private network. The probe creates and revokes a temporary ping subscription. Configure the local trust store for HTTPS endpoints.
+
+```sh
+python3 tools/conformance/probe.py \
+  --gateway https://gateway.example --tariff https://tariff.example \
+  --callback http://192.168.10.25:8085 --bind 192.168.10.25
+```
+
+**Check a release.** Download `ems-interface-contracts.tar.gz` and `interfaces-<arch>.json`. Read the appropriate role's `images.<role>.manifest` to select `ghcr.io/hupe1980/ems-hemsd@sha256:…` or `ghcr.io/hupe1980/ems-tariffd@sha256:…`. Each version tag groups the two measured architectures. The images run as UID 65532. Mount the service configuration at `/etc/ems/<role>.toml` and give the gateway a writable volume at `/var/lib/hemsd`.
+
 ## Credentials
 
 | Credential | Is | Opens |
@@ -115,6 +140,7 @@ nothing to remove.
 | `GET` | `/v1/handover` | household | What the handover sheet prints: identities and the § 14a devices |
 | `GET` | `/v1/commissioning` | household | The commissioning record, signed by the box: its identity, its control box, its § 14a devices |
 | `GET` | `/v1/qr/{what}` | household | A QR code: `ski`, `fingerprint`, `commissioning`, or `signin` (token only, never the cookie) |
+| `GET` | `/v1/commissioning/serial-buses` | household | List locally provisioned serial bus names during first setup |
 | `POST` | `/v1/commissioning/first-meter` | household | Preview a connection meter and optional observed assets on an empty site |
 | `GET` | `/v1/commissioning/transfer` | household | Read the controller handover review |
 | `PUT` | `/v1/commissioning/transfer` | household | Authorize or revoke an installer handover |
@@ -210,13 +236,11 @@ $ curl --cacert hems.pem -H "Authorization: Bearer $HEMS_TOKEN" -H 'Content-Type
 | `de.ems.test.ping` | `POST /v1/subscriptions/{id}/test` | `test` |
 
 `types` takes a trailing `*` (`de.ems.grid.*`); `subjects` narrows to asset
-ids. The schema of every `data` is in `openapi.json`'s `webhooks` section.
+ids. Each event carries a `dataschema` URI for its payload. OpenAPI also includes the payload types in its `webhooks` section.
 
 For an episode that also triggers a browser notification, `notification.data.event_id` matches the CloudEvent `id`, including after quiet hours.
 
-A receiver answers `2xx`. Anything else is tried again — after 30 s, 2 min,
-10 min, 30 min, 1 h and then every 3 h — for 24 hours, then dropped;
-`GET /v1/deliveries` shows the last seven days of attempts. The box delivers
+A receiver returns `2xx` and deduplicates retries by `source` and `id`. Retry intervals are 30 seconds, 2 minutes, 10 minutes, 30 minutes, one hour and then three hours, within a 24-hour window. Each subscription holds up to 200 pending events and drops the oldest when full. `GET /v1/deliveries` shows up to 500 attempts per subscription from the last seven days. The box delivers
 to an address on the household's network over `http` or `https`, to one on
 the internet over `https` only and only with `"public": true`, and never to
 loopback, link-local or itself; it follows no redirect. At most eight
@@ -356,3 +380,8 @@ GET /v1/series/grid?from=2026-11-23T10:00:00Z&to=2026-11-23T10:15:00Z&resolution
 `at` identifies the quarter start. `watts` is the arithmetic mean of the observations. `min_watts`, `max_watts` and `samples` describe their range and count. Positive watts indicate import at the grid connection. A quarter with no observations has no row. A measured zero has a row.
 
 For explicit summaries, supplied boundaries must fall on a quarter hour. With just `?resolution=quarter_hours`, the response covers the four most recently closed quarters. Omit `resolution` to select the available tier automatically. Windows include their start, exclude their end and may span up to 1,096 days. A box with local history disabled returns 404. During another history read it returns 503. Retry after the first request finishes.
+
+
+### Wired heat-meter diagnostics
+
+When a heat meter is configured, authenticated `GET /v1/trust` includes `heat_meter` with its configured manufacturer, eight-digit ID and primary address. `delivered_heat_wh` is an exact decimal string while `state` is `live`. It is null for `waiting`, `unavailable`, `wrong_meter` and `invalid_reply`. `last_read_at` is the gateway receipt time in Unix seconds and stays null until the first accepted reading.

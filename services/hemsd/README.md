@@ -1,10 +1,10 @@
 # hemsd
 
-A household energy gateway with a local control loop, planner and browser UI. The gateway uses SunSpec/Modbus TCP and EEBUS to communicate with devices and exposes S2 to an external energy manager.
+A household energy gateway with a local control loop, planner and browser UI. The gateway uses SunSpec over Modbus TCP or RTU and EEBUS to communicate with devices and exposes S2 to an external energy manager.
 
 On first start the gateway uses a synthetic household load profile. Set `[site] household_kwh_per_year` to annual appliance consumption when known. [Forecasting guide](https://hupe1980.github.io/ems/docs/forecasting/)
 
-Rehearse an OCPP departure with `cargo run -p hemsd --features house -- ev-departure`. The receipt shows OCPP outlet delivery and SunSpec whole-house import, including the quarter when the wallbox paused. Set `--goal-wh 6000` to see a shortfall or `--missing-close` to inspect an unverified departure. Use `--report-to` to send the signed outlet evidence to the collector for the [household portal](../portald/README.md).
+For fleet reporting, configure the same `whsec_<standard Base64>` signing key in `[obsd].secret` and in the collector’s entry for this site. [Key provisioning and rotation](https://hupe1980.github.io/ems/docs/security/#secrets-and-transport)
 
 ## Try the interface
 
@@ -14,6 +14,10 @@ cargo run -p hemsd -- demo --days 1
 
 Open the [household page](http://127.0.0.1:8080/). **Now** explains what the devices are doing, **Plan** lets you price a departure or hot-water goal, and **Day** shows the energy and cost for a closed day. Select a day in Month to see the matched bill difference or the first service check that failed.
 
+## Gateway image and event contracts
+
+The `hemsd` Dockerfile target runs as UID 65532. Mount the gateway configuration at `/etc/ems/hemsd.toml` and persistent writable storage at `/var/lib/hemsd`. The gateway owns the household REST, structured CloudEvents and signed webhook ports. Run `just interfaces` from the workspace root to exercise a real delivery. [Published event schemas](../../schemas/events) · [Replacement guide](https://hupe1980.github.io/ems/docs/api/#verify-a-replacement)
+
 ## Run a gateway
 
 ```sh
@@ -21,6 +25,11 @@ cargo run -p hemsd -- run --config house.toml
 ```
 
 With an empty or missing file, sign in with the printed access code, identify the three-phase SunSpec connection meter, and review the fuse and tariff before confirming. PV and battery observation also require the device nameplate and an identified controller enforcing site limits.
+
+For an RS-485 connection meter, provision the serial port in `house.toml`, then select its bus and unit in Setup. Run `just serial-meter-trial` to rehearse the workflow against a simulated model 203 meter. [Serial meter setup](https://hupe1980.github.io/ems/docs/devices/#commission-a-serial-grid-meter)
+
+For a wired heat meter, add a `[heat_meter]` table to the commissioned household configuration with the converter path, primary address, manufacturer and eight-digit meter ID. Setup and `hemsd doctor` report the cumulative delivered thermal Wh and flag a silent or swapped meter. [Configuration and supported meters](https://hupe1980.github.io/ems/docs/devices/#read-a-wired-heat-meter)
+
 
 For a configured site, use `hemsd run --check --config house.toml` to validate the file before opening connections. The gateway serves its page and API over HTTPS when bound off loopback. Local evidence and its delivery outbox use `redb`. [Example configuration](hemsd.example.toml) · [Installation guide](https://hupe1980.github.io/ems/docs/getting-started/)
 
@@ -46,20 +55,17 @@ Build with `cargo build -p hemsd --features matter`. Select a commissioned appli
 
 ## Exercise a controller
 
-| Command from the workspace root | What it exercises |
-|---|---|
-| `cargo run --release -p hemsd -- simulate --day winter` | The planner, guard and arbiter against simulated devices and seeded weather. Add `--json` for machine-readable results. |
-| `just house-storage-trial` | Check signed gateway commands, renewal, reserve, AC metering and the 30-second reversion over Modbus TCP. |
-| `just house-meter-trial` | Reconcile meter readings and a two-rate bill over Modbus TCP for winter and both Berlin clock changes. |
-| `cargo run -p hemsd --features house -- house --run --at 16:58` | A gateway connected to a virtual inverter, battery, meter and Steuerbox over local sockets. |
-| `cargo run --release -p hemsd -- backtest --day summer --days 20` | Forecast coverage across independent simulated days. |
-| `just quote-trial` | Slider-to-price latency over 20 accepted departure goals. |
-| `just retained-history-trial` | Export during virtual control with 1,095 days of stored quarters. |
+Build the simulation commands with `cargo build -p hemsd --features house`, then run them from `target/debug/`.
 
-For API integration, `hemsd openapi` emits the schema and `cargo xtask check-api` verifies it against the checked-in contract. [OpenAPI 3.1](openapi.json) · [Device capabilities](https://hupe1980.github.io/ems/docs/devices/)
+| Command | What to inspect |
+|---|---|
+| `hemsd house --run --with-room --with-tank --with-ev --manage-storage` | In **Now**, compare a battery command with measured power while the heaters and wallbox share the connection meter. |
+| `hemsd winter-day --html > winter.html` | Inspect all 96 accelerated quarters, including the hot-water deadline and the closing battery charge. |
+| `hemsd ev-departure --goal-wh 6000` | Read the OCPP outlet delivery and shortfall after a charger interruption. |
+| `just house-meter-trial` | Reconcile meter registers and bills for winter and both Berlin clock changes. |
+
+For a retained ledger and an independent run with the same installed appliances, follow the [winter simulation guide](https://hupe1980.github.io/ems/docs/simulation/#verify-a-vehicle-departure). For API integration, `hemsd openapi` emits the [OpenAPI contract](openapi.json).
 
 ## License
 
 MIT OR Apache-2.0
-
-Use `hemsd house --run --manage-storage` with the `house` feature to manage the loopback battery. In **Now**, open **Battery control** to compare the requested, confirmed and measured power.

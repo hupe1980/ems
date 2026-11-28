@@ -78,6 +78,8 @@ pub struct Commissioning {
     pub control_box: Option<AssetId>,
     /// Each configured Modbus device: its asset and the `host:port` it is at.
     pub modbus: Vec<(AssetId, String)>,
+    /// Configured RTU meter asset, bus name and unit.
+    pub serial: Vec<(AssetId, String, u8)>,
     /// Each configured EEBUS device on the household's network: asset and SKI.
     pub eebus: Vec<(AssetId, String)>,
     /// The § 14a module the household is billed under, as configured.
@@ -103,6 +105,7 @@ impl Commissioning {
             };
             match driver {
                 DriverSettings::Sunspec(s) => out.modbus.push((id, s.address.clone())),
+                DriverSettings::SerialSunspec(s) => out.serial.push((id, s.bus.clone(), s.unit)),
                 DriverSettings::Registers(s) => out.modbus.push((id, s.address.clone())),
                 DriverSettings::EebusLpc(_) => out.control_box = Some(id),
                 DriverSettings::EebusDhw(s) => out.eebus.push((id, s.ski.clone())),

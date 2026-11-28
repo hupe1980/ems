@@ -8,9 +8,11 @@ license.workspace = true
 publish = false
 
 [features]
+opcua = ["dep:opcua-kit", "tokio/time"]
 openadr = ["dep:openadr", "dep:rust_decimal", "dep:reqwest", "dep:uuid"]
 
 [dependencies]
+opcua-kit = { workspace = true, features = ["client", "cems"], optional = true }
 ems-core = { workspace = true }
 ems-sim = { workspace = true, features = ["peak"] }
 openadr = { workspace = true, features = ["vtn"], optional = true }

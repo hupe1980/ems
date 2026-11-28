@@ -12,9 +12,23 @@ use tokio::sync::RwLock;
 #[derive(Parser)]
 #[command(name = "fleetd", version, about = "The hems fleet service")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Action>,
     /// The configuration file. Absent, or absent from disk, means the defaults.
     #[arg(long, env = "EMS_FLEETD_CONFIG")]
     config: Option<PathBuf>,
+}
+
+#[derive(clap::Subcommand)]
+enum Action {
+    /// Freeze the current enrolled cohort for a simulated gateway update.
+    Rehearse {
+        #[arg(long)]
+        site: String,
+        /// Lowercase SHA-256 of the candidate simulator build.
+        #[arg(long)]
+        digest: String,
+    },
 }
 
 #[tokio::main]
@@ -52,6 +66,11 @@ async fn main() -> anyhow::Result<()> {
     let db = ems_service::db::connect(&settings.database, ems_service::identity!().name).await?;
     ems_service::db::migrate(&db, fleetd::store::MIGRATIONS).await?;
     let store = fleetd::store::Store::new(db);
+    if let Some(Action::Rehearse { site, digest }) = cli.command {
+        let id = store.freeze_rehearsal(&site, &digest).await?;
+        println!("{id}");
+        return Ok(());
+    }
     let enrolments = store.enrolments().await?;
     let reports = store.reports().await?;
     tracing::info!(

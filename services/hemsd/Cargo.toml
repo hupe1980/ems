@@ -19,20 +19,17 @@ name = "hemsd"
 path = "src/lib.rs"
 
 [dependencies]
+ems-device = { workspace = true, optional = true }
 uuid = { workspace = true }
 tokio-tungstenite = { version = "0.29", optional = true, default-features = false, features = ["connect"] }
 futures-util = { version = "0.3", optional = true, features = ["sink"] }
 ems-core      = { workspace = true }
-# Both protocols: this is the process that owns the sockets, so it is the one
-# place the transports are allowed to exist.
-ems-drv       = { workspace = true, features = ["eebus", "modbus"] }
+ems-drv       = { workspace = true, features = ["eebus", "modbus", "mbus"] }
 ems-events    = { workspace = true }
 ems-flex      = { workspace = true }
 ems-forecast  = { workspace = true }
 ems-grid      = { workspace = true }
-# The daemon is built with HiGHS: a gateway box solves a 96-slot horizon every
-# quarter of an hour, and the pure-Rust fallback is for library consumers who
-# would rather not have a C++ toolchain than for the thing doing the solving.
+# The gateway uses HiGHS for its rolling household plan.
 ems-optimizer = { workspace = true, features = ["highs"] }
 ems-realtime  = { workspace = true }
 ems-service   = { workspace = true, features = ["tls"] }
@@ -41,44 +38,22 @@ ems-service   = { workspace = true, features = ["tls"] }
 eebus        = { workspace = true, features = ["runtime", "mdns", "aws-lc-rs", "conformance"] }
 if-addrs     = { workspace = true }
 ems-sim       = { workspace = true }
-# The S2 data model, so this daemon can decode a frame into the `Message` that
-# `ems-flex` decides about. `default-features = false` keeps the crate's own
-# transport out: the box is the *server*, axum already binds its socket, and
-# `s2-kit`'s own driver dials a connection rather than accepting one — it cannot
-# say which *resource* an inbound connection is for, which is the one thing a
-# multi-resource household needs (see `runtime::s2`).
+# Axum accepts S2 manager connections and routes them by resource.
 s2-kit       = { workspace = true }
 ems-tariff    = { workspace = true }
 metering       = { workspace = true }
 
 anyhow       = { workspace = true }
-# `ws`, for the one surface that needs one. S2's recommended binding is JSON over
-# WebSockets, and the box already binds a socket for its own API — so the
-# manager's route rides on it rather than costing a household a second port and a
-# second firewall rule (see `runtime::s2`).
 axum         = { workspace = true, features = ["ws"] }
 clap         = { version = "4", features = ["derive", "env"] }
-# The box's one outbound call, on the **async** client. `main` is
-# `#[tokio::main]`, so every command runs inside a runtime, and
-# `reqwest::blocking` builds a runtime of its own that panics when dropped in an
-# asynchronous context (D115). Taken from the workspace so the box and the fleet
-# share one HTTP client and one TLS provider (D84, D85).
 reqwest      = { workspace = true }
-# **Two stores, and the split is forced rather than tidy.** `redb` holds
-# everything that is not a series — the § 14a evidence, the registers, the
-# outbox, the identity, the learned models — and `chronix` the one-second
-# series, which is the only half whose values may be `f64` (D168, D169).
+# redb holds evidence and the outbox. Chronix stores sampled power history.
 redb         = { workspace = true }
 chronix      = { workspace = true }
 arrow        = { workspace = true }
 rust_decimal = { workspace = true }
-# The box issues its own API token, and the operating system's entropy is the
-# only thing it may come from: a credential derived from a site name, a serial
-# number or a clock is one somebody can compute (`runtime::access`).
 getrandom    = { workspace = true }
 hex          = { workspace = true }
-# The box's own HTTPS (runtime::tls): the server configuration and the
-# certificate it issues itself, on the provider the rest of the box names.
 rustls       = { workspace = true }
 # Web Push (runtime::webpush): message encryption [RFC 8291] and the VAPID
 # signature [RFC 8292], on the provider above; base64url is their one spelling.
@@ -94,10 +69,11 @@ thiserror    = { workspace = true }
 toml         = { workspace = true }
 tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "io-util"] }
 time         = { workspace = true }
+tokio-serial = { version = "5.5", default-features = false }
 tracing      = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-# The virtual house's Modbus far end, kept out of the box's own build.
+# Loopback charging and metering peers for the house feature.
 ocpp-kit = { workspace = true, features = ["tokio"], optional = true }
 tokio-modbus = { workspace = true, optional = true }
 tempfile = { version = "3", optional = true }
@@ -107,15 +83,14 @@ sunspec      = { workspace = true, optional = true }
 matter = ["ems-drv/matter", "dep:tokio-tungstenite", "dep:futures-util"]
 # `hemsd house`: a simulated household on the wire — SunSpec devices over Modbus
 # TCP and a Steuerbox over SHIP — for a real `hemsd run` to manage.
-house = ["dep:ocpp-kit", "ems-drv/ocpp", "dep:tokio-modbus", "dep:sunspec", "dep:tempfile"]
+house = ["dep:ems-device", "tokio/process", "dep:futures-util", "dep:tokio-tungstenite", "dep:ocpp-kit", "ems-drv/ocpp", "dep:tokio-modbus", "dep:sunspec", "dep:tempfile"]
 
 [dev-dependencies]
-# The **CEM's** half of S2, for the one test that needs a real one. The client
-# connector is the standard crate's own, so what drives the box across a socket
-# in `managed_by_a_cem.rs` is the reference implementation rather than a second
-# opinion about the wire — which is the whole reason `ems-flex` takes the
-# generated types in the first place.
-#
-# Enable the S2 reference client's socket only in tests. Production S2 uses
-# the gateway's Axum listener. The optional Matter reader dials loopback.
+# Independent RTU meter for the pseudo-terminal integration test.
+tokio-modbus = { workspace = true, features = ["rtu-server"] }
+# Exercise the inbound manager route with the S2 reference client.
 s2-kit   = { workspace = true, features = ["tokio"] }
+
+[[example]]
+name = "serial_meter"
+required-features = ["house"]

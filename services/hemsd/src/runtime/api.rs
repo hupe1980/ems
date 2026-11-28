@@ -37,6 +37,7 @@ use time::OffsetDateTime;
 /// What the API needs to answer.
 #[derive(Clone)]
 pub struct Local {
+    heat_meter: Option<super::heat_meter::Observer>,
     #[cfg(feature = "matter")]
     matter: Option<super::matter::Meter>,
     status: Arc<Mutex<Status>>,
@@ -105,6 +106,13 @@ pub struct HomeSources {
 }
 
 impl Local {
+    /// Attach the live wired heat meter to installer diagnostics.
+    #[must_use]
+    pub fn with_heat_meter(mut self, observer: super::heat_meter::Observer) -> Self {
+        self.heat_meter = Some(observer);
+        self
+    }
+
     /// Attach the diagnostic appliance reading to the household page.
     #[cfg(feature = "matter")]
     #[must_use]
@@ -277,6 +285,7 @@ impl Local {
             settings: None,
             installer: None,
             registry: None,
+            heat_meter: None,
             days: None,
             push: None,
             webhooks: None,
@@ -2168,7 +2177,24 @@ async fn trust_check(State(local): State<Local>) -> Json<crate::doctor::Diagnost
     } else {
         HistoryState::Disabled
     };
+    let serial_meters = if let Some(registry) = &local.registry {
+        let registry = registry.lock().await;
+        let now = time::OffsetDateTime::now_utc();
+        local
+            .commissioning
+            .serial
+            .iter()
+            .map(|(asset, bus, unit)| registry.serial_reading(asset, bus, *unit, now))
+            .collect()
+    } else {
+        Vec::new()
+    };
     Json(crate::doctor::Diagnostics {
+        serial_meters,
+        heat_meter: local
+            .heat_meter
+            .as_ref()
+            .map(super::heat_meter::Observer::reading),
         trust: trust_of(&local).await,
         history,
     })

@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "LimitReleased": {
+      "description": "`de.ems.grid.lpc.limit.released`: the reduction ended.",
+      "properties": {
+        "lasted_s": {
+          "description": "How long it lasted, seconds, where the box saw it begin.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpc.limit.released.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The reduction ended",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/LimitReleased"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpc.limit.released.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.grid.lpc.limit.released"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.grid.lpc.limit.released",
+  "type": "object"
+}

@@ -1,5 +1,8 @@
 //! What a box, a household and a network operator can ask `histd`.
 
+#[path = "desk.rs"]
+mod desk;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -84,6 +87,7 @@ fn failed<T>(outcome: Result<T, StoreError>) -> Result<T, StatusCode> {
 /// The routes.
 pub fn router(history: History) -> Router {
     Router::new()
+        .route("/v1/desk/energy", get(desk::energy))
         .route("/v1/sites/{site}/quarter-hours", post(put_quarter_hours))
         .route("/v1/sites/{site}/quarter-hours", get(get_quarter_hours))
         .route("/v1/sites/{site}/events", post(put_event))

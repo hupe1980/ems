@@ -1,19 +1,19 @@
 # portald
 
-Compare import, export and generation over 7 or 30 calendar days ending on the latest report. Select a day in the chart to see its reading or a gap in coverage. Open the daily readings for exact kWh, or inspect the simulated charging receipt and its outlet registers.
+Compare import, export and generation over 7 or 30 calendar days ending on the latest report. Jump to the highest reported day or latest gap. All three measures use the same vertical scale for the selected period. Open the daily readings for exact kWh, or inspect the simulated charging receipt and its outlet registers.
 
 <img src="../../site/static/screens/household-portal.png" width="560" alt="Household portal showing a week of energy history and a charging receipt 1.25 kWh short">
 
 ## Run locally
 
-From the workspace root, build the React app with Node 26 and npm, then start the Rust service.
+From the workspace root, build the React app and Tailwind styles with Node 26 and npm, then start the Rust service.
 
 ```sh
 just portal-build
 cargo run --locked -p portald -- --config services/portald/portald.example.toml
 ```
 
-Open `/portal` through the [OIDC ingress](../../deploy/oidc/README.md). The gateway reads from `obsd` on port 7780 using the server-side grant for the signed-in household.
+Open `/portal` through the [OIDC ingress](../../deploy/oidc/README.md). The portal service reads from `obsd` on port 7780 using the server-side grant for the signed-in household.
 
 ## Rehearse a departure
 

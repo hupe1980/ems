@@ -269,7 +269,7 @@ pub struct Planner {
     /// gate: a departure and a target are what the *household* wants, and a
     /// deadline without a car on the cable is a schedule the arbiter spends the
     /// afternoon failing to follow.
-    pub charging: Option<crate::config::EebusEvSettings>,
+    pub charging: Option<crate::config::ChargingSettings>,
     /// The household's declared annual consumption, kWh, which scales the household
     /// prior a cold box leans on. See [`crate::forecasting::household_prior`].
     pub household_kwh_per_year: Option<f64>,
@@ -290,9 +290,9 @@ pub struct Planner {
 /// The charging settings with the household's goal, where it set one, in place
 /// of the configured target and departure.
 fn with_goal(
-    charging: Option<&crate::config::EebusEvSettings>,
+    charging: Option<&crate::config::ChargingSettings>,
     goal: Option<crate::home::CarGoal>,
-) -> Option<crate::config::EebusEvSettings> {
+) -> Option<crate::config::ChargingSettings> {
     let mut charging = charging?.clone();
     if let Some(goal) = goal {
         charging.target_soc = goal.target_soc.clamp(0.0, 1.0);
@@ -417,6 +417,7 @@ pub async fn run(
 ) {
     let mut cached = Cached::default();
     let mut goals_changed = planner.goal.changes();
+    let vehicle_changed = registry.lock().await.vehicle_changed.clone();
     // Which local day the building was last identified on. Once a day: the
     // search is a few hundred passes over a fortnight of quarter hours, which is
     // nothing on a schedule of days and is pure waste every five minutes — and
@@ -439,6 +440,7 @@ pub async fn run(
             }
             _ = ticker.tick() => true,
             () = planner.tariff_changed.notified() => false,
+            () = vehicle_changed.notified() => false,
             _ = goals_changed.changed() => false,
         };
         let now = OffsetDateTime::now_utc();
@@ -1144,7 +1146,7 @@ fn ev_session(
     now: OffsetDateTime,
     observed: &crate::drivers::Observed,
     household: &Household,
-    charging: Option<&crate::config::EebusEvSettings>,
+    charging: Option<&crate::config::ChargingSettings>,
     horizon: Horizon,
 ) -> Option<ems_optimizer::model::EvSession> {
     use ems_core::prelude::{Energy, PhaseMode};
@@ -1175,7 +1177,7 @@ fn ev_session(
         // arbiter obeys (D96).
         return None;
     }
-    let departure = charging.departure_slot(horizon)?;
+    let departure = charging.departure_slot(now, horizon)?;
     Some(ems_optimizer::model::EvSession {
         energy_now,
         energy_target,
@@ -1352,14 +1354,9 @@ mod tests {
             .expect("the reference household");
         let now = time::OffsetDateTime::now_utc();
         let horizon = Horizon::new(now, 96);
-        let charging = crate::config::EebusEvSettings {
-            asset: "wallbox".into(),
-            address: "192.168.1.50:4712".into(),
-            ski: "00".repeat(20),
+        let charging = crate::config::ChargingSettings {
             departure: "07:00".into(),
             target_soc: 0.8,
-            spine_vendor: None,
-            spine_unique: None,
         };
 
         // Nothing reported anything at all — a Modbus wallbox reports power and
@@ -1410,14 +1407,9 @@ mod tests {
         // this test happens to run at.
         let now = time::macros::datetime!(2026-01-15 18:00:00 UTC);
         let horizon = Horizon::new(now, 96);
-        let charging = crate::config::EebusEvSettings {
-            asset: "wallbox".into(),
-            address: "192.168.1.50:4712".into(),
-            ski: "00".repeat(20),
+        let charging = crate::config::ChargingSettings {
             departure: "07:00".into(),
             target_soc: 0.8,
-            spine_vendor: None,
-            spine_unique: None,
         };
         let evse = household.evse.clone().expect("the reference wallbox");
         let mut observed = crate::drivers::Observed::default();

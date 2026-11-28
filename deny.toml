@@ -33,6 +33,11 @@ confidence-threshold = 0.9
 crate = "libbz2-rs-sys"
 allow = ["bzip2-1.0.6"]
 
+# The gateway uses the unmodified serialport crate for RS-485 I/O.
+[[licenses.exceptions]]
+crate = "serialport"
+allow = ["MPL-2.0"]
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

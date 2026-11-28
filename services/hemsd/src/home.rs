@@ -963,6 +963,9 @@ pub struct Home {
     pub at: Option<String>,
     /// `true` when this is `hemsd demo` replaying a reference day.
     pub demo: bool,
+    /// The loopback demo offers a separately metered winter thermal rehearsal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_trial: Option<String>,
     /// The household confirmed immediate charging to its saved goal.
     pub charging_now: bool,
     /// In a demo, the minute of the day being shown, so the page's slider can
@@ -1162,6 +1165,7 @@ pub fn live(input: &Live<'_>, now: time::OffsetDateTime) -> Home {
         site: input.site.label.trim().to_owned(),
         at: status.at.map(rfc3339),
         demo: false,
+        thermal_trial: None,
         charging_now: false,
         at_minute: None,
         grid_kw: status.grid.map(Power::kw),

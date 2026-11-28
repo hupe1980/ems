@@ -22,7 +22,7 @@ Compare one-phase and three-phase charging in the [household solar simulator](ht
 |---|---|---|
 | [Household · hemsd](services/hemsd) | Manage a home battery, EV, heat pump and hot water within grid limits. Pre-alpha, without EEBUS certification. | `cargo run -p hemsd -- demo` · [8080](http://127.0.0.1:8080/) |
 | [Building · bemsd](services/bemsd) | See a BACnet zone sensor reserve heating capacity and compare both OCPP stations with a KNX feeder meter. Compare community allocation keys with `bemsd community`. Synthetic data. | `cargo run -p bemsd -- demo` · [8081](http://127.0.0.1:8081/) |
-| [Industrial · cemsd](services/cemsd) | Compare battery dispatch times, review an import trace offline in HTML or JSON, or replay an aggregator request with the optional OpenADR simulation. | `cargo run -p cemsd -- demo` · [8082](http://127.0.0.1:8082/) |
+| [Industrial · cemsd](services/cemsd) | Commission an OPC UA import meter, review closed quarters offline, compare battery start times or rehearse an OpenADR request. | `cargo run -p cemsd -- demo` · [8082](http://127.0.0.1:8082/) |
 
 Run these commands from the workspace root with Rust 1.99. Building `hemsd` also requires CMake and a C++ compiler for HiGHS.
 
@@ -41,7 +41,9 @@ For a new installation, start the gateway with an empty or missing configuration
 cargo run -p hemsd -- run --config house.toml
 ```
 
-Open the local address printed by the gateway and sign in with its access code. Setup walks you through identifying a SunSpec connection meter and reviewing the installation settings before activation.
+Open the local address printed by the gateway and sign in with its access code. Setup walks you through identifying a SunSpec connection meter and reviewing the installation settings before activation. For an RS-485 meter, provision the adapter once and select its bus and unit in Setup. [Serial meter guide](https://hupe1980.github.io/ems/docs/devices/#commission-a-serial-grid-meter)
+
+With a dedicated M-Bus converter, Setup shows cumulative heat in Wh after a complete reply from the commissioned meter. [Wired heat-meter guide](https://hupe1980.github.io/ems/docs/devices/#read-a-wired-heat-meter)
 
 For an existing installation, start with the [example configuration](services/hemsd/hemsd.example.toml). Set the asset names, driver addresses and storage paths for your installation.
 
@@ -52,24 +54,30 @@ cargo run -p hemsd -- run --config /etc/hems/hemsd.toml
 
 On a running gateway, `hemsd doctor --config /etc/hems/hemsd.toml` checks device responses and pairing. With local measurement history enabled, **Day** shows the observed range and sample count for a selected quarter hour. [Installation guide](https://hupe1980.github.io/ems/docs/getting-started/) · [Household UI](https://hupe1980.github.io/ems/docs/household/) · [Optional Matter appliance reader](services/hemsd/README.md#matter-appliance-power)
 
+Run `cargo run -p hemsd --features house -- winter-day` to compare a winter day’s meter readings with its hot-water target, EV departure and closing battery charge. [Simulation guide](https://hupe1980.github.io/ems/docs/simulation/)
+
+## Verify an EMS replacement
+
+Run `just interfaces` with Docker Buildx and Python 3.11+ to build the gateway and tariff images, test all four ports on a private network, and write their manifest digests to `target/interfaces/evidence.json`. The same probe can qualify a separately deployed implementation using its gateway and tariff URLs. [Port matrix and instructions](https://hupe1980.github.io/ems/docs/api/#verify-a-replacement) · [Platform declaration](platform.toml) · [Event schemas](schemas/events)
+
+Gateway-to-fleet reports use the official Standard Webhooks SDK and one Base64-encoded signing key per household. [Configure and rotate a signing key](https://hupe1980.github.io/ems/docs/security/#secrets-and-transport)
+
 ## Workspace
 
-The [crates](crates) implement grid rules, tariffs, forecasting, scheduling, device protocols, simulation and fleet interfaces. The seven [fleet services](https://hupe1980.github.io/ems/docs/services/) handle prices, weather, evidence, enrolment, reporting and advisory findings. The [operator desk](services/fleetd/README.md#operator-desk) shows when a gateway last checked in and when it last observed its feeder. The [household portal](services/portald/README.md) shows daily energy history and simulated charging receipts. Both browser interfaces support [OIDC sign-in](deploy/oidc/README.md).
+The [crates](crates) implement grid rules, tariffs, forecasting, scheduling, device protocols, simulation and fleet interfaces. The seven [fleet services](https://hupe1980.github.io/ems/docs/services/) handle prices, weather, evidence, enrolment, reporting and advisory findings. The [operator desk](services/fleetd/README.md#operator-desk) shows gateway freshness and up to 90 days of quarter-hour import and export per site. The [household portal](services/portald/README.md) shows daily energy history and simulated charging receipts. Both browser interfaces support [OIDC sign-in](deploy/oidc/README.md).
 
 Build the site with `just site-build` (Rust via rustup, Node, Python 3.11+ and Zola). The build embeds the choices evaluated by `ems-sim` and `ems-device`, compares the Wasm exports with native results, and verifies the generated site. Preview it with `just site`.
 
 ## ✅ Quality
 
-1 472 tests. `just ci` runs formatting, Clippy with warnings as errors, a purity
+1 495 tests. `just ci` runs formatting, Clippy with warnings as errors, a purity
 check that keeps clocks and sockets out of the domain crates, the whole suite,
 the workspace guards, `cargo-deny` and the docs. Workspace guards include:
 
 - `check-citations` — 465 citations across five document families; all 465 of them against an index of primary sources resolve, or the build fails.
-- `check-wire` — the 162 quantities and instants, each of which becomes money or evidence, say how they travel.
-- `check-deps-used` — 322 declared dependencies, every one reached from source.
+- `check-wire` — the 167 quantities and instants, each of which becomes money or evidence, say how they travel.
+- `check-deps-used` — 327 declared dependencies, every one reached from source.
 - `check-actions` — every GitHub Action pinned by commit.
-
-Run `just house-meter-trial` to reconcile the meter and bill across winter and both Berlin clock changes. Run `just house-storage-trial` to verify gateway-issued battery setpoints, measured AC delivery and timed release over Modbus TCP.
 
 Regulatory citations identify a decision, annex and clause, for example `[BK6-22-300 A1 4.5.2]`. See the [threat model](THREAT_MODEL.md) for trust boundaries and deployment assumptions.
 

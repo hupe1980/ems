@@ -1,0 +1,16 @@
+**
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**
+!services/
+!services/**
+!tools/
+!tools/ems-wasm/
+!tools/ems-wasm/**
+!xtask/
+!xtask/Cargo.toml
+!xtask/src/
+!xtask/src/**
+!LICENSE-MIT
+!LICENSE-APACHE

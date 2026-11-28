@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 
 use super::Cadence;
 use super::frame::{self, Request, RequestBody, Response, ResponseBody, Space};
-use crate::event::CommandOutcome;
+use crate::event::{CommandOutcome, VehiclePresence};
 use crate::{Driver, DriverCapabilities, DriverError, DriverEvent, LinkState};
 
 /// How wide a value is, and in which order its registers arrive.
@@ -96,6 +96,12 @@ pub enum Field {
     /// A state of charge, as a fraction — so a register in per cent has a scale
     /// of `0.01`.
     Soc,
+    /// Cumulative imported energy in Wh.
+    EnergyIn,
+    /// Cable presence, 0 disconnected or 1 connected.
+    VehicleConnected,
+    /// Vehicle-reported usable capacity in Wh.
+    VehicleCapacityWh,
 }
 
 /// One value in a vendor's map.
@@ -158,12 +164,12 @@ pub enum WriteKind {
         /// Written to switch it off.
         off: u16,
     },
+    /// Whole amperes per conductor, rounded down to respect a ceiling.
+    ChargingAmps,
     /// A vendor's named modes, in the order the rest of the box numbers them.
     ///
     /// `modes[n - 1]` is written for `Command::OperationMode(n)`, so an SG Ready
-    /// unit declares the four values its own documentation gives for states 1
-    /// to 4. A command outside the declared set is refused rather than clamped:
-    /// a mode nobody declared is a mode nobody knows the meaning of.
+    /// unit declares the raw value for each supported state.
     OperationMode {
         /// The raw value per state, state 1 first.
         modes: Vec<u16>,
@@ -174,6 +180,14 @@ impl WriteKind {
     /// The raw value `command` asks this register to take, where it asks at all.
     fn value_for(&self, command: &Command) -> Option<u16> {
         match (self, command) {
+            (Self::ChargingAmps, Command::ChargingCurrent(current))
+                if (0.0..=f64::from(u16::MAX)).contains(&current.get()) =>
+            {
+                // The checked range fits an unsigned register.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let amps = current.get().floor() as u16;
+                Some(amps)
+            }
             (Self::ThermalMode { heat, cool }, Command::ThermalMode(mode)) => Some(match mode {
                 ems_core::prelude::ThermalMode::Heat => *heat,
                 ems_core::prelude::ThermalMode::Cool => *cool,
@@ -182,7 +196,7 @@ impl WriteKind {
                 Some(if *wanted { *on } else { *off })
             }
             (Self::OperationMode { modes }, Command::OperationMode(state)) => {
-                modes.get(usize::from(state.saturating_sub(1))).copied()
+                modes.get(usize::from(state.checked_sub(1)?)).copied()
             }
             _ => None,
         }
@@ -208,12 +222,14 @@ pub struct Registers {
     /// swallowed: a response whose transaction matches no outstanding read would
     /// otherwise be dropped on the floor, and everything above would go on
     /// believing a compressor had been turned round.
-    written: Vec<u16>,
+    written: Vec<(u16, u16)>,
     /// The next point to read this round.
     next: usize,
     next_transaction: u16,
     /// The measurement being assembled from this round's points.
     partial: Option<Measurement>,
+    connected: Option<bool>,
+    vehicle_capacity_wh: Option<f64>,
     events: Vec<DriverEvent>,
     due: Option<OffsetDateTime>,
 }
@@ -252,6 +268,8 @@ impl Registers {
             next: 0,
             next_transaction: 1,
             partial: None,
+            connected: None,
+            vehicle_capacity_wh: None,
             events: Vec::new(),
             due: None,
         })
@@ -301,6 +319,8 @@ impl Registers {
     fn poll(&mut self, now: OffsetDateTime) {
         self.next = 0;
         self.partial = Some(Measurement::at(now));
+        self.connected = None;
+        self.vehicle_capacity_wh = None;
         self.ask(0, now);
     }
 
@@ -311,10 +331,20 @@ impl Registers {
         if response.unit != self.unit {
             return;
         }
-        if let Some(i) = self.written.iter().position(|t| *t == response.transaction) {
-            self.written.remove(i);
+        if let Some(i) = self
+            .written
+            .iter()
+            .position(|(t, _)| *t == response.transaction)
+        {
+            let (_, register) = self.written.remove(i);
             let (accepted, detail) = match &response.body {
-                ResponseBody::WriteAccepted { .. } => (true, None),
+                ResponseBody::WriteAccepted { address, count: 1 } if *address == register => {
+                    (true, None)
+                }
+                ResponseBody::WriteAccepted { .. } => (
+                    false,
+                    Some("unexpected register write acknowledgement".into()),
+                ),
                 ResponseBody::Exception { function, code } => (
                     false,
                     Some(format!(
@@ -347,6 +377,21 @@ impl Registers {
             {
                 let value = raw * point.scale;
                 match point.field {
+                    Field::VehicleConnected => {
+                        self.connected = match value {
+                            0.0 => Some(false),
+                            1.0 => Some(true),
+                            _ => None,
+                        };
+                    }
+                    Field::VehicleCapacityWh => {
+                        self.vehicle_capacity_wh =
+                            (value.is_finite() && value > 0.0).then_some(value);
+                    }
+                    Field::EnergyIn => {
+                        into.energy_in = (value.is_finite() && value >= 0.0)
+                            .then(|| ems_core::prelude::Energy::new(value));
+                    }
                     Field::Power => into.power = Some(Power::new(value)),
                     Field::TemperatureC => into.temperature_c = Some(value),
                     Field::Soc => into.soc = Soc::new(value).ok(),
@@ -358,6 +403,14 @@ impl Registers {
             self.next = next;
             self.ask(next, now);
         } else if let Some(measurement) = self.partial.take() {
+            if let Some(connected) = self.connected {
+                self.events.push(DriverEvent::Vehicle(VehiclePresence {
+                    connected,
+                    soc: measurement.soc.filter(|_| connected).map(Soc::fraction),
+                    capacity_wh: self.vehicle_capacity_wh.filter(|_| connected),
+                    at: measurement.at,
+                }));
+            }
             self.events.push(DriverEvent::Measured(measurement));
             self.due = Some(now + self.cadence.poll);
         }
@@ -463,7 +516,7 @@ impl Driver for Registers {
             )));
         };
         let transaction = self.transaction();
-        self.written.push(transaction);
+        self.written.push((transaction, register));
         self.outbox.push(Request {
             transaction,
             unit: self.unit,
@@ -750,6 +803,12 @@ mod tests {
     /// The whole of the safety argument: only what was declared is ever sent.
     #[test]
     fn a_command_the_map_does_not_declare_is_refused_rather_than_guessed() {
+        let contact = WriteKind::OperationMode {
+            modes: vec![8, 4, 2],
+        };
+        for (state, expected) in [(0, None), (1, Some(8)), (3, Some(2)), (4, None)] {
+            assert_eq!(contact.value_for(&Command::OperationMode(state)), expected);
+        }
         let mut d = reversible();
         for command in [
             Command::OnOff(true),
@@ -765,6 +824,35 @@ mod tests {
             d.poll_transmit().is_none(),
             "and nothing at all went on to the wire"
         );
+    }
+
+    #[test]
+    fn a_current_acknowledgement_must_echo_the_written_range() {
+        for (address, count, accepted) in [(2, 1, true), (3, 1, false), (2, 2, false)] {
+            let mut d = driver().writing(vec![Write {
+                register: 2,
+                kind: WriteKind::ChargingAmps,
+            }]);
+            d.command(
+                &Command::ChargingCurrent(ems_core::prelude::Current::new(10.9)),
+                at(0),
+            )
+            .unwrap();
+            let frame = d.poll_transmit().unwrap();
+            assert_eq!(&frame[frame.len() - 2..], &10u16.to_be_bytes());
+            d.absorb(
+                &Response {
+                    transaction: u16::from_be_bytes([frame[0], frame[1]]),
+                    unit: 1,
+                    function: frame::function::WRITE_MULTIPLE,
+                    body: ResponseBody::WriteAccepted { address, count },
+                },
+                at(1),
+            );
+            assert!(
+                matches!(d.poll_event(), Some(DriverEvent::Command(outcome)) if outcome.accepted == accepted)
+            );
+        }
     }
 
     /// A refused write that nobody hears is a compressor running the wrong way.

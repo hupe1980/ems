@@ -1,0 +1,44 @@
+name: EMS replacement ports
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: Four ports on linux/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5
+        with:
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - run: python3 tools/conformance/images.py --platform linux/${{ matrix.arch }}
+      - name: Package measured ports and portable contracts
+        run: |
+          mkdir dist
+          cp target/interfaces/evidence.json dist/interfaces-${{ matrix.arch }}.json
+          if [[ "${{ matrix.arch }}" == "amd64" ]]; then
+            tar czf dist/ems-interface-contracts.tar.gz LICENSE-* platform.toml schemas/events tools/conformance/*.py tools/conformance/*.toml tools/conformance/README.md services/hemsd/openapi.json
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: contracts-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: oci-${{ matrix.arch }}
+          path: target/interfaces/*.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

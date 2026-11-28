@@ -22,8 +22,9 @@ pub struct Trace {
     /// Start of the comparison window.
     #[serde(with = "time::serde::rfc3339")]
     pub start: OffsetDateTime,
+    /// End boundary of the comparison window.
     #[serde(with = "time::serde::rfc3339")]
-    end: OffsetDateTime,
+    pub end: OffsetDateTime,
     /// Largest accepted absolute difference, in Wh.
     pub tolerance_wh: u64,
     /// Cumulative import register readings.

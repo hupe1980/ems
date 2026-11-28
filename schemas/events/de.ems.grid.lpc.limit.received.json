@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "LimitReceived": {
+      "description": "`de.ems.grid.lpc.limit.received`: the network operator reduced the\nconnection.",
+      "properties": {
+        "limit_w": {
+          "description": "The ceiling on the controllable devices, W.",
+          "format": "double",
+          "type": "number"
+        },
+        "minimum_w": {
+          "description": "What § 14a guarantees the household meanwhile, W.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "limit_w"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpc.limit.received.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The network operator reduced the connection (§ 14a)",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/LimitReceived"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpc.limit.received.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.grid.lpc.limit.received"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.grid.lpc.limit.received",
+  "type": "object"
+}

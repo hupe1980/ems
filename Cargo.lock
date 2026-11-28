@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "agentd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "agentplane",
  "anyhow",
@@ -1042,10 +1042,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "035904d771da718e3b9261d1d7cdbd2c3519dabc13ffe395cf68cd47f21dd5e8"
 dependencies = [
  "bacnet-npdu",
- "bitflags",
+ "bitflags 2.13.2",
  "smallvec",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "base16ct"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
 
 [[package]]
 name = "base64"
@@ -1067,7 +1073,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bemsd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1120,7 +1126,7 @@ version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
@@ -1142,6 +1148,12 @@ checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
@@ -1187,6 +1199,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
+]
+
+[[package]]
+name = "block-padding"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93"
+dependencies = [
+ "generic-array",
 ]
 
 [[package]]
@@ -1331,6 +1353,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbc"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6"
+dependencies = [
+ "cipher 0.4.4",
+]
+
+[[package]]
 name = "cc"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1344,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "cemsd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1352,6 +1383,7 @@ dependencies = [
  "ems-core",
  "ems-service",
  "ems-sim",
+ "opcua-kit",
  "openadr",
  "reqwest 0.13.5",
  "rust_decimal",
@@ -1396,9 +1428,9 @@ dependencies = [
 
 [[package]]
 name = "chronix"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecd764b5d13da31c873072159bd47c0aeac1c6e03f63c146fa92acbb5d07e148"
+checksum = "6256ac28dc434354897129c09476e9b2b34e9180c18f2ad0ea75f558e1d0d0a4"
 dependencies = [
  "arrow 59.3.3",
  "base64 0.23.1",
@@ -1425,9 +1457,9 @@ dependencies = [
 
 [[package]]
 name = "chronix-core"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81d08592b2d421455dafadf5a35de393be5704c4d564e57b9d859d7f9abd5bc6"
+checksum = "a4fdec73bbd7195a24d52c14bd3f312197777b0b18fac9c8a2820aab6d41819f"
 dependencies = [
  "dashmap",
  "fnv",
@@ -1441,9 +1473,9 @@ dependencies = [
 
 [[package]]
 name = "chronix-encoding"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eabd9569b417195b0ad80f43861359ba45a7b5ea6b31f306f25119df76f95691"
+checksum = "29be30ea022a6e2bc6c784154fc7e0c1d194b3575bc94ed2b0b7c6548a7b0f78"
 dependencies = [
  "chronix-core",
  "pco",
@@ -1452,9 +1484,9 @@ dependencies = [
 
 [[package]]
 name = "chronix-engine"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bb3ca99f5e1fc5f486f9928423af727e4fa97cf0f7c164bd4d14b6fb36737c3"
+checksum = "a89c179e7a4ef14a82c4ecafd4eeb7792f1fa1952674d7ba8333cec0b06174bf"
 dependencies = [
  "aes-gcm 0.11.1",
  "arrow 59.3.3",
@@ -1480,9 +1512,9 @@ dependencies = [
 
 [[package]]
 name = "chronix-query"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4862c320f168482da3cbb74d424b44e9ca9267aecdf289581899dca4e1397ca0"
+checksum = "80eba86cd2cf99ac17c10a07ff84459e43a28a3cc9ac6f6d4a2e9e753e36e423"
 dependencies = [
  "arrow 59.3.3",
  "chronix-core",
@@ -1858,6 +1890,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "crypto-bigint"
+version = "0.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "914c195c4d7fbc5ed7f88d14cbf85914d5c664967658d43404b263913a477e82"
+dependencies = [
+ "cpubits",
+ "ctutils",
+ "getrandom 0.4.3",
+ "num-traits",
+ "rand_core 0.10.1",
+ "serdect",
+ "zeroize",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1876,6 +1923,16 @@ checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "getrandom 0.4.3",
  "hybrid-array",
+ "rand_core 0.10.1",
+]
+
+[[package]]
+name = "crypto-primes"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3633a51a39c69ebbaa4feaa694bd83d241e4093901c84a0963b19d9bb3f0cf8f"
+dependencies = [
+ "crypto-bigint",
  "rand_core 0.10.1",
 ]
 
@@ -2787,6 +2844,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a996a108feb8b427a6e12fcf6af4aa83409b79d72c15337d7741368131ee004"
 dependencies = [
  "const-oid 0.10.3",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -2907,6 +2965,7 @@ dependencies = [
  "const-oid 0.10.3",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -3021,7 +3080,7 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "ems-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "metering",
  "serde",
@@ -3033,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "ems-device"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "serde",
@@ -3041,14 +3100,16 @@ dependencies = [
 
 [[package]]
 name = "ems-drv"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "eebus",
  "ems-core",
  "ems-grid",
  "ems-sim",
  "matter-kit",
+ "mbus-kit",
  "ocpp-kit",
+ "rust_decimal",
  "serde",
  "serde_json",
  "sunspec",
@@ -3058,20 +3119,19 @@ dependencies = [
 
 [[package]]
 name = "ems-events"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
- "base64 0.23.1",
- "hmac 0.13.0",
+ "http",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "standardwebhooks",
  "thiserror 2.0.21",
  "time",
 ]
 
 [[package]]
 name = "ems-flex"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "ems-device",
@@ -3084,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "ems-forecast"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "serde",
@@ -3095,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "ems-grid"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "metering",
@@ -3107,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "ems-optimizer"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "ems-forecast",
@@ -3122,7 +3182,7 @@ dependencies = [
 
 [[package]]
 name = "ems-realtime"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "ems-device",
@@ -3133,7 +3193,7 @@ dependencies = [
 
 [[package]]
 name = "ems-service"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3166,7 +3226,7 @@ dependencies = [
 
 [[package]]
 name = "ems-sim"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "ems-core",
@@ -3178,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "ems-tariff"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "ems-grid",
@@ -3193,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "ems-wasm"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ems-core",
  "ems-device",
@@ -3347,7 +3407,7 @@ version = "25.12.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35f6839d7b3b98adde531effaf34f0c2badc6f4735d26fe74709d8e513a96ef3"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "rustc_version",
 ]
 
@@ -3364,7 +3424,7 @@ dependencies = [
 
 [[package]]
 name = "fleetd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3418,7 +3478,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forecastd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3772,7 +3832,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hemsd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "arrow 59.3.3",
@@ -3783,6 +3843,7 @@ dependencies = [
  "clap",
  "eebus",
  "ems-core",
+ "ems-device",
  "ems-drv",
  "ems-events",
  "ems-flex",
@@ -3815,6 +3876,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-modbus",
+ "tokio-serial",
  "tokio-tungstenite 0.29.0",
  "toml",
  "tracing",
@@ -3850,7 +3912,7 @@ dependencies = [
 
 [[package]]
 name = "histd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3904,6 +3966,12 @@ checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
  "digest 0.11.3",
 ]
+
+[[package]]
+name = "hmac-sha256"
+version = "1.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ad320b3b96fb2a455a0726d16efe0a5afdbd34b71dea5bc53b05ea057714d4e"
 
 [[package]]
 name = "http"
@@ -4293,6 +4361,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
+ "block-padding",
  "generic-array",
 ]
 
@@ -4318,6 +4387,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6928282826c822ad91bf1c9a1cb90a30ba1c26770749929b4656cd6be829cd7c"
 dependencies = [
  "rustversion",
+]
+
+[[package]]
+name = "io-kit-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617ee6cf8e3f66f3b4ea67a4058564628cde41901316e19f559e14c7c72c5e7b"
+dependencies = [
+ "core-foundation-sys",
+ "mach2",
 ]
 
 [[package]]
@@ -4718,6 +4797,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mach2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4748,11 +4836,17 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b5620d6aa1291290d25e1aca9aa7dcfaf1912e83efbe867ae2835511f57e9d9"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "heapless",
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "mbus-kit"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "358c4e6b61854f89fac003845b48adfaf6998994263b334f3757cc0aaeaf6c4a"
 
 [[package]]
 name = "md-5"
@@ -4915,6 +5009,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mio-serial"
+version = "5.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d4ba3f20276f21b7cad3f1b54c97489cf096a3894fd627cc6951cb3abdd4c60"
+dependencies = [
+ "log",
+ "mio",
+ "nix 0.31.4",
+ "serialport",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "moka"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4959,6 +5066,29 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "rawpointer",
+]
+
+[[package]]
+name = "nix"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
+dependencies = [
+ "bitflags 1.3.2",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -5041,7 +5171,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
 ]
 
 [[package]]
@@ -5090,7 +5220,7 @@ dependencies = [
 
 [[package]]
 name = "obsd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5161,6 +5291,30 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "opcua-kit"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fa679fc47cfb1b788aa8035c7252cebed46e72c82d4d0509d38d5a186fede04"
+dependencies = [
+ "aes 0.8.4",
+ "base64 0.22.1",
+ "cbc",
+ "getrandom 0.4.3",
+ "hmac 0.12.1",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "uuid",
+ "x509-parser",
+ "zeroize",
+]
 
 [[package]]
 name = "openadr"
@@ -5363,6 +5517,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem-rfc7468"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6305423e0e7738146434843d1694d621cce767262b2a86910beab705e4493d9"
+dependencies = [
+ "base64ct",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5482,6 +5645,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pkcs1"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6250dd7321adbe93d12b750aee0ced159fd13e77f625edcdf1cb6f83cd99f650"
+dependencies = [
+ "der 0.8.3",
+ "spki 0.8.1",
+]
+
+[[package]]
 name = "pkcs8"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5537,7 +5710,7 @@ dependencies = [
 
 [[package]]
 name = "portald"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5958,7 +6131,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
 ]
 
 [[package]]
@@ -6164,6 +6337,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsa"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23e77fd77e0dea28b3011fd62d15445b7de7959333b0276d930e03be0f755699"
+dependencies = [
+ "const-oid 0.10.3",
+ "crypto-bigint",
+ "crypto-common 0.2.2",
+ "crypto-primes",
+ "digest 0.11.3",
+ "hmac 0.13.0",
+ "pkcs1",
+ "pkcs8",
+ "rand_core 0.10.1",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+ "signature",
+ "spki 0.8.1",
+ "zeroize",
+]
+
+[[package]]
 name = "rust_decimal"
 version = "1.43.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6222,7 +6417,7 @@ version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -6411,7 +6606,7 @@ version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "core-foundation",
  "core-foundation-sys",
  "libc",
@@ -6603,6 +6798,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "serdect"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66cf8fedced2fcf12406bcb34223dffb92eaf34908ede12fed414c82b7f00b3e"
+dependencies = [
+ "base16ct",
+ "serde",
+]
+
+[[package]]
+name = "serialport"
+version = "4.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba5f8f29aa20853c4e3e85a33ec580eb66be1f057142e77a333834a318bacf2"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "core-foundation",
+ "core-foundation-sys",
+ "io-kit-sys",
+ "mach2",
+ "nix 0.26.4",
+ "scopeguard",
+ "unescaper",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6688,6 +6911,10 @@ name = "signature"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
+dependencies = [
+ "digest 0.11.3",
+ "rand_core 0.10.1",
+]
 
 [[package]]
 name = "simd-adler32"
@@ -6915,7 +7142,7 @@ checksum = "b0e9e02f764a1fe640eeefc8eb33eeddd274204654ec9f2db8ff851a1dee2364"
 dependencies = [
  "atoi",
  "base64 0.22.1",
- "bitflags",
+ "bitflags 2.13.2",
  "byteorder",
  "crc",
  "dotenvy",
@@ -6974,6 +7201,19 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "standardwebhooks"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca0476284408cba80764ef46b87a479225c97b4171b59e7eb89244c7f7cf8c9d"
+dependencies = [
+ "base64 0.23.1",
+ "hmac-sha256",
+ "http",
+ "thiserror 2.0.21",
+ "time",
 ]
 
 [[package]]
@@ -7053,7 +7293,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76af4b6503ee8aee422bd0629bea94eb1fca68ab5a3e9166a03c94b8c63cb5d9"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "strum 0.28.0",
  "thiserror 2.0.21",
 ]
@@ -7130,7 +7370,7 @@ checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
 name = "tariffd"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -7362,9 +7602,11 @@ dependencies = [
  "futures-core",
  "futures-util",
  "log",
+ "smallvec",
  "socket2",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-serial",
  "tokio-util",
 ]
 
@@ -7415,6 +7657,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-serial"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd00f5f8b1e01c3e5afccd9e42ed80c2ad2df6d007877f29f8592c62e69cd116"
+dependencies = [
+ "cfg-if",
+ "futures-core",
+ "futures-sink",
+ "log",
+ "mio-serial",
+ "serialport",
  "tokio",
 ]
 
@@ -7545,7 +7802,7 @@ version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "bytes",
  "futures-util",
  "http",
@@ -7564,7 +7821,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
 dependencies = [
  "async-compression",
- "bitflags",
+ "bitflags 2.13.2",
  "bytes",
  "futures-core",
  "futures-util",
@@ -7783,6 +8040,15 @@ dependencies = [
  "rand 0.10.4",
  "serde",
  "web-time 1.1.0",
+]
+
+[[package]]
+name = "unescaper"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7285e83a80ce76f5e7bce79fa41f68d78ba62d1003cf27bf748ab24413808cf4"
+dependencies = [
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -8327,7 +8593,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "ems-events",

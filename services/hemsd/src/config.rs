@@ -35,6 +35,8 @@ pub enum OperatingMode {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Settings {
+    /// Household departure goal for a wallbox with vehicle telemetry.
+    pub charging: Option<ChargingSettings>,
     /// Installer contact shown beside a device that needs attention.
     pub support_contact: Option<String>,
     /// Installer-selected device control authority.
@@ -69,6 +71,11 @@ pub struct Settings {
     pub api: crate::runtime::access::ApiSettings,
     /// How fast the control planes run.
     pub control: ControlSettings,
+    /// A read-only wired M-Bus heat meter on its own level converter.
+    pub heat_meter: Option<HeatMeterSettings>,
+    /// Installer-provisioned RS-485 ports, keyed by the name shown in Setup.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub serial_buses: BTreeMap<String, SerialBus>,
     /// What speaks to the hardware. One entry per device.
     pub drivers: Vec<DriverSettings>,
     /// Where the box keeps its own two years, and what it has learned.
@@ -754,6 +761,9 @@ pub struct SiteSettings {
     /// Electrical power of the heat pump at full output, kW. Zero means the
     /// household has no heat pump — see [`SiteSettings::pv_kwp`].
     pub heat_pump_kw: f64,
+    /// Installed auxiliary heating element, kW. Zero means absent.
+    #[serde(default)]
+    pub heat_pump_rod_kw: f64,
     /// Whether the heat pump modulates rather than switching on and off.
     pub heat_pump_modulating: bool,
     /// Electrical power the heat pump draws **cooling**, kW. Zero is a
@@ -839,9 +849,7 @@ pub struct SiteSettings {
 }
 
 impl Default for SiteSettings {
-    /// The reference German household of 2026 — the same one the simulated days
-    /// run against, so a box with no configuration file behaves like the house
-    /// every figure in this project was measured on.
+    /// Reference household sizes. Auxiliary heating and cooling require explicit ratings.
     fn default() -> Self {
         let reference = HouseholdConfig::default();
         let pv = reference.pv.expect("the reference household has a roof");
@@ -885,7 +893,8 @@ impl Default for SiteSettings {
             longitude: reference.location.longitude,
             altitude_m: reference.location.altitude_m,
             heat_pump_kw: heat_pump.power.kw(),
-            heat_pump_cooling_kw: heat_pump.cooling_electrical.map_or(0.0, Power::kw),
+            heat_pump_rod_kw: 0.0,
+            heat_pump_cooling_kw: 0.0,
             heat_pump_modulating: heat_pump.modulating,
             heat_pump_control: heat_pump.control.into(),
             comfort_min_c: heat_pump.comfort_min_c,
@@ -1181,6 +1190,12 @@ pub enum SettingsError {
         /// What was given.
         value: String,
     },
+    /// A commissioned electrical rating was negative or non-finite.
+    #[error("{field} must be finite and nonnegative")]
+    InvalidRating {
+        /// The offending site setting.
+        field: &'static str,
+    },
     /// The comfort band is upside down.
     #[error("the comfort band is {min} °C to {max} °C, which is not a band")]
     NotABand {
@@ -1299,7 +1314,19 @@ impl SiteSettings {
                 value: value.to_string(),
             })
         };
-        if self.comfort_max_c < self.comfort_min_c {
+        for (field, kw) in [
+            ("heat_pump_kw", self.heat_pump_kw),
+            ("heat_pump_rod_kw", self.heat_pump_rod_kw),
+            ("heat_pump_cooling_kw", self.heat_pump_cooling_kw),
+        ] {
+            if !(kw * 1000.0).is_finite() || kw < 0.0 {
+                return Err(SettingsError::InvalidRating { field });
+            }
+        }
+        if !self.comfort_min_c.is_finite()
+            || !self.comfort_max_c.is_finite()
+            || self.comfort_max_c < self.comfort_min_c
+        {
             return Err(SettingsError::NotABand {
                 min: self.comfort_min_c,
                 max: self.comfort_max_c,
@@ -1346,6 +1373,8 @@ impl SiteSettings {
                 .transpose()?,
             heat_pump: (self.heat_pump_kw > 0.0).then(|| crate::site::HeatPumpConfig {
                 power: Power::from_kw(self.heat_pump_kw),
+                heating_rod: (self.heat_pump_rod_kw > 0.0)
+                    .then(|| Power::from_kw(self.heat_pump_rod_kw)),
                 modulating: self.heat_pump_modulating,
                 comfort_min_c: self.comfort_min_c,
                 comfort_max_c: self.comfort_max_c,
@@ -1380,6 +1409,179 @@ impl SiteSettings {
     }
 }
 
+/// Single wired M-Bus heat meter. Its serial line uses 8E1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeatMeterSettings {
+    /// Dedicated serial converter under /dev.
+    pub path: std::path::PathBuf,
+    /// Converter baud rate (2400 or 9600).
+    #[serde(default = "heat_baud")]
+    pub baud: u32,
+    /// Unicast primary address, 0 through 250.
+    pub address: u8,
+    /// Three uppercase manufacturer letters.
+    pub manufacturer: String,
+    /// Eight digits as printed, including leading zeroes.
+    pub meter_id: String,
+    /// Seconds between completed polls (2–3600).
+    #[serde(default = "heat_poll_s")]
+    pub poll_s: u64,
+}
+impl HeatMeterSettings {
+    pub(crate) fn binding(&self) -> Result<ems_drv::mbus::HeatMeter, String> {
+        if !self.path.starts_with("/dev")
+            || self.path == std::path::Path::new("/dev")
+            || self
+                .path
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+            || self
+                .path
+                .canonicalize()
+                .is_ok_and(|p| !p.starts_with("/dev") || p == std::path::Path::new("/dev"))
+        {
+            return Err("heat_meter.path requires a device under /dev".into());
+        }
+        if !matches!(self.baud, 2400 | 9600) || !(2..=3600).contains(&self.poll_s) {
+            return Err("heat_meter requires baud 2400 or 9600 and poll_s 2–3600".into());
+        }
+        ems_drv::mbus::HeatMeter::new(self.address, &self.manufacturer, &self.meter_id).ok_or_else(||
+            "heat_meter requires address 0–250, three uppercase manufacturer letters and eight meter_id digits".into())
+    }
+}
+
+fn heat_baud() -> u32 {
+    2400
+}
+fn heat_poll_s() -> u64 {
+    60
+}
+
+/// Local port shared by the units on one Modbus RTU bus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SerialBus {
+    /// Absolute serial device path set by the installer.
+    pub path: std::path::PathBuf,
+    /// Baud rate configured on every device on the line.
+    pub baud: u32,
+    /// Parity configured on the bus. Data words are eight bits.
+    pub parity: SerialParity,
+    /// Number of stop bits (one or two).
+    pub stop_bits: u8,
+}
+
+/// RS-485 port parity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SerialParity {
+    /// No parity bit.
+    None,
+    /// Even parity.
+    Even,
+    /// Odd parity.
+    Odd,
+}
+
+/// Read-only SunSpec three-phase wye meter (model 203).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SerialMeter {
+    /// Connection meter or household base-load meter.
+    pub asset: String,
+    /// Name under serial_buses.
+    pub bus: String,
+    /// Modbus unicast address.
+    pub unit: u8,
+    /// Measurement interval, in milliseconds.
+    #[serde(default = "default_poll_ms")]
+    pub poll_ms: u64,
+    /// Maximum time for a unit to respond, in milliseconds.
+    #[serde(default = "serial_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn serial_timeout_ms() -> u64 {
+    500
+}
+
+impl Settings {
+    /// Check port ownership and serial device assignments before opening any ports.
+    pub(crate) fn validate_serial(&self) -> Result<(), String> {
+        let mut paths = std::collections::BTreeSet::new();
+        for (name, bus) in &self.serial_buses {
+            if name.is_empty()
+                || name.len() > 64
+                || !name
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+            {
+                return Err(
+                    "Serial bus names must use 1–64 letters, digits, hyphens or underscores".into(),
+                );
+            }
+            if !bus.path.starts_with("/dev")
+                || bus.path == std::path::Path::new("/dev")
+                || bus
+                    .path
+                    .components()
+                    .any(|part| part == std::path::Component::ParentDir)
+            {
+                return Err(format!(
+                    "Serial bus {name} requires a device path under /dev"
+                ));
+            }
+            if !paths.insert(bus.path.canonicalize().unwrap_or_else(|_| bus.path.clone())) {
+                return Err(format!("Serial bus {name} shares a port with another bus"));
+            }
+            if !matches!(bus.baud, 9600 | 19_200 | 38_400 | 57_600 | 115_200)
+                || !(1..=2).contains(&bus.stop_bits)
+            {
+                return Err(format!(
+                    "Serial bus {name} requires a supported baud rate and one or two stop bits"
+                ));
+            }
+        }
+        if let Some(m) = &self.heat_meter {
+            m.binding()?;
+            if paths.contains(&m.path.canonicalize().unwrap_or_else(|_| m.path.clone())) {
+                return Err(
+                    "heat_meter requires a dedicated converter, separate from every Modbus port"
+                        .into(),
+                );
+            }
+        }
+        let mut units = std::collections::BTreeSet::new();
+        for driver in &self.drivers {
+            if let DriverSettings::SerialSunspec(m) = driver {
+                if !self.serial_buses.contains_key(&m.bus) || !(1..=247).contains(&m.unit) {
+                    return Err(format!(
+                        "{} needs a configured serial bus and unit 1–247",
+                        m.asset
+                    ));
+                }
+                if !units.insert((&m.bus, m.unit)) {
+                    return Err(format!(
+                        "Serial bus {} has two meters at unit {}",
+                        m.bus, m.unit
+                    ));
+                }
+                if !matches!(m.asset.as_str(), "netzanschluss-zaehler" | "haushalt")
+                    || !(100..=5000).contains(&m.poll_ms)
+                    || !(50..=5000).contains(&m.timeout_ms)
+                {
+                    return Err(format!(
+                        "Invalid serial meter {}: use the connection or base-load meter, poll_ms 100–5000 and timeout_ms 50–5000",
+                        m.asset
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// One driver, and where to find the device it speaks for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, tag = "kind", rename_all = "kebab-case")]
@@ -1387,6 +1589,8 @@ pub enum DriverSettings {
     /// SunSpec inverter, connection meter or storage telemetry over Modbus TCP.
     /// Supported inverters can also receive production ceilings.
     Sunspec(SunspecSettings),
+    /// Read model 203 on a named RS-485 bus.
+    SerialSunspec(SerialMeter),
     /// Household-side EEBUS endpoint for limits from the operator’s Steuerbox.
     EebusLpc(EebusSettings),
     /// Domestic hot-water circuit. Reads tank temperature over MDT and can
@@ -1409,6 +1613,7 @@ impl DriverSettings {
     pub fn asset(&self) -> &str {
         match self {
             DriverSettings::Sunspec(s) => &s.asset,
+            DriverSettings::SerialSunspec(s) => &s.asset,
             DriverSettings::EebusLpc(s) => &s.asset,
             DriverSettings::EebusDhw(s) => &s.asset,
             DriverSettings::EebusEv(s) => &s.asset,
@@ -1500,7 +1705,33 @@ pub struct EebusEvSettings {
     pub spine_unique: Option<String>,
 }
 
-impl EebusEvSettings {
+/// Household charging preferences, independent of the vehicle telemetry transport.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChargingSettings {
+    /// Local Berlin departure time, HH:MM.
+    pub departure: String,
+    /// Requested fraction of usable battery capacity.
+    pub target_soc: f64,
+}
+
+impl ChargingSettings {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.minute().is_none() || !(0.0..=1.0).contains(&self.target_soc) {
+            return Err(
+                "charging requires a valid Berlin departure and target_soc between 0 and 1".into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn minute(&self) -> Option<u32> {
+        let (h, m) = self.departure.split_once(':')?;
+        let hours: u32 = h.parse().ok()?;
+        let minutes: u32 = m.parse().ok()?;
+        (hours < 24 && minutes < 60).then(|| hours * 60 + minutes)
+    }
+
     /// The first slot the car is gone, inside `horizon`.
     ///
     /// Half-open, like every other deadline in the planner, and that is not a
@@ -1513,33 +1744,22 @@ impl EebusEvSettings {
     /// `None` where the departure is not a time, or is beyond the horizon —
     /// which is a car that has all the time in the world and needs no deadline.
     #[must_use]
-    pub fn departure_slot(&self, horizon: ems_core::prelude::Horizon) -> Option<Slot> {
-        let (hours, minutes) = self.departure.split_once(':')?;
-        let hours: u32 = hours.trim().parse().ok()?;
-        let minutes: u32 = minutes.trim().parse().ok()?;
-        if hours > 23 || minutes > 59 {
-            return None;
-        }
-        let wanted = hours * 60 + minutes;
-        // The first slot at which the horizon *crosses* the time of day, not the
-        // first that is numerically past it. A plan made at seven in the evening
-        // starts at minute 1140, which is already past a 07:00 departure in the
-        // arithmetic and nowhere near it on the clock — taking that slot would
-        // give the car a deadline four minutes ago and a plan that charges
-        // nothing. So the answer is the slot whose predecessor was still before
-        // the time and which is not, which is the same rule either side of
-        // midnight.
-        //
-        // A horizon that begins exactly on the departure minute aims at
-        // tomorrow, which is the safe reading: a deadline at this instant has
-        // passed, and inventing one in the past is worse than aiming at the next
-        // one.
-        let mut previous: Option<u32> = None;
-        horizon.slots().find(|slot| {
+    pub fn departure_slot(
+        &self,
+        now: time::OffsetDateTime,
+        horizon: ems_core::prelude::Horizon,
+    ) -> Option<Slot> {
+        let wanted = self.minute()?;
+        // A partial quarter cannot fund a departure goal. At a spring clock
+        // jump, the first real slot after a skipped deadline closes the window.
+        horizon.slots().enumerate().find_map(|(index, slot)| {
             let minute = u32::from(slot.local_minute_of_day());
-            let crossed = previous.is_some_and(|before| before < wanted) && minute >= wanted;
-            previous = Some(minute);
-            crossed
+            let within = (minute..minute + 15).contains(&wanted)
+                && slot.start() + time::Duration::minutes(i64::from(wanted) - i64::from(minute))
+                    > now;
+            let previous = u32::from(slot.prev().local_minute_of_day());
+            let skipped = index > 0 && previous + 15 <= wanted && wanted < minute;
+            (within || skipped).then_some(slot)
         })
     }
 }
@@ -1553,7 +1773,7 @@ impl EebusEvSettings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HeatPumpInterface {
-    /// Two relay contacts carrying the four SG Ready states.
+    /// Two relay contacts carrying the three SG Ready 1.1 operating states.
     SgReady,
     /// A continuous electrical power ceiling — EEBUS LPC, or a vendor register.
     ///
@@ -1715,21 +1935,94 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_configuration_is_the_reference_household() {
-        // A box with no file behaves like the house every figure in this
-        // project was measured on, which is what makes those figures
-        // reproducible by somebody who has just installed it.
-        let settings = Settings::default();
-        let built = settings.site.household().expect("the defaults are valid");
-        assert_eq!(built, HouseholdConfig::default());
+    fn serial_bindings_require_a_unique_local_port_and_unicast_unit() {
+        let bus = r#"[serial_buses.cabinet]
+path = "/dev/ttyUSB0"
+baud = 19200
+parity = "even"
+stop_bits = 1"#;
+        let binding = r#"[[drivers]]
+kind = "serial-sunspec"
+asset = "netzanschluss-zaehler"
+bus = "cabinet"
+unit = 7"#;
+        let text = format!("{bus}\n{binding}");
+        let valid = |cfg: &str| {
+            toml::from_str::<Settings>(cfg)
+                .unwrap()
+                .validate_serial()
+                .is_ok()
+        };
+        assert!(valid(&text));
+        assert!(valid(&format!(
+            "{text}\n{}",
+            binding
+                .replace("netzanschluss-zaehler", "haushalt")
+                .replace("unit = 7", "unit = 8")
+        )));
+        for invalid in [
+            format!("{text}\n{binding}"),
+            format!("{text}\n{}", bus.replace("buses.cabinet", "buses.alias")),
+            text.replace("ttyUSB0", "../tmp/tty"),
+            text.replace("19200", "12"),
+            text.replace("bus = \"cabinet\"", "bus = \"garage\""),
+            text.replace("unit = 7", "unit = 0"),
+            text.replace("unit = 7", "unit = 248"),
+            text.replace("netzanschluss-zaehler", "pv"),
+            format!("{text}\npoll_ms = 60000"),
+            format!("{text}\ntimeout_ms = 0"),
+        ] {
+            assert!(!valid(&invalid), "{invalid}");
+        }
     }
 
-    /// The example file that ships with the daemon.
-    ///
-    /// Parsed by a test rather than trusted, because a commented example that
-    /// no longer matches the struct it documents is worse than none: it is
-    /// wrong with authority, and the person it misleads is an installer in a
-    /// cellar. `include_str!` makes the example a build input.
+    #[test]
+    fn heat_meter_requires_a_dedicated_port_and_printed_identity() {
+        let config = r#"[heat_meter]
+path = "/dev/ttyUSB7"
+address = 17
+manufacturer = "KAM"
+meter_id = "06855817"
+"#;
+        let valid = |text: &str| {
+            toml::from_str::<Settings>(text)
+                .unwrap()
+                .validate_serial()
+                .is_ok()
+        };
+        assert!(valid(config));
+        for invalid in [
+            config.replace("17\nmanufacturer", "251\nmanufacturer"),
+            config.replace("06855817", "6855817"),
+            config.replace("KAM", "kam"),
+            config.replace("/dev/ttyUSB7", "/tmp/converter"),
+            format!("{config}poll_s = 0"),
+            format!("{config}baud = 960"),
+            format!(
+                "{config}\n[serial_buses.grid]\npath = \"/dev/ttyUSB7\"\nbaud = 9600\nparity = \"even\"\nstop_bits = 1"
+            ),
+        ] {
+            assert!(!valid(&invalid), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn gateway_defaults_require_explicit_auxiliary_heat_and_cooling() {
+        let mut reference = HouseholdConfig::default();
+        let pump = reference.heat_pump.as_mut().unwrap();
+        pump.heating_rod = None;
+        pump.cooling_electrical = None;
+        assert_eq!(Settings::default().site.household().unwrap(), reference);
+        for text in ["", "[site]"] {
+            let settings: Settings = toml::from_str(text).unwrap();
+            assert_eq!(
+                settings.site.household().unwrap().heat_pump,
+                reference.heat_pump
+            );
+        }
+    }
+
+    /// The configuration shipped with the gateway, also used for assembly checks.
     const EXAMPLE: &str = include_str!("../hemsd.example.toml");
 
     #[test]
@@ -1747,13 +2040,7 @@ mod tests {
 
     #[test]
     fn the_shipped_example_is_a_box_that_would_start() {
-        // Stronger than counting the assets its drivers name, which is what this
-        // used to do through a `assets_named` helper the daemon itself never
-        // called. `assemble` runs the *real* rules — an asset the site does not
-        // have, two drivers for one role, a controllable asset nothing can move,
-        // a § 14a household with nothing to hear a reduction — and opens no
-        // socket doing it. An example that has drifted from them now fails the
-        // build rather than misleading an installer in a cellar.
+        // Exercise the same driver and site validation used at startup.
         let settings: Settings = toml::from_str(EXAMPLE).expect("the shipped example parses");
         crate::runtime::assemble(&settings, None, time::OffsetDateTime::now_utc())
             .expect("the shipped example describes a box that starts");
@@ -2215,6 +2502,67 @@ asset = "netzanschluss"
             built.pv.map(|pv| pv.para9),
             HouseholdConfig::default().pv.map(|pv| pv.para9)
         );
+    }
+
+    #[test]
+    fn ev_departure_closes_at_the_last_complete_charging_quarter() {
+        use ems_core::prelude::Horizon;
+        use time::macros::datetime;
+        let night = datetime!(2026-01-14 22:45 UTC);
+        let midnight = datetime!(2026-01-14 23:00 UTC);
+        let spring = datetime!(2026-03-29 00:45 UTC);
+        let autumn = datetime!(2026-10-25 00:45 UTC);
+        for (start, deadline, index) in [
+            (night, "00:00", Some(1)),
+            (night, "00:07", Some(1)),
+            (night, "00:15", Some(2)),
+            (midnight, "00:00", None),
+            (midnight + time::Duration::minutes(8), "00:07", None),
+            (spring, "02:30", Some(1)),
+            (autumn, "02:00", Some(1)),
+        ] {
+            let charging = ChargingSettings {
+                departure: deadline.into(),
+                target_soc: 0.8,
+            };
+            let horizon = Horizon::new(start, 4);
+            assert_eq!(
+                charging.departure_slot(start, horizon),
+                index.and_then(|i| horizon.slots().nth(i))
+            );
+        }
+    }
+
+    #[test]
+    fn commissioned_heat_pump_ratings_reach_the_controller() {
+        for (rod, cooling, expected) in [(0.0, 0.0, 5.0), (3.0, 4.0, 8.0), (0.0, 6.0, 6.0)] {
+            let settings = SiteSettings {
+                heat_pump_kw: 5.0,
+                heat_pump_rod_kw: rod,
+                heat_pump_cooling_kw: cooling,
+                ..SiteSettings::default()
+            };
+            let site = crate::site::Household::build(&settings.household().unwrap()).unwrap();
+            let Some(ems_core::asset::Asset::HeatPump(pump)) =
+                site.site.asset(site.heat_pump.as_ref().unwrap())
+            else {
+                panic!("missing heat pump")
+            };
+            assert_eq!(pump.group_power(), Power::from_kw(expected));
+            assert_eq!(pump.is_reversible(), cooling > 0.0);
+        }
+        for invalid in [-1.0, f64::INFINITY, f64::NAN] {
+            assert!(matches!(
+                SiteSettings {
+                    heat_pump_rod_kw: invalid,
+                    ..SiteSettings::default()
+                }
+                .household(),
+                Err(SettingsError::InvalidRating {
+                    field: "heat_pump_rod_kw"
+                })
+            ));
+        }
     }
 
     #[test]

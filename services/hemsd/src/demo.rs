@@ -122,6 +122,7 @@ impl Demo {
             now,
         );
         view.demo = true;
+        view.thermal_trial = cfg!(feature = "house").then(|| "/thermal-trial".to_owned());
         view.at_minute = u16::try_from(index).ok();
         view.receipt = Some(self.receipt.clone());
         view
@@ -129,7 +130,10 @@ impl Demo {
 
     /// The routes: the page, its document, and the few writes it makes.
     pub fn router(self) -> axum::Router {
-        axum::Router::new()
+        let routes = axum::Router::new();
+        #[cfg(feature = "house")]
+        let routes = routes.route("/thermal-trial", get(thermal_trial));
+        routes
             .route("/v1/home", get(home_route))
             .route("/v1/days", get(days))
             .route("/v1/days.csv", get(days_csv))
@@ -143,6 +147,23 @@ impl Demo {
             .with_state(self)
             .merge(crate::ui::router())
     }
+}
+
+#[cfg(feature = "house")]
+async fn thermal_trial() -> Result<axum::response::Html<&'static str>, StatusCode> {
+    static REPORT: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+    let report = REPORT
+        .get_or_try_init(|| async {
+            crate::house::winter::trial(2300, 3600)
+                .await
+                .map(|r| r.html())
+        })
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "thermal rehearsal unavailable");
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+    Ok(axum::response::Html(report))
 }
 
 /// `scenario` as it would have been `ago` days earlier.

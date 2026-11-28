@@ -6,8 +6,24 @@ use ems_sim::peak::{IntervalStatus, Report};
 use std::fmt::Write;
 use time::format_description::well_known::Rfc3339;
 
-pub(super) fn render(report: &Report, tolerance_wh: u64) -> Result<String> {
-    let mut html = include_str!("review.html").to_owned();
+fn text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+pub(super) fn render(
+    report: &Report,
+    tolerance_wh: u64,
+    evidence: Option<&super::MeterEvidence<'_>>,
+) -> Result<String> {
+    let title = if evidence.is_some() {
+        "Meter commissioning"
+    } else {
+        "Interval review"
+    };
+    let mut html = include_str!("review.html").replace("{{title}}", title);
     let mut exceptions = report
         .intervals()
         .iter()
@@ -18,7 +34,7 @@ pub(super) fn render(report: &Report, tolerance_wh: u64) -> Result<String> {
 
     write!(
         html,
-        "<header><h1>Interval review</h1><p class=summary><strong>{} of {}</strong> {} within tolerance</p><p>{} compared · Tolerance {} Wh</p>",
+        "<header><h1>{title}</h1><p class=summary><strong>{} of {}</strong> {} within tolerance</p><p>{} compared · Tolerance {} Wh</p>",
         report.matching_intervals,
         report.interval_count(),
         if report.interval_count() == 1 {
@@ -33,6 +49,61 @@ pub(super) fn render(report: &Report, tolerance_wh: u64) -> Result<String> {
         write!(html, "<a href='#q{first}'>Go to first exception</a>")?;
     }
     html.push_str("</header><main>");
+    if let Some(meter) = evidence {
+        write!(
+            html,
+            "<section class='meter-evidence'><h2>{}</h2><p>{} distinct usable register readings</p>",
+            text(meter.device),
+            meter.usable_points
+        )?;
+        for (count, label) in [
+            (meter.excluded_status, "Excluded for meter status"),
+            (
+                meter.excluded_source_time,
+                "Excluded for unusable source time",
+            ),
+            (meter.excluded_wh, "Excluded by whole-Wh checks"),
+            (meter.outside_window, "Outside the window"),
+            (meter.duplicates, "Duplicate observations"),
+        ] {
+            if count > 0 {
+                write!(html, "<p>{label} · {count}</p>")?;
+            }
+        }
+        if let Some(reading) = &meter.first_exclusion {
+            write!(
+                html,
+                "<h3>First excluded reading</h3><p>Capture line {} · {}</p>",
+                reading.line,
+                text(&reading.detail)
+            )?;
+            if let Some(at) = reading.source_at {
+                let utc = at.format(&Rfc3339)?;
+                write!(
+                    html,
+                    "<p class=utc>Source time · <time datetime='{utc}'>{utc}</time></p>"
+                )?;
+                // At a shared boundary, either adjoining quarter can be inspected.
+                for (index, quarter) in report.intervals().iter().enumerate() {
+                    if (quarter.start..=quarter.start + time::Duration::minutes(15)).contains(&at) {
+                        write!(
+                            html,
+                            "<p><a href='#q{index}'>Inspect {:02}:{:02} UTC quarter</a></p>",
+                            quarter.start.hour(),
+                            quarter.start.minute()
+                        )?;
+                    }
+                }
+            }
+        }
+        write!(
+            html,
+            "<details><summary>Register identity</summary><dl><dt>Server application</dt><dd>{}</dd><dt>Namespace</dt><dd>{}</dd><dt>Node</dt><dd>{}</dd></dl></details></section>",
+            text(meter.application_uri),
+            text(meter.namespace),
+            text(meter.register)
+        )?;
+    }
     for (index, quarter) in report.intervals().iter().enumerate() {
         let status = match quarter.status {
             IntervalStatus::RegisterDecreased => "Register decreased",

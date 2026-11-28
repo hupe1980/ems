@@ -35,6 +35,33 @@ impl tokio_modbus::server::Service for Units {
         ) {
             physics.write_requests += 1;
         }
+        if request.slave == super::UNIT_EV {
+            return ready(
+                physics
+                    .ev
+                    .as_mut()
+                    .ok_or(ExceptionCode::GatewayTargetDevice)
+                    .and_then(|ev| ev.request(&request.request)),
+            );
+        }
+        if request.slave == super::UNIT_ROOM {
+            return ready(
+                physics
+                    .room
+                    .as_mut()
+                    .ok_or(ExceptionCode::GatewayTargetDevice)
+                    .and_then(|room| room.request(&request.request)),
+            );
+        }
+        if request.slave == super::UNIT_TANK {
+            return ready(
+                physics
+                    .tank
+                    .as_mut()
+                    .ok_or(ExceptionCode::GatewayTargetDevice)
+                    .and_then(|tank| tank.request(&request.request)),
+            );
+        }
         let unit = match request.slave {
             UNIT_INVERTER => &mut physics.inverter,
             UNIT_METER => &mut physics.meter,

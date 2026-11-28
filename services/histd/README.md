@@ -2,7 +2,7 @@
 
 The fleet historian stores 15-minute meter registers and § 14a control events in PostgreSQL. A network operator can retrieve evidence of the limit it sent and how the site responded. A household can also export its data and settle its declared MiSpeL storage option.
 
-All routes below start with `/v1/sites/{site}` and require a bearer credential authorized for that site.
+The following site routes start with `/v1/sites/{site}` and require a bearer credential authorized for that site.
 
 | Route | Use |
 |---|---|
@@ -36,7 +36,7 @@ Configure PostgreSQL, credentials and the site’s declaration before starting t
 
 ### MeterStore registers
 
-Commission a site before its first register submission. Use the site's actual market location and the responsible operator's market-participant identifier.
+To use MeterStore for a site, configure its market binding before its first register submission. Use the site's actual market location and the responsible operator's market-participant identifier.
 
 ```toml
 [register_meters.haus-1]
@@ -47,3 +47,7 @@ operator = "9900000000003"
 These identifiers are examples. The existing HTTP and MCP interfaces read the same register history. MeterStore writes the site's assertions to its PostgreSQL hot tier in the historian database. Grid import supports seven decimal places in kWh. Other quantities and prices retain their exact decimal values. The two-year sweep includes both register stores. Sites without a market binding use the historian's ordinary PostgreSQL register table.
 
 MeterStore uses a separate connection pool and PostgreSQL’s `btree_gist` extension. Provision the extension if the historian role cannot create it. Both pools use `[database].tls`. MeterStore verifies the server certificate and hostname when TLS is enabled. For a disposable local database, use `tls = false`. Budget up to `pool_size` connections per pool. Keep the site binding stable across replicas and restarts. Run `just histd-registers` to verify the storage path.
+
+### Operator meter day
+
+The operator desk reads `GET /v1/desk/energy?site=SITE&day=YYYY-MM-DD&days=30` through the OIDC ingress. The window ends on the supplied Berlin date and spans 1–90 calendar days (default 1). Each recorded, closed quarter carries exact decimal kWh for import and export. Use the returned UTC bounds and closure timestamp to distinguish missing quarters from open ones. A corrected register replaces its earlier value. The credential needs both fleet access and read access to that site.

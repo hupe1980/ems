@@ -451,8 +451,29 @@ impl Store {
     /// [`StoreError::Sql`], or [`StoreError::FromTheFuture`] for a file written
     /// by a newer build.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        let db = sql!(Database::create(path))?;
-        Self::from_database(db)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+            let file = sql!(
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .mode(0o600)
+                    .open(path)
+            )?;
+            // Keep the descriptor so a path replacement cannot redirect a permission change.
+            let db = sql!(Database::builder().create_file(sql!(file.try_clone())?))?;
+            let store = Self::from_database(db)?;
+            let mode = sql!(file.metadata())?.permissions().mode();
+            if mode & 0o077 != 0 {
+                sql!(file.set_permissions(std::fs::Permissions::from_mode(mode & 0o700)))?;
+            }
+            Ok(store)
+        }
+        #[cfg(not(unix))]
+        Self::from_database(sql!(Database::create(path))?)
     }
 
     /// A store in memory, for a test.
@@ -1740,6 +1761,29 @@ mod tests {
             std::env::temp_dir().join(format!("hems-box-{what}-{}-{n}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_household_ledger_is_private_on_creation_and_reopen() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = temp_path("private");
+        let store = Store::open(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+            0
+        );
+        store.put_api_token("fixture").unwrap();
+        drop(store);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let reopened = Store::open(&path).unwrap();
+        assert_eq!(reopened.api_token().unwrap().as_deref(), Some("fixture"));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o077,
+            0
+        );
+        drop(reopened);
+        std::fs::remove_file(path).unwrap();
     }
 
     fn quarter(at: OffsetDateTime) -> Recorded {

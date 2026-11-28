@@ -1,0 +1,30 @@
+# Target level. Each architecture is measured separately by the release gate.
+tier = "specialist"
+capability = ["household-energy-management", "wholesale-tariffs"]
+interface = "L4"
+fills = ["energy-manager"]
+
+[contracts]
+openapi = "services/hemsd/openapi.json"
+event_schemas = [
+  "schemas/events/de.ems.device.deviation.detected.json",
+  "schemas/events/de.ems.device.lost.json",
+  "schemas/events/de.ems.grid.lpc.failsafe.entered.json",
+  "schemas/events/de.ems.grid.lpc.failsafe.left.json",
+  "schemas/events/de.ems.grid.lpc.limit.received.json",
+  "schemas/events/de.ems.grid.lpc.limit.released.json",
+  "schemas/events/de.ems.grid.lpp.limit.received.json",
+  "schemas/events/de.ems.site.day.closed.json",
+  "schemas/events/de.ems.site.goal.at-risk.json",
+  "schemas/events/de.ems.test.ping.json",
+]
+mcp = ["tariffd", "/mcp"]
+mcp_protocol = "2026-07-28"
+conformance = "just interfaces"
+images = "Dockerfile"
+
+[ports]
+rest = ["hemsd"]
+cloudevents = ["hemsd"]
+webhooks = ["hemsd"]
+mcp = ["tariffd"]

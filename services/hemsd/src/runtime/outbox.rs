@@ -108,7 +108,7 @@ impl ObsdSettings {
 pub struct Reporter {
     client: reqwest::Client,
     endpoint: String,
-    secret: Vec<u8>,
+    secret: ems_events::webhook::Webhook,
 }
 
 impl Reporter {
@@ -135,7 +135,7 @@ impl Reporter {
         Ok(Some(Self {
             client: ems_service::http::client(ems_service::identity!(), http)?,
             endpoint,
-            secret: secret.resolve_from_process()?.into_bytes(),
+            secret: ems_events::webhook::parse_secret(&secret.resolve_from_process()?)?,
         }))
     }
 

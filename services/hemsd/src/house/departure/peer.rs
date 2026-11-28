@@ -146,13 +146,15 @@ pub(super) async fn drive(
     addr: SocketAddr,
     password: BasicAuthPassword,
     times: Times,
-    goal: i32,
+    demand: (i32, bool),
     meter: &Mutex<Meter>,
-    missing_close: bool,
+    connection: (
+        &mut super::super::grid::Grid,
+        ems_core::prelude::Measurement,
+    ),
 ) -> Result<super::grid::Balance> {
-    let at = time::OffsetDateTime::from_unix_timestamp(times.start.timestamp().as_second())?;
-    let mut grid = super::grid::Grid::start(at).await?;
-    let open = grid.sample().await?;
+    let (grid, open) = connection;
+    let (goal, missing_close) = demand;
     let site = super::household()?;
     let (station, applied) = connect(addr, password.clone(), times.start).await?;
     let mut register = 48210;

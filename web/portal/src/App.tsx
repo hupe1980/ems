@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { downloadReceipt, type Receipt, readReceipt } from "./receipt";
+import {
+	downloadReceipt,
+	type Receipt,
+	readReceipt,
+	SessionEnded,
+} from "./receipt";
 
 const energy = new Intl.NumberFormat("en-GB", {
 	minimumFractionDigits: 2,
@@ -8,10 +13,14 @@ const energy = new Intl.NumberFormat("en-GB", {
 });
 const kwh = (wh: number) => energy.format(wh / 1000);
 const register = new Intl.NumberFormat("en-GB");
-const utc = new Intl.DateTimeFormat("en-GB", {
-	dateStyle: "medium",
-	timeStyle: "short",
-	timeZone: "UTC",
+const localDeparture = new Intl.DateTimeFormat("en-GB", {
+	day: "numeric",
+	month: "short",
+	year: "numeric",
+	hour: "2-digit",
+	minute: "2-digit",
+	timeZoneName: "short",
+	timeZone: "Europe/Berlin",
 });
 
 function Evidence({ receipt }: { receipt: Receipt }) {
@@ -22,7 +31,7 @@ function Evidence({ receipt }: { receipt: Receipt }) {
 				<span>Simulated departure</span>
 				<span>{receipt.site}</span>
 			</header>
-			<h2 id="outcome">
+			<h2 id="outcome" tabIndex={-1}>
 				{short === null
 					? "Departure unverified"
 					: short === 0
@@ -47,7 +56,7 @@ function Evidence({ receipt }: { receipt: Receipt }) {
 					<dt>Departure</dt>
 					<dd>
 						<time dateTime={e.departure}>
-							{utc.format(new Date(e.departure))} UTC
+							{localDeparture.format(new Date(e.departure))}
 						</time>
 					</dd>
 				</div>
@@ -117,9 +126,14 @@ function History({ days }: { days: Day[] }) {
 	);
 	const reported = days.filter((d) => d.day >= dates[0]);
 	const peak = Math.max(...reported.map((d) => d[flow]));
+	const scaleMax = Math.max(
+		...reported.flatMap((d) => [d.imported, d.exported, d.produced]),
+	);
 	const total = reported.reduce((sum, d) => sum + d[flow], 0);
 	const selected =
 		selectedDay && dates.includes(selectedDay) ? selectedDay : days[0].day;
+	const latestGap = [...dates].reverse().find((date) => !byDate.has(date));
+	const highest = reported.find((day) => peak > 0 && day[flow] === peak);
 	const selectedReading = byDate.get(selected);
 	const readingText = selectedReading
 		? `${energy.format(selectedReading[flow])} kWh`
@@ -157,7 +171,9 @@ function History({ days }: { days: Day[] }) {
 					{flows[flow]} · {reported.length} of {windowDays} days reported.
 				</p>
 			</div>
-			<div className="plot-limit">{energy.format(peak)} kWh</div>
+			<div className="plot-limit">
+				Shared scale · {energy.format(scaleMax)} kWh
+			</div>
 			<div className="day-plot">
 				<svg
 					className="bars"
@@ -167,7 +183,7 @@ function History({ days }: { days: Day[] }) {
 				>
 					{dates.map((date, i) => {
 						const report = byDate.get(date);
-						const h = report && peak ? (100 * report[flow]) / peak : 0;
+						const h = report && scaleMax ? (100 * report[flow]) / scaleMax : 0;
 						return (
 							<g key={date}>
 								{date === selected && (
@@ -228,6 +244,18 @@ function History({ days }: { days: Day[] }) {
 					›
 				</button>
 			</div>
+			<div className="history-shortcuts">
+				{highest && (
+					<button type="button" onClick={() => setSelectedDay(highest.day)}>
+						Highest {flows[flow].toLowerCase()}
+					</button>
+				)}
+				{latestGap && (
+					<button type="button" onClick={() => setSelectedDay(latestGap)}>
+						Latest missing day
+					</button>
+				)}
+			</div>
 			<details>
 				<summary>Daily readings</summary>
 				<table>
@@ -262,58 +290,77 @@ function History({ days }: { days: Day[] }) {
 		</section>
 	);
 }
+async function readHistory(signal: AbortSignal): Promise<Day[]> {
+	const response = await fetch("/v1/me/history", {
+		signal,
+		cache: "no-store",
+		redirect: "error",
+	});
+	if (response.status === 401 || response.status === 403)
+		throw new SessionEnded();
+	if (!response.ok) throw new Error("Energy history is unavailable.");
+	const rows: Day[] = await response.json();
+	if (
+		!Array.isArray(rows) ||
+		rows.some(
+			(d) =>
+				typeof d.day !== "string" ||
+				!/^\d{4}-\d{2}-\d{2}$/.test(d.day) ||
+				!Number.isFinite(Date.parse(d.day)) ||
+				new Date(d.day).toISOString().slice(0, 10) !== d.day ||
+				[d.imported, d.exported, d.produced].some(
+					(v) => !Number.isFinite(v) || v < 0,
+				),
+		)
+	)
+		throw Error("Energy history is unreadable.");
+	return rows.sort((a, b) => b.day.localeCompare(a.day));
+}
 export function App() {
 	const [days, setDays] = useState<Day[] | null>(null),
 		[receipt, setReceipt] = useState<Receipt | null>(null),
-		[message, setMessage] = useState("Loading household…");
+		[message, setMessage] = useState("Loading household…"),
+		[receiptReady, setReceiptReady] = useState(false),
+		[sessionEnded, setSessionEnded] = useState(false);
 	const req = useRef<AbortController | null>(null);
 	const load = useCallback(async (download = false) => {
 		req.current?.abort();
 		const controller = new AbortController();
 		req.current = controller;
 		setMessage("Loading household…");
-		try {
-			const [receipt, response] = await Promise.all([
-				readReceipt(controller.signal),
-				fetch("/v1/me/history", {
-					signal: controller.signal,
-					cache: "no-store",
-					redirect: "error",
-				}),
-			]);
-			if (response.status === 401 || response.status === 403)
-				throw Error("Your session has ended or access has been withdrawn.");
-			if (!response.ok) throw Error("Energy history is unavailable.");
-			const rows: Day[] = await response.json();
-			if (
-				!Array.isArray(rows) ||
-				rows.some(
-					(d) =>
-						typeof d.day !== "string" ||
-						!/^\d{4}-\d{2}-\d{2}$/.test(d.day) ||
-						!Number.isFinite(Date.parse(d.day)) ||
-						new Date(d.day).toISOString().slice(0, 10) !== d.day ||
-						[d.imported, d.exported, d.produced].some(
-							(v) => !Number.isFinite(v) || v < 0,
-						),
-				)
-			)
-				throw Error("Energy history is unreadable.");
-			if (controller.signal.aborted) return;
-			setDays(rows);
-			setReceipt(receipt);
-			if (download && receipt) downloadReceipt(receipt);
-			setMessage(download ? "Receipt downloaded." : "");
-		} catch (err) {
-			if (controller.signal.aborted) return;
-			setDays(null);
-			setReceipt(null);
-			setMessage(
-				err instanceof Error && !(err instanceof TypeError)
-					? err.message
-					: "Could not load household data. Try refreshing.",
-			);
+		// A revoked grant clears both panels as soon as either endpoint reports it.
+		function unavailable(error: unknown): undefined {
+			if (error instanceof SessionEnded && !controller.signal.aborted) {
+				controller.abort();
+				setDays(null);
+				setReceipt(null);
+				setReceiptReady(false);
+				setSessionEnded(true);
+				setMessage(error.message);
+			}
+			return undefined;
 		}
+		const [history, departure] = await Promise.all([
+			readHistory(controller.signal).catch(unavailable),
+			readReceipt(controller.signal).catch(unavailable),
+		]);
+		if (controller.signal.aborted) return;
+		setSessionEnded(false);
+		setDays(history ?? null);
+		setReceipt(departure ?? null);
+		setReceiptReady(departure !== undefined);
+		const notices: string[] = [];
+		if (!history)
+			notices.push("Energy history is unavailable. Try refreshing.");
+		if (departure === undefined)
+			notices.push("The departure receipt is unavailable. Try refreshing.");
+		if (download && departure !== undefined) {
+			if (departure) {
+				downloadReceipt(departure);
+				notices.push("Receipt downloaded.");
+			} else notices.push("There is no departure receipt to download.");
+		}
+		setMessage(notices.join(" "));
 	}, []);
 	useEffect(() => {
 		void load();
@@ -335,39 +382,41 @@ export function App() {
 	}, [load]);
 	return (
 		<main>
-			<header className="mast">
-				<b>EMS</b>
-				<span>Household portal</span>
-				<a href="/oauth2/sign_out">Sign out</a>
-			</header>
-			<header className="controls">
-				<h1>Home energy</h1>
-				<button type="button" onClick={() => void load()}>
-					Refresh
-				</button>
-			</header>
+			<div className="home-banner">
+				<header className="mast">
+					<b>EMS</b>
+					<span>Household portal</span>
+					<a href="/oauth2/sign_out">Sign out</a>
+				</header>
+				<header className="controls">
+					<h1>Home energy</h1>
+					<button type="button" onClick={() => void load()}>
+						Refresh
+					</button>
+				</header>
+				{receipt && days && days.length > 0 && (
+					<a href="#outcome">View departure receipt</a>
+				)}
+			</div>
 			<p role="status">{message}</p>
-			{days !== null ? (
-				<>
-					<History days={days} />
-					{receipt ? (
-						<>
-							<Evidence receipt={receipt} />
-							<button
-								type="button"
-								className="download"
-								onClick={() => void load(true)}
-							>
-								Download receipt JSON
-							</button>
-						</>
-					) : (
-						<p>Your household has no departure receipt yet.</p>
-					)}
-				</>
-			) : (
-				<a href="/portal">Open signed-in portal</a>
-			)}
+			<div className="portal-panels">
+				{days !== null && <History days={days} />}
+				{receipt ? (
+					<div>
+						<Evidence receipt={receipt} />
+						<button
+							type="button"
+							className="download"
+							onClick={() => void load(true)}
+						>
+							Download receipt JSON
+						</button>
+					</div>
+				) : (
+					receiptReady && <p>Your household has no departure receipt yet.</p>
+				)}
+			</div>
+			{sessionEnded && <a href="/portal">Open signed-in portal</a>}
 		</main>
 	);
 }

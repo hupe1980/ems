@@ -51,7 +51,7 @@ a set of capabilities. The interesting ones are not the obvious ones.
 |---|---|
 | `Battery` | asymmetric charge and discharge ratings, a **backup reserve** that is a promise, and round-trip efficiency that belongs in the *fill rate* rather than in the power |
 | `Evse` | a charge point is off, or at **at least 6 A per conductor** (IEC 61851). There is nothing in between, and a plan that trickles 500 W into it delivers nothing |
-| `HeatPump` | how it is controlled — a ceiling, or one of the four SG Ready contact states — is a different fact from what it draws |
+| `HeatPump` | consumer control interface, compressor and auxiliary heater kW, cooling rating, and comfort band |
 | `DhwTank` | a store, not a second thermal model: three hundred litres between 45 and 60 °C are five kilowatt-hours of heat that can be bought hours before they are used. All five facts are the **installation's** — volume, heater, coefficient (1,0 for an immersion heater, 3,0 for a hot-water heat pump), standing loss, and the three temperatures. `t_set_c` is the one that is easy to misread: it bounds nothing the plan does, and it is where the household's own thermostat would sit with no manager at all — so it is what the *baseline* is held at, and therefore what the saving is measured against |
 | `PvArray` | its § 9 EEG status is a **declaration** about the installation, not an inference from its nameplate |
 | `FlexibleLoad` | `LoadKind::Shiftable` **carries** the `Programme` it will run, quarter hour by quarter hour |

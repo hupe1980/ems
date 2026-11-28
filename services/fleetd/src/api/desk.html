@@ -5,6 +5,20 @@
     content="width=device-width,initial-scale=1"
   /><title>Operator desk · EMS</title>
   <style>
+    #canary {
+      background: #fff;
+      border: 1px solid #cbdbd2;
+      border-inline-start: .35rem solid #287657;
+      border-radius: .5rem;
+      padding: 1rem 1.25rem;
+      margin: 1.5rem 0;
+    }
+    #canary h2 { margin: 0; font-size: 1.1rem; }
+    #canary[data-held="true"] { border-inline-start-color: #a45717; }
+    #canary-decision { font-size: 1.25rem; margin: .4rem 0; }
+    #canary-evidence { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem .9rem; }
+    #canary-evidence dt { font-weight: 600; }
+    #canary-evidence dd { margin: 0; overflow-wrap: anywhere; }
     * {
       box-sizing: border-box;
     }
@@ -153,6 +167,67 @@
     .signals span {
       font-variant-numeric: tabular-nums;
     }
+    .trend {
+      margin: 1rem 0;
+      padding: clamp(.75rem, 2vw, 1.4rem);
+      border: 1px solid #c3d4cd;
+      border-radius: .7rem;
+      background: #f5f9f6;
+      font-variant-numeric: tabular-nums;
+    }
+    .trend h2 { margin: 0; font-size: 1.15rem; }
+    .trend header { gap: .5rem; }
+    .trend select { font-size: .9rem; }
+    .trend .scale, .trend .axis { font-size: .8rem; color: #40594f; }
+    .trend .axis { display: flex; justify-content: space-between; gap: 1rem; }
+    .trend .axis span:last-child { text-align: right; }
+    .plot {
+      position: relative;
+      height: 7rem;
+      margin: .35rem .3rem;
+      border-block: 1px solid #abc0b5;
+      background: linear-gradient(transparent 49.5%, #dbe6e0 50%, transparent 50.5%);
+    }
+    .dot {
+      position: absolute;
+      height: .48rem; width: .48rem;
+      border-radius: 50%;
+      background: #207257;
+      transform: translate(-50%, 50%);
+    }
+    .dot.late { background: #9b510a; border-radius: 0; }
+    .limit { position: absolute; width: 100%; border-top: 1px dashed #9b510a; }
+    .dot.selected { outline: 2px solid #173e30; outline-offset: 2px; }
+    .plot { cursor: crosshair; touch-action: pan-y; }
+    .plot:focus-visible { outline: 2px solid #956029; outline-offset: 4px; }
+    .plot::before { content: ""; position: absolute; inset-block: 0; left: var(--position); border-left: 1px solid #718f80; }
+    .trend output { margin-top: .6rem; }
+    .trend output b { font-size: 1.45rem; margin-right: .6rem; }
+    .trend output small { font-weight: 400; }
+    .trend output { display: block; font-weight: 600; }
+    .energy { margin: .8rem 0; padding: 1rem; border: 1px solid #c3d4cd; border-radius: .7rem; }
+    .energy label { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin: 1rem 0; }
+    .energy-key, .meter-axis { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .4rem; font-size: .85rem; }
+    .meter-axis { position: relative; height: 1.4rem; }
+    .meter-axis span { position: absolute; transform: translateX(-50%); }
+    .meter-axis span:first-child { transform: none; }
+    .meter-axis span:last-child { transform: translateX(-100%); }
+    .energy-key { font-weight: 650; }
+    .meter-jumps { display: flex; flex-wrap: wrap; gap: .45rem; }
+    .meter-jumps button { text-align: left; overflow-wrap: anywhere; }
+    .meter-jumps small { display: block; color: #40594f; }
+    .quarters { display: flex; height: 8rem; position: relative; cursor: crosshair; background: linear-gradient(transparent 49.5%, #769184 50%, transparent 50.5%); }
+    .quarters:focus-visible { outline: 2px solid #875523; outline-offset: 2px; }
+    .quarters > span { position: relative; flex: 1; min-width: 0; }
+    .quarters .missing { background: repeating-linear-gradient(135deg, transparent 0 5px, #d5ded9 5px 6px); }
+    .quarters .invalid { background: repeating-linear-gradient(45deg, transparent 0 3px, #a64a28 3px 5px); }
+    .quarters .open { background: #f1f3f2; }
+    .quarters .active { outline: 1px solid #162f28; z-index: 1; }
+    .quarters i { position: absolute; width: 100%; left: 0; }
+    .quarters .import { bottom: 50%; background: #24654f; }
+    .quarters .export { top: 50%; background: #ad621b; }
+    .energy table { width: 100%; font-size: .85rem; font-variant-numeric: tabular-nums; }
+    .energy td { text-align: right; }
     .receipts {
       list-style: none;
       padding: 0;
@@ -170,8 +245,10 @@
       color: #40594f;
     }
   </style>
+  <style>/* compiled desk styles */</style>
+  <script>/* compiled meter history */</script>
   <main>
-    <div class="identity">
+    <div class="desk-banner"><div class="identity">
       <b>EMS</b><span>Fleet operations</span
       ><a href="/oauth2/sign_out">Sign out</a>
     </div>
@@ -179,9 +256,14 @@
       <h1>Operator desk</h1>
       <button id="refresh">Refresh desk</button>
     </header>
-    <p id="summary" aria-live="polite"></p>
+    <p id="summary" aria-live="polite"></p></div>
+    <p id="rehearsal-status" hidden role="status"></p>
+    <section id="canary" hidden aria-labelledby="canary-title">
+      <h2 id="canary-title">Gateway rehearsal</h2><p id="canary-decision"></p>
+      <details><summary>Build and readiness evidence</summary><dl id="canary-evidence"></dl></details>
+    </section>
     <div class="toolbar">
-      <label>Find a site<input type="search" id="search" /></label>
+      <label>Find a site<input type="search" id="search" maxlength="128" /></label>
       <fieldset class="scopes">
         <legend class="sr-only">Site status</legend>
         <label
@@ -199,6 +281,7 @@
             >Current</span
           ></label
         >
+        <label id="cohort-filter" hidden><input type="radio" name="scope" value="cohort" /><span>Rehearsal cohort</span></label>
       </fieldset>
     </div>
     <section aria-label="Fleet sites" id="sites"></section>
@@ -232,19 +315,44 @@
     });
     const stamp = (s) =>
       s === null ? "Unknown" : clock.format(new Date(s * 1000));
-    const size = 15;
+    let run = null, result = null, pending = null, timer;
+    const scope = () => document.querySelector('input[name="scope"]:checked').value;
+    function restoreView() {
+      const url = new URL(location.href);
+      el("search").value = (url.searchParams.get("q") || "").slice(0, 128);
+      const wanted = url.searchParams.get("filter");
+      for (const choice of document.querySelectorAll('input[name="scope"]')) {
+        choice.checked = choice.value === (["attention", "current", "cohort"].includes(wanted) ? wanted : "all");
+      }
+      page = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(url.searchParams.get("page"))) || 0));
+    }
+    function remember(push) {
+      const url = new URL(location.href);
+      for (const [key, value] of [["q", el("search").value], ["filter", scope() === "all" ? "" : scope()], ["page", page]]) {
+        if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
+      }
+      if (url.href !== location.href) history[push ? "pushState" : "replaceState"](null, "", url);
+    }
     let rows = [],
       page = 0,
       epoch = 0;
     function clear() {
       epoch++;
+      el("canary").hidden = true;
+      el("rehearsal-status").hidden = true;
+      el("canary-evidence").textContent = "";
+      el("canary-decision").textContent = "";
+      run = null;
+      result = null;
+      pending?.abort();
+      clearTimeout(timer);
+      el("cohort-filter").hidden = true;
       rows = [];
-      page = 0;
       el("summary").textContent = "";
       render();
     }
-    async function get(path) {
-      const r = await fetch(path, { cache: "no-store", redirect: "error" });
+    async function get(path, signal) {
+      const r = await fetch(path, { signal, cache: "no-store", redirect: "error" });
       if (r.status === 503 || r.status === 502 || r.status === 504)
         throw new DOMException(
           "Fleet temporarily unavailable. Try refreshing.",
@@ -258,19 +366,280 @@
         );
       return r.json();
     }
+    function showTrend(parent, site) {
+      const receipts = [...site.history].sort((a, b) => a.sent_at - b.sent_at);
+      const first = receipts[0].sent_at, last = receipts.at(-1).sent_at;
+      const figure = add(parent, "figure", "");
+      figure.className = "trend";
+      const head = add(figure, "header", "");
+      add(head, "h2", "Check-in trends");
+      const metric = add(head, "select", "");
+      metric.setAttribute("aria-label", "Check-in metric");
+      for (const [key, label] of [["feeder_at", "Feeder reading age"], ["report_at", "Report age"], ["sent_at", "Delivery delay"]]) {
+        add(metric, "option", label).value = key;
+      }
+      const scale = add(figure, "p", "");
+      scale.className = "scale";
+      const plot = add(figure, "div", "");
+      plot.className = "plot";
+      plot.tabIndex = 0;
+      plot.setAttribute("role", "slider");
+      plot.setAttribute("aria-label", "Inspect check-in");
+      plot.setAttribute("aria-valuemin", "1");
+      plot.setAttribute("aria-valuemax", receipts.length);
+      const axis = add(figure, "div", "");
+      axis.className = "axis";
+      add(axis, "span", stamp(first) + " UTC");
+      if (last !== first) add(axis, "span", stamp(last) + " UTC");
+      let index = receipts.length - 1;
+      const readout = add(figure, "output", "");
+      readout.setAttribute("aria-live", "off");
+      const observed = add(readout, "b", "");
+      const when = add(readout, "small", "");
+      const position = r => last === first ? 50 : 100 * (r.sent_at - first) / (last - first);
+      const value = (r) => metric.value === "sent_at" ? r.received_at - r.sent_at
+        : r[metric.value] === null ? null : r.sent_at - r[metric.value];
+      function inspect() {
+        const r = receipts[index], seconds = value(r);
+        observed.textContent = seconds === null ? "Unknown" : seconds.toLocaleString() + " s";
+        when.textContent = stamp(r.sent_at) + " UTC";
+        plot.setAttribute("aria-valuenow", index + 1);
+        plot.setAttribute("aria-valuetext", observed.textContent + " at " + when.textContent);
+        plot.style.setProperty("--position", position(r) + "%");
+        for (const dot of plot.querySelectorAll(".dot")) dot.classList.toggle("selected", Number(dot.dataset.index) === index);
+      }
+      function draw() {
+        plot.replaceChildren();
+        const known = receipts.map(value).filter(v => v !== null);
+        const top = Math.max(1, ...known);
+        const limit = metric.value === "feeder_at" ? site.feeder.stale_after_s
+          : metric.value === "report_at" ? site.report.stale_after_s : null;
+        scale.textContent = known.length
+          ? "0–" + top.toLocaleString() + " s · " + known.length + " of " + receipts.length + " check-ins measured"
+          : "No measurements in these check-ins";
+        if (limit != null && known.length) {
+          scale.textContent += " · Stale above " + age(limit);
+          if (limit <= top) {
+            const line = add(plot, "span", "");
+            line.className = "limit";
+            line.style.bottom = (100 * limit / top) + "%";
+          }
+        }
+        receipts.forEach((r, i) => {
+          const v = value(r);
+          if (v === null) return;
+          const dot = add(plot, "span", "");
+          dot.className = limit != null && v > limit ? "dot late" : "dot";
+          dot.dataset.index = i;
+          dot.style.left = position(r) + "%";
+          dot.style.bottom = (100 * v / top) + "%";
+        });
+        inspect();
+      }
+      function selectAt(event) {
+        const rect = plot.getBoundingClientRect();
+        const instant = first + (last - first) * (event.clientX - rect.left) / rect.width;
+        index = receipts.reduce((nearest, r, i) =>
+          Math.abs(r.sent_at - instant) < Math.abs(receipts[nearest].sent_at - instant) ? i : nearest, 0);
+        inspect();
+      };
+      plot.onpointerdown = selectAt;
+      plot.onpointermove = event => {
+        if (event.pointerType === "mouse" || event.buttons === 1) selectAt(event);
+      };
+      plot.onkeydown = event => {
+        const next = { ArrowLeft: index - 1, ArrowDown: index - 1, ArrowRight: index + 1,
+          ArrowUp: index + 1, Home: 0, End: receipts.length - 1 }[event.key];
+        if (next === undefined) return;
+        event.preventDefault();
+        index = Math.max(0, Math.min(next, receipts.length - 1));
+        inspect();
+      };
+      metric.onchange = draw;
+      draw();
+    }
+    const berlinDay = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    const quarterTime = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset",
+    });
+    function energyPanel(parent, site) {
+      const panel = add(parent, "details", "");
+      panel.className = "energy";
+      add(panel, "summary", "Metered energy");
+      const tools = add(panel, "div", "");
+      tools.className = "toolbar";
+      const period = add(add(tools, "label", "History range "), "select", "");
+      for (const days of [1,7,30,90]) add(period, "option", days === 1 ? "1 day" : days+" days").value = days;
+      period.value = "7";
+      const label = add(tools, "label", "Period ending · Europe/Berlin ");
+      const date = add(label, "input", "");
+      date.type = "date";
+      date.value = date.max = berlinDay.format(new Date());
+      const body = add(panel, "div", "");
+      const back = add(tools, "button", "Return to range");
+      back.hidden = true;
+      let previous, targetQuarter, restore, request;
+      back.onclick = () => {
+        if (!previous) return;
+        period.value = previous.period; date.value = previous.date;
+        restore = previous.inspection; previous = null; targetQuarter = null; back.hidden = true; void load();
+      };
+      async function load() {
+        request?.abort();
+        body.replaceChildren();
+        if (!panel.open || !date.value || !date.validity.valid) return;
+        request = new AbortController();
+        const signal = request.signal;
+        const status = add(body, "p", "Loading meter readings…");
+        status.setAttribute("role", "status");
+        try {
+          const query = new URLSearchParams({ site, day: date.value, days:period.value });
+          const response = await fetch("/v1/desk/energy?" + query, {
+            signal, cache: "no-store", redirect: "error",
+          });
+          if (!response.ok) {
+            if ([401, 403].includes(response.status)) {
+              status.textContent = "Meter history access is unavailable for this site.";
+              return;
+            }
+            throw Error("unavailable");
+          }
+          const day = await response.json();
+          if (signal.aborted || !body.isConnected || day.site !== site || day.day !== date.value) return;
+          if (day.days > 1) {
+            const chart = document.createElement("meter-history");
+            body.replaceChildren(chart);
+            chart.show(day, (selectedDay, inspection) => {
+              previous = {period:period.value, date:date.value, inspection};
+              back.hidden = false; targetQuarter = inspection.at;
+              period.value = "1"; date.value = selectedDay; void load();
+            }, restore);
+            restore = null;
+            return;
+          }
+          const points = new Map(day.intervals.map(q => [q.start_unix_s, q]));
+          const count = (day.end_unix_s - day.start_unix_s) / 900;
+          const closed = (day.closed_until_unix_s - day.start_unix_s) / 900;
+          const valid = q => Number(q.import_kwh) >= 0 && Number(q.export_kwh) >= 0;
+          const measured = day.intervals.filter(valid);
+          status.textContent = measured.length + " of " + closed + " closed quarters measured";
+          if (measured.length < points.size) status.textContent += " · " + (points.size - measured.length) + " invalid";
+          if (points.size < closed) status.textContent += " · " + (closed - points.size) + " missing";
+          if (closed < count) status.textContent += " · " + (count - closed) + " still open";
+          const jumps = add(body, "div", "");
+          jumps.className = "meter-jumps";
+          const key = add(body, "p", "Import ↑   Export ↓");
+          key.className = "energy-key";
+          const peak = Math.max(0, ...measured.flatMap(q => [Number(q.import_kwh), Number(q.export_kwh)]));
+          if (measured.length) add(key, "span", "Scale · " + peak + " kWh each direction");
+          const plot = add(body, "div", "");
+          plot.className = "quarters";
+          plot.tabIndex = 0;
+          plot.setAttribute("role", "slider");
+          plot.setAttribute("aria-label", "Inspect metered quarter");
+          plot.setAttribute("aria-valuemin", 1);
+          plot.setAttribute("aria-valuemax", count);
+          const axis = add(body, "div", "");
+          axis.className = "meter-axis";
+          const tickTime = new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit",
+          });
+          for (let i = 0; i <= count; i++) {
+            const at = tickTime.format(new Date((day.start_unix_s + i * 900) * 1000));
+            if (i === count || ["00:00", "06:00", "12:00", "18:00"].includes(at)) {
+              const tick = add(axis, "span", i === count ? "24:00" : at);
+              tick.style.left = (100 * i / count) + "%";
+            }
+          }
+          const readout = add(body, "p", "");
+          const raw = add(body, "details", "");
+          add(raw, "summary", "Quarter-hour readings");
+          const table = add(raw, "table", "");
+          table.setAttribute("aria-label", "Directional energy by Berlin quarter hour");
+          const header = add(table, "tr", "");
+          for (const title of ["Berlin time", "Import (kWh)", "Export (kWh)"]) add(header, "th", title);
+          const descriptions = [];
+          const highest = {};
+          let firstGap, gapQuarters = 0;
+          for (let i = 0; i < count; i++) {
+            const start = day.start_unix_s + 900 * i, q = points.get(start);
+            const time = quarterTime.format(new Date(start * 1000));
+            const state = i < closed ? "Missing" : "Open";
+            const bin = add(plot, "span", "");
+            bin.className = q ? (valid(q) ? "measured" : "invalid") : i < closed ? "missing" : "open";
+            if (!q && i < closed) {
+              firstGap ??= i;
+              if (i === firstGap + gapQuarters) gapQuarters++;
+            }
+            if (q && valid(q)) {
+              for (const [field, cls] of [["import_kwh", "import"], ["export_kwh", "export"]]) {
+                if (MeterHistory.greaterEnergy(q[field], highest[cls]?.value ?? "0")) {
+                  highest[cls] = { index: i, value: q[field] };
+                }
+                const bar = add(bin, "i", "");
+                bar.className = cls;
+                bar.style.height = (peak ? Number(q[field]) / peak * 50 : 0) + "%";
+              }
+            }
+            const row = add(table, "tr", "");
+            add(row, "th", time).scope = "row";
+            add(row, "td", q?.import_kwh ?? state);
+            add(row, "td", q?.export_kwh ?? state);
+            descriptions.push(time + " · " + (q ? (valid(q) ? "" : "Invalid · ") + "Import " + q.import_kwh + " kWh · Export " + q.export_kwh + " kWh" : state));
+          }
+          let selected;
+          function inspect(i) {
+            plot.children[selected]?.classList.remove("active");
+            selected = Math.max(0, Math.min(count - 1, i));
+            plot.children[selected].classList.add("active");
+            plot.setAttribute("aria-valuenow", selected + 1);
+            plot.setAttribute("aria-valuetext", descriptions[selected]);
+            readout.textContent = descriptions[selected];
+          }
+          function jump(label, detail, i) {
+            const button = add(jumps, "button", label);
+            const time = quarterTime.format(new Date((day.start_unix_s + i * 900) * 1000));
+            add(button, "small", detail + " · " + time);
+            button.onclick = () => { inspect(i); plot.focus(); };
+          }
+          for (const direction of ["import", "export"]) {
+            const top = highest[direction];
+            if (top) jump("Highest measured " + direction, top.value + " kWh", top.index);
+          }
+          if (firstGap !== undefined) {
+            const hours = Math.floor(gapQuarters / 4), minutes = (gapQuarters % 4) * 15;
+            const duration = [hours && hours + " h", minutes && minutes + " min"].filter(Boolean).join(" ");
+            jump("First missing reading", duration + " gap", firstGap);
+          }
+          plot.onkeydown = event => {
+            const i = {ArrowLeft: selected - 1, ArrowRight: selected + 1, ArrowUp: selected + 1,
+              ArrowDown: selected - 1, Home: 0, End: count - 1}[event.key];
+            if (i !== undefined) { event.preventDefault(); inspect(i); }
+          };
+          plot.onpointerdown = plot.onpointermove = event => {
+            const rect = plot.getBoundingClientRect();
+            inspect(Math.floor(count * (event.clientX - rect.left) / rect.width));
+          };
+          inspect(targetQuarter == null ? closed - 1 : (targetQuarter-day.start_unix_s)/900);
+          if (targetQuarter != null) { plot.focus(); targetQuarter = null; }
+        } catch (error) {
+          if (signal.aborted || !body.isConnected) return;
+          status.textContent = "Meter history is temporarily unavailable. ";
+          add(status, "button", "Retry meter history").onclick = load;
+        }
+      }
+      panel.ontoggle = load;
+      date.onchange = period.onchange = () => {
+        previous = null; restore = null; targetQuarter = null; back.hidden = true; void load();
+      };
+    }
     function render() {
-      const query = el("search").value.toLowerCase(),
-        filter = document.querySelector('input[name="scope"]:checked').value;
-      const shown = rows.filter(
-        (r) =>
-          r.site.toLowerCase().includes(query) &&
-          (filter === "all" ||
-            (filter === "current") === (r.attention === "Current")),
-      );
-      const start = page * size,
-        sites = el("sites");
+      const query = el("search").value, filter = scope(), total = result?.matched ?? 0;
+      const start = page * (result?.page_size ?? 15), sites = el("sites");
       sites.replaceChildren();
-      for (const r of shown.slice(start, start + size)) {
+      for (const r of rows) {
         const card = add(sites, "article", ""),
           details = add(card, "details", ""),
           summary = add(details, "summary", r.site + " · ");
@@ -302,12 +671,16 @@
             const [detail] = await get(
               "/v1/desk?site=" + encodeURIComponent(r.site),
             );
-            if (current !== epoch) return;
+            if (current !== epoch || !details.isConnected) return;
             status.replaceChildren();
             const history = detail?.history ?? [];
             if (!history.length) add(details, "p", "No check-ins received.");
             else {
-              const list = add(details, "ol", "");
+              showTrend(details, detail);
+              details.insertBefore(details.querySelector(".trend"), details.querySelector(".energy"));
+              const raw = add(details, "details", "");
+              add(raw, "summary", "Receipt timestamps (" + history.length + ")");
+              const list = add(raw, "ol", "");
               list.className = "receipts";
               list.setAttribute("aria-label", "Recent check-ins in UTC");
               for (const h of history) {
@@ -317,12 +690,13 @@
                   "strong",
                   "Received " + stamp(h.received_at) + " UTC",
                 );
+                add(item, "span", "Sent · " + stamp(h.sent_at));
                 add(item, "span", "Feeder · " + stamp(h.feeder_at));
                 add(item, "span", "Report · " + stamp(h.report_at));
               }
             }
           } catch (error) {
-            if (current !== epoch) return;
+            if (current !== epoch || !details.isConnected) return;
             if (error.name === "NetworkError") {
               status.textContent =
                 "Recent check-ins are temporarily unavailable. ";
@@ -338,19 +712,20 @@
             }
           }
         }
+        energyPanel(details, r.site);
         details.addEventListener("toggle", loadHistory);
       }
-      el("position").textContent = shown.length
+      el("position").textContent = total
         ? start +
           1 +
           "–" +
-          Math.min(start + size, shown.length) +
+          (start + rows.length) +
           " of " +
-          shown.length
+          total
         : "No matching sites";
-      el("reset").hidden = !!shown.length || (!query && filter === "all");
-      document.querySelector("nav").hidden = shown.length <= size;
-      if (!shown.length && rows.length)
+      el("reset").hidden = !result || !!total || (!query && filter === "all");
+      document.querySelector("nav").hidden = !result || total <= result.page_size;
+      if (result && !total)
         add(
           sites,
           "p",
@@ -359,45 +734,98 @@
             : "No sites in this view.",
         );
       el("prev").disabled = !page;
-      el("next").disabled = start + size >= shown.length;
+      el("next").disabled = start + rows.length >= total;
     }
     async function refresh() {
       clear();
       const current = epoch;
       el("summary").textContent = "Loading fleet…";
       try {
-        const result = await get("/v1/desk");
+        const canary = await get("/v1/desk/canary").catch(error => {
+          if (error.name !== "NetworkError") throw error;
+          if (epoch === current) {
+            el("rehearsal-status").textContent = "Rehearsal evidence unavailable. Refresh to retry.";
+            el("rehearsal-status").hidden = false;
+          }
+          return null;
+        });
         if (epoch !== current) return;
-        rows = result;
-        const count = rows.filter((row) => row.attention !== "Current").length;
-        el("summary").textContent =
-          `${count} ${count === 1 ? "needs" : "need"} attention · ${rows.length} enrolled · Updated ${new Date().toLocaleTimeString()}`;
-        render();
+        if (canary) {
+          el("canary-decision").textContent = canary.site + " · " + canary.decision;
+          el("canary").dataset.held = String(canary.decision.startsWith("Hold"));
+          const evidence = el("canary-evidence");
+          for (const [label, value] of [
+            ["Cohort", canary.cohort + " visible sites"],
+            ["Candidate", canary.component + " · " + canary.candidate],
+            ["Verification", canary.verified ? "Verified" : "Unconfirmed"],
+            ["Running", canary.running ?? "Unknown"],
+            ["Ready", canary.ready === null ? "Unknown" : canary.ready ? "Yes" : "No"],
+            ["Observed", canary.observed_at === null ? "Unknown" : stamp(canary.observed_at) + " UTC"],
+          ]) {
+            add(evidence, "dt", label);
+            add(evidence, "dd", value);
+          }
+          run = canary.run;
+          el("cohort-filter").hidden = false;
+          el("canary").hidden = false;
+        }
+        if (!canary && document.querySelector('input[value="cohort"]').checked)
+          document.querySelector('input[value="all"]').checked = true;
+        remember(false);
+        await loadPage();
       } catch (error) {
         if (epoch === current) el("summary").textContent = error.message;
       }
     }
+    async function loadPage() {
+      pending?.abort();
+      const controller = new AbortController();
+      pending = controller;
+      const filter = scope();
+      if (filter === "cohort" && !run) return;
+      const params = new URLSearchParams({q: el("search").value, filter, page});
+      if (filter === "cohort") params.set("run", run);
+      el("sites").setAttribute("aria-busy", "true");
+      try {
+        const data = await get("/v1/desk?" + params, controller.signal);
+        if (controller.signal.aborted) return;
+        result = data; rows = data.rows; page = data.page;
+        remember(false);
+        const count = data.attention;
+        el("summary").textContent = `${count} ${count === 1 ? "needs" : "need"} attention · ${data.total} ${params.get("q") ? "matching site names" : "enrolled"} · Updated ${new Date().toLocaleTimeString()}`;
+        render();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        clear();
+        el("summary").textContent = error.message;
+      } finally {
+        if (pending === controller) el("sites").removeAttribute("aria-busy");
+      }
+    }
+    function changePage(next, push, delay = 0) {
+      page = next;
+      remember(push);
+      pending?.abort();
+      clearTimeout(timer);
+      rows = []; result = null;
+      el("sites").replaceChildren();
+      el("sites").setAttribute("aria-busy", "true");
+      el("position").textContent = "Loading sites…";
+      timer = setTimeout(loadPage, delay);
+    }
     el("refresh").onclick = refresh;
-    el("search").oninput = document.querySelector(".scopes").onchange = () => {
-      page = 0;
-      render();
-    };
+    el("search").oninput = () => changePage(0, false, 180);
+    document.querySelector(".scopes").onchange = () => changePage(0, true);
     el("reset").onclick = () => {
       el("search").value = "";
       document.querySelector('input[value="all"]').checked = true;
-      page = 0;
-      render();
+      changePage(0, true);
       el("search").focus();
     };
-    el("prev").onclick = () => {
-      page--;
-      render();
-    };
-    el("next").onclick = () => {
-      page++;
-      render();
-    };
+    el("prev").onclick = () => changePage(Math.max(0, page - 1), true);
+    el("next").onclick = () => changePage(page + 1, true);
+    window.addEventListener("popstate", () => { restoreView(); clearTimeout(timer); void loadPage(); });
     window.addEventListener("pagehide", clear);
-    window.addEventListener("pageshow", refresh);
+    window.addEventListener("pageshow", () => { restoreView(); void refresh(); });
   </script>
 </html>

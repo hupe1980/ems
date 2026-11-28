@@ -102,6 +102,9 @@ pub struct Event<T> {
     pub time: OffsetDateTime,
     /// Always [`DATA_CONTENT_TYPE`].
     pub datacontenttype: String,
+    /// Versioned URI of the schema for the data, when the port publishes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataschema: Option<String>,
     /// What the event is about, where the source has a natural subdivision — a
     /// site's day is subjected by its date.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,9 +137,17 @@ impl<T> Event<T> {
             r#type: event_type.to_owned(),
             time: at,
             datacontenttype: DATA_CONTENT_TYPE.to_owned(),
+            dataschema: None,
             subject: None,
             data,
         }
+    }
+
+    /// Attach the published schema for the event payload.
+    #[must_use]
+    pub fn with_dataschema(mut self, uri: String) -> Self {
+        self.dataschema = Some(uri);
+        self
     }
 
     /// What the event is about within its source.

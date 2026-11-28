@@ -661,6 +661,18 @@ pub fn routes() -> Vec<Route> {
             ],
         ),
         r(
+            "GET",
+            "/v1/commissioning/serial-buses",
+            "List locally provisioned serial bus names during first setup",
+            Household,
+            &[],
+            None,
+            &[
+                (200, "Available bus names", Json(of::<Vec<String>>)),
+                (404, "Site is already commissioned", Text),
+            ],
+        ),
+        r(
             "POST",
             "/v1/commissioning/first-meter",
             "Preview a connection meter and optional observed assets on an empty site",
@@ -674,6 +686,7 @@ pub fn routes() -> Vec<Route> {
                     Json(of::<crate::runtime::first_run::MeterReview>),
                 ),
                 (400, "Invalid site inputs", Text),
+                (409, "Review busy or configuration changed", Text),
                 (422, "Unsupported or silent device", Text),
                 (404, "Site is already commissioned", Text),
             ],
@@ -1031,7 +1044,7 @@ fn webhooks(generator: &mut SchemaGenerator) -> Value {
                             the subscription's `whsec_` secret. Answer `2xx`; anything else is retried for 24 h.",
             "requestBody": { "required": true, "content": { "application/cloudevents+json": { "schema": {
                 "type": "object",
-                "required": ["specversion", "id", "source", "type", "time", "data"],
+                "required": ["specversion", "id", "source", "type", "time", "dataschema", "data"],
                 "properties": {
                     "specversion": { "const": "1.0" },
                     "id": { "type": "string" },
@@ -1039,6 +1052,7 @@ fn webhooks(generator: &mut SchemaGenerator) -> Value {
                     "type": { "const": kind },
                     "time": { "type": "string", "format": "date-time" },
                     "subject": { "type": "string" },
+                    "dataschema": { "const": w::payload_schema(kind) },
                     "datacontenttype": { "const": "application/json" },
                     "data": schema
                 }
@@ -1315,6 +1329,7 @@ mod tests {
             site: String::new(),
             at: None,
             demo: false,
+            thermal_trial: None,
             charging_now: false,
             at_minute: Some(0),
             grid_kw: None,

@@ -2,10 +2,10 @@ name: Site
 
 on:
   pull_request:
-    paths: ["site/**", "crates/ems-sim/**", "crates/ems-core/**", "crates/ems-device/**", "tools/ems-wasm/**", "xtask/check_site.py", "xtask/peak_challenge.py", "Cargo.*", "justfile", "rust-toolchain.toml", ".github/workflows/site.yml"]
+    paths: ["site/**", "schemas/events/**", "crates/ems-sim/**", "crates/ems-core/**", "crates/ems-device/**", "tools/ems-wasm/**", "xtask/check_site.py", "xtask/peak_challenge.py", "Cargo.*", "justfile", "rust-toolchain.toml", ".github/workflows/site.yml"]
   push:
     branches: [main]
-    paths: ["site/**", "crates/ems-sim/**", "crates/ems-core/**", "crates/ems-device/**", "tools/ems-wasm/**", "xtask/check_site.py", "xtask/peak_challenge.py", "Cargo.*", "justfile", "rust-toolchain.toml", ".github/workflows/site.yml"]
+    paths: ["site/**", "schemas/events/**", "crates/ems-sim/**", "crates/ems-core/**", "crates/ems-device/**", "tools/ems-wasm/**", "xtask/check_site.py", "xtask/peak_challenge.py", "Cargo.*", "justfile", "rust-toolchain.toml", ".github/workflows/site.yml"]
   workflow_dispatch:
 
 permissions:

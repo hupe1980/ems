@@ -43,7 +43,9 @@ The virtual inverter, meter and battery answer real Modbus TCP requests. A simul
 
 ## Manage a real house
 
-Copy `services/hemsd/hemsd.example.toml` and set the site, installed assets, driver addresses and a writable store path. Enter the roof orientation and battery reserve before comparing plans. Validate the file, then start the gateway.
+For a new home with a serial grid meter, start with the [RS-485 commissioning guide](@/docs/devices.md#commission-a-serial-grid-meter).
+
+For a manually configured installation, copy `services/hemsd/hemsd.example.toml` and set the site, installed assets, driver addresses and a writable store path. Enter the roof orientation and battery reserve before comparing plans. Validate the file, then start the gateway.
 
 ```sh
 cargo run -p hemsd -- run --check --config house.toml

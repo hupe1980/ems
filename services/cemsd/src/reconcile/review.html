@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Interval review · EMS</title>
+<title>{{title}} · EMS</title>
 <style>
 * { box-sizing: border-box }
 html { background: #f5f6f2; color: #173331; font: 100%/1.5 system-ui, sans-serif }
@@ -12,7 +12,7 @@ h1 { margin: 0; font-size: clamp(2rem, 6vw, 3.6rem); line-height: 1.13 }
 .summary { margin: 1.1rem 0 0; font-size: 1.3rem }
 section { background: white; margin: 0 0 1rem; padding: 1rem; border-inline-start: .25rem solid #75938c; break-inside: avoid }
 .exception { border-color: #a04414 }
-h2 { font-size: 1.08rem; margin: 0; scroll-margin: 1rem }
+h2 { overflow-wrap: anywhere; font-size: 1.08rem; margin: 0; scroll-margin: 1rem }
 time, td { font-variant-numeric: tabular-nums }
 .utc { color: #455851; margin: .3rem 0 1rem; overflow-wrap: anywhere }
 .utc span { display: inline-block; max-width: 100% }
@@ -22,5 +22,10 @@ th, td { border-bottom: 1px solid #ced8d2; padding: .35rem 0; overflow-wrap: any
 th { text-align: left; font-weight: normal; width: 55% }
 td { text-align: right }
 a { display: inline-block; padding-block: .5rem; color: #075f59; text-underline-offset: .2em }
+.meter-evidence { background: #e9f2ee; border-color: #126963 }
+.meter-evidence p { margin-block: .35rem }
+summary { cursor: pointer; padding-block: .55rem; width: fit-content; color: #075f59 }
+dt { font-weight: 650 }
+dd { margin: 0 0 .5rem; overflow-wrap: anywhere }
 :focus-visible { outline: 3px solid #874311; outline-offset: 3px }
 </style></head><body>

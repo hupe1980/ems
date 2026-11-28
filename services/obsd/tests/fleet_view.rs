@@ -13,11 +13,11 @@ use ems_core::report::DayKpis;
 use obsd::api::{Observed, router};
 use time::macros::date;
 
-/// The secret the box and this fleet share in these tests.
-const SECRET: &str = "whsec_the-test-fleet";
-/// A second household's own key, so "who signed this" is a question with two
-/// possible answers rather than one.
-const SECRET_FOR_HAUS_1: &str = "whsec_haus-1";
+/// A distinct deterministic key for each fixture household.
+fn key_for(site: &str) -> ems_events::webhook::Webhook {
+    ems_events::webhook::Webhook::from_bytes(format!("test-signing-key-for-{site}").into_bytes())
+        .unwrap()
+}
 /// The credential an operator reads the fleet view with.
 const OPERATOR: &str = "tok-operator";
 
@@ -104,17 +104,12 @@ async fn start_with_a_site_credential(
                 // unanswerable, and the daemon refuses that configuration.
                 (0..10)
                     .map(|i| format!("site-{i}"))
-                    .chain(std::iter::once("haus-2".to_owned()))
+                    .chain(["haus-1".to_owned(), "haus-2".to_owned()])
                     .map(|site| {
-                        let key = format!("{SECRET}-{site}");
+                        let key = key_for(&site);
                         (site, key)
                     })
-                    .chain(std::iter::once((
-                        "haus-1".to_owned(),
-                        SECRET_FOR_HAUS_1.to_owned(),
-                    )))
                     .collect(),
-                ems_events::webhook::DEFAULT_TOLERANCE,
                 ems_service::Credentials::resolve(
                     &site
                         .map(|(name, token)| (name.to_owned(), ems_service::Secret::literal(token)))
@@ -186,7 +181,7 @@ async fn request(
 /// The body and headers a box sends for one day.
 fn signed_report(
     day: &DayKpis,
-    secret: &str,
+    secret: &ems_events::webhook::Webhook,
     at: time::OffsetDateTime,
 ) -> (String, Vec<(&'static str, String)>) {
     let event = ems_events::Event::new(
@@ -198,17 +193,13 @@ fn signed_report(
     )
     .about(day.date.to_string());
     let body = String::from_utf8(event.to_bytes().unwrap()).unwrap();
-    let signature = ems_events::webhook::sign(secret.as_bytes(), &event.id, at, body.as_bytes());
+    let signature = ems_events::webhook::sign(secret, &event.id, at, body.as_bytes()).unwrap();
     (body, signature.headers().to_vec())
 }
 
 /// The same, at this instant and under the fleet's own secret.
 fn report_now(day: &DayKpis) -> (String, Vec<(&'static str, String)>) {
-    signed_report(
-        day,
-        &format!("{SECRET}-{}", day.site),
-        time::OffsetDateTime::now_utc(),
-    )
+    signed_report(day, &key_for(&day.site), time::OffsetDateTime::now_utc())
 }
 
 /// The header an operator reads with.
@@ -301,8 +292,8 @@ async fn a_report_with_a_field_this_build_does_not_know_is_refused() {
     // Re-sign it: the point of this test is the schema, not the signature.
     let at = time::OffsetDateTime::now_utc();
     let id = headers[0].1.clone();
-    let key = format!("{SECRET}-site-1");
-    let signature = ems_events::webhook::sign(key.as_bytes(), &id, at, tampered.as_bytes());
+    let key = key_for("site-1");
+    let signature = ems_events::webhook::sign(&key, &id, at, tampered.as_bytes()).unwrap();
     let (status, _) = request(
         address,
         "POST",
@@ -359,7 +350,7 @@ async fn a_captured_report_stops_working() {
     let (address, trigger) = start().await;
     let day = good_day("site-1", 15);
     let stale = time::OffsetDateTime::now_utc() - time::Duration::minutes(6);
-    let (body, headers) = signed_report(&day, &format!("{SECRET}-site-1"), stale);
+    let (body, headers) = signed_report(&day, &key_for("site-1"), stale);
     let (status, _) = request(address, "POST", "/v1/days", Some(&body), &headers).await;
     assert_eq!(status, 401);
     trigger.trigger();
@@ -380,8 +371,8 @@ async fn an_event_of_another_type_does_not_become_a_day() {
         good_day("site-1", 15),
     );
     let body = String::from_utf8(event.to_bytes().unwrap()).unwrap();
-    let key = format!("{SECRET}-site-1");
-    let signature = ems_events::webhook::sign(key.as_bytes(), &event.id, at, body.as_bytes());
+    let key = key_for("site-1");
+    let signature = ems_events::webhook::sign(&key, &event.id, at, body.as_bytes()).unwrap();
     let (status, _) = request(
         address,
         "POST",
@@ -468,7 +459,7 @@ async fn a_box_cannot_report_a_day_as_another_household() {
     let mut forged = good_day("haus-2", 15);
     forged.respected_the_grid = false;
     let (body, headers) =
-        signed_report(&forged, SECRET_FOR_HAUS_1, time::OffsetDateTime::now_utc());
+        signed_report(&forged, &key_for("haus-1"), time::OffsetDateTime::now_utc());
     let (status, _) = request(address, "POST", "/v1/days", Some(&body), &headers).await;
     assert_eq!(
         status, 401,
@@ -489,7 +480,7 @@ async fn a_box_cannot_report_a_day_as_another_household() {
     // Its own day, under its own secret, is taken.
     let (body, headers) = signed_report(
         &good_day("haus-1", 15),
-        SECRET_FOR_HAUS_1,
+        &key_for("haus-1"),
         time::OffsetDateTime::now_utc(),
     );
     let (status, _) = request(address, "POST", "/v1/days", Some(&body), &headers).await;
@@ -748,11 +739,12 @@ async fn customer_receipt_requires_own_evidence_and_preserves_the_close() {
         );
         let body = event.to_bytes().unwrap();
         let sig = ems_events::webhook::sign(
-            SECRET_FOR_HAUS_1.as_bytes(),
+            &key_for("haus-1"),
             "receipt",
             time::OffsetDateTime::now_utc(),
             &body,
-        );
+        )
+        .unwrap();
         request(
             addr,
             "POST",

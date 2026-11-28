@@ -40,14 +40,26 @@ impl Participant {
     }
 
     async fn configured(s: &Scenario, watch: bool, storage: bool) -> Self {
-        let physics = Arc::new(Mutex::new(Physics::new(s).unwrap()));
+        Self::installed(s, watch, storage, super::Appliances::default()).await
+    }
+
+    async fn installed(
+        s: &Scenario,
+        watch: bool,
+        storage: bool,
+        appliances: super::Appliances,
+    ) -> Self {
+        let mut plant = Physics::new(s).unwrap();
+        plant.install(s, appliances, true).unwrap();
+        plant.step(s.start(), Duration::ZERO);
+        let physics = Arc::new(Mutex::new(plant));
         let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = server.local_addr().unwrap();
         let listener = tokio::spawn(modbus::serve(server, Arc::clone(&physics)));
         let socket = TcpStream::connect(address).await.unwrap();
         socket.set_nodelay(true).unwrap();
-        let mut cfg = super::device_configuration(s, address, storage).unwrap();
-        if storage && !watch {
+        let mut cfg = super::device_configuration(s, address, storage, appliances).unwrap();
+        if !watch {
             cfg.push_str("\n[[drivers]]\nkind = \"eebus-lpc\"\nasset = \"netzanschluss\"\n");
         }
         let mut settings: crate::Settings = toml::from_str(&cfg).unwrap();
@@ -65,7 +77,11 @@ impl Participant {
         }
         let running = crate::runtime::assemble(&settings, None, s.start()).unwrap();
         for (id, driver) in running.drivers.iter().zip(&settings.drivers) {
-            if !matches!(driver, crate::config::DriverSettings::Sunspec(_)) {
+            if !matches!(
+                driver,
+                crate::config::DriverSettings::Sunspec(_)
+                    | crate::config::DriverSettings::Registers(_)
+            ) {
                 continue;
             }
             running
@@ -949,4 +965,123 @@ async fn verify_reserve_and_release(wire: &mut Participant, at: OffsetDateTime) 
             .1
             .autonomous
     );
+}
+
+/// Move only the start of charging. Both households retain the same thermal
+/// equipment, weather, outlet rating, departure and initial storage.
+#[tokio::test]
+async fn a_winter_departure_is_visible_on_the_occupied_house_meter() {
+    let scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
+    let (early, late) = tokio::join!(occupied_day(&scenario, 90), occupied_day(&scenario, 120));
+    assert_eq!(early.temperatures, late.temperatures);
+    assert_eq!(early.temperatures.len(), 96);
+    assert!((early.outlet_wh - 22_770.0).abs() <= 1.0);
+    assert!((late.outlet_wh - 20_700.0).abs() <= 1.0);
+    assert!(early.vehicle_wh >= 38_000.0 && late.vehicle_wh < 38_000.0);
+    eprintln!(
+        "96 Berlin quarters per arm · 07:00 departure: {:.0} vs {:.0} outlet Wh; {:.0} vs {:.0} stored vehicle Wh · identical room and tank readings at all quarter closes",
+        early.outlet_wh, late.outlet_wh, early.vehicle_wh, late.vehicle_wh
+    );
+}
+
+struct OccupiedDay {
+    temperatures: Vec<(f64, f64)>,
+    outlet_wh: f64,
+    vehicle_wh: f64,
+}
+
+async fn occupied_day(scenario: &Scenario, start_minute: i64) -> OccupiedDay {
+    use ems_core::prelude::{Command, Current, Reason, Setpoint, UserOverride};
+    let mut wire = Participant::installed(
+        scenario,
+        false,
+        false,
+        super::Appliances {
+            room: true,
+            tank: true,
+            ev: true,
+        },
+    )
+    .await;
+    let household = &wire.running.household;
+    let (ev, room, tank) = (
+        household.evse.clone().unwrap(),
+        household.heat_pump.clone().unwrap(),
+        household.dhw.clone().unwrap(),
+    );
+    let mut temperatures = Vec::new();
+    let mut outlet = None;
+    let mut stored = None;
+    let start = scenario.start();
+    for minute in (0..24 * 60).step_by(15) {
+        let at = start + Duration::minutes(minute);
+        if minute == start_minute {
+            wire.running
+                .registry
+                .lock()
+                .await
+                .command(
+                    &Setpoint {
+                        asset: ev.clone(),
+                        command: Command::ChargingCurrent(Current::new(6.0)),
+                        at,
+                        reason: Reason::User(UserOverride::Boost),
+                    },
+                    at,
+                )
+                .unwrap();
+            wire.exchange(at).await;
+        }
+        let mut integrated = [0.0; 2];
+        {
+            let mut plant = wire.physics.lock().unwrap();
+            for second in 0..900 {
+                plant.step(at + Duration::seconds(second), Duration::SECOND);
+                let net = plant.reading.load_w + plant.reading.battery_w - plant.reading.pv_w;
+                integrated[0] += net.max(0.0) / 3600.0;
+                integrated[1] += (-net).max(0.0) / 3600.0;
+            }
+        }
+        let close = at + Duration::minutes(15);
+        wire.exchange(close).await;
+        let (observed, registers) = wire.meter(Slot::containing(at), close).await;
+        for (metered, calculated) in [registers.grid_draw, registers.grid_feed_in]
+            .iter()
+            .zip(integrated)
+        {
+            assert!(
+                (*metered * Decimal::from(1000) - Decimal::from_f64(calculated).unwrap()).abs()
+                    <= Decimal::ONE
+            );
+        }
+        let devices = &observed.state.assets;
+        assert_eq!(devices[&room].at, close);
+        assert_eq!(devices[&tank].at, close);
+        temperatures.push((
+            devices[&room].temperature_c.unwrap(),
+            devices[&tank].temperature_c.unwrap(),
+        ));
+        let reading = devices[&ev];
+        let presence = observed.vehicles[&ev];
+        let deadline = scenario.ev.unwrap().departure;
+        assert_eq!(presence.connected, close < start + deadline);
+        let wh = reading.energy_in.unwrap().get();
+        if close == start + deadline {
+            outlet = Some(wh);
+            stored =
+                Some(reading.soc.unwrap().fraction() * crate::scenario::VEHICLE_CAPACITY.get());
+            let expected = scenario.ev.unwrap().energy_now.get() + wh * 0.92;
+            // Vehicle charge is encoded at 0.01% of the 60 kWh capacity.
+            assert!((stored.unwrap() - expected).abs() <= 3.0);
+        }
+        if close >= start + deadline {
+            assert_eq!(reading.power.unwrap().get(), 0.0);
+            assert_eq!(outlet, Some(wh));
+        }
+    }
+    OccupiedDay {
+        temperatures,
+        outlet_wh: outlet.unwrap(),
+        vehicle_wh: stored.unwrap(),
+    }
 }

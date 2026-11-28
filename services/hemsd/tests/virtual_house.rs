@@ -29,6 +29,9 @@ fn free_port() -> SocketAddr {
 async fn pair(
     scenario: Scenario,
     at: Duration,
+    with_tank: bool,
+    with_room: bool,
+    with_ev: bool,
 ) -> (House, hemsd::Running, Health, ShutdownTrigger) {
     let (ship, api) = (free_port(), free_port());
     let house = house::start(house::Options {
@@ -38,6 +41,11 @@ async fn pair(
         at: Some(at),
         identity: None,
         exposed: false,
+        appliances: house::Appliances {
+            tank: with_tank,
+            room: with_room,
+            ev: with_ev,
+        },
     })
     .await
     .expect("the house starts");
@@ -65,6 +73,200 @@ async fn until<T>(within: StdDuration, what: &str, mut check: impl AsyncFnMut() 
     }
 }
 
+async fn check_heat_readback(
+    house: &House,
+    running: &hemsd::Running,
+    id: &ems_core::prelude::AssetId,
+    rated_w: f64,
+    band: std::ops::RangeInclusive<f64>,
+) {
+    use ems_core::prelude::UserOverride;
+    let meter = &running.household.grid_meter;
+    let mut readings = Vec::new();
+    for (action, expected) in [
+        (UserOverride::Pause, 0.0),
+        (UserOverride::Boost, rated_w),
+        (UserOverride::Pause, 0.0),
+    ] {
+        running
+            .overrides
+            .set(id.clone(), action, None, OffsetDateTime::now_utc())
+            .await;
+        let watts = until(
+            StdDuration::from_secs(30),
+            "appliance and connection readback",
+            async || {
+                let state = running
+                    .registry
+                    .lock()
+                    .await
+                    .state(Some(meter), OffsetDateTime::now_utc());
+                let device = state.assets.get(id)?;
+                let temp = device.temperature_c?;
+                let grid = state.grid?.power?.get();
+                (band.contains(&temp)
+                    && (device.power?.get() - expected).abs() < 1.0
+                    && (house.reading().grid_w - grid).abs() < 20.0)
+                    .then_some(grid)
+            },
+        )
+        .await;
+        readings.push(watts);
+    }
+    assert!(
+        (readings[1] - readings[0] - rated_w).abs() < 30.0,
+        "{readings:?}"
+    );
+    assert!((readings[2] - readings[0]).abs() < 30.0, "{readings:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gateway_switches_the_tank_and_measures_the_load_at_the_connection() {
+    let scenario = Scenario::winter_with_grid_event(HouseholdConfig {
+        battery: None,
+        ..Default::default()
+    });
+    let tank = scenario.config.dhw.unwrap();
+    let (house, running, _, stop) = pair(scenario, Duration::hours(3), true, false, false).await;
+    let id = running.household.dhw.clone().unwrap();
+    check_heat_readback(
+        &house,
+        &running,
+        &id,
+        tank.heater.get(),
+        tank.t_min_c..=tank.t_max_c,
+    )
+    .await;
+    stop.trigger();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_commissioned_wallbox_reports_outlet_energy_and_responds_to_the_gateway() {
+    use ems_core::prelude::UserOverride;
+    let scenario = Scenario::winter_with_grid_event(HouseholdConfig {
+        battery: None,
+        ..Default::default()
+    });
+    let (house, running, _, stop) = pair(scenario, Duration::hours(3), false, false, true).await;
+    let port = running.household.evse.as_ref().unwrap();
+    let grid = &running.household.grid_meter;
+    let mut readings = Vec::new();
+    for (action, charging) in [
+        (UserOverride::Pause, false),
+        (UserOverride::Boost, true),
+        (UserOverride::Pause, false),
+    ] {
+        running
+            .overrides
+            .set(port.clone(), action, None, OffsetDateTime::now_utc())
+            .await;
+        let watts = until(
+            StdDuration::from_secs(40),
+            "metered EV response",
+            async || {
+                let now = OffsetDateTime::now_utc();
+                let state = running.registry.lock().await.observe(Some(grid), now);
+                let car = state.vehicles.get(port)?;
+                let device = state.state.assets.get(port)?;
+                let flow = device.power?.get();
+                let feeder = state.state.grid?.power?.get();
+                (car.current_soc(now).is_some()
+                    && car.capacity_wh == Some(60_000.0)
+                    && (house.reading().grid_w - feeder).abs() < 20.0
+                    && if charging {
+                        flow >= 4_140.0 && device.energy_in?.get() > 0.0
+                    } else {
+                        flow == 0.0
+                    })
+                .then_some((flow, feeder))
+            },
+        )
+        .await;
+        readings.push(watts);
+    }
+    assert!((readings[1].1 - readings[0].1 - readings[1].0).abs() < 30.0);
+    assert!((readings[2].1 - readings[0].1).abs() < 30.0);
+    until(
+        StdDuration::from_secs(60),
+        "planner discovers the measured EV session",
+        async || {
+            let car = running.car.lock().await;
+            car.as_ref()
+                .filter(|session| {
+                    (session.capacity.kwh() - 60.0).abs() < 0.001
+                        && (session.energy_now.kwh() - 18.0).abs() < 0.1
+                })
+                .map(|_| ())
+        },
+    )
+    .await;
+    stop.trigger();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gateway_measures_room_heat_at_the_connection() {
+    let scenario = Scenario::winter_with_grid_event(HouseholdConfig {
+        battery: None,
+        ..Default::default()
+    });
+    let pump = scenario.config.heat_pump.unwrap();
+    let (house, running, _, stop) = pair(scenario, Duration::hours(3), false, true, false).await;
+    let id = running.household.heat_pump.clone().unwrap();
+    check_heat_readback(
+        &house,
+        &running,
+        &id,
+        pump.power.get(),
+        pump.comfort_min_c..=pump.comfort_max_c,
+    )
+    .await;
+    stop.trigger();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn grid_curtailment_limits_a_boosted_room() {
+    use ems_core::prelude::{Power, UserOverride};
+    let scenario = Scenario::winter_with_grid_event(HouseholdConfig {
+        evse: None,
+        battery: None,
+        ..Default::default()
+    });
+    use tokio_modbus::prelude::{Reader, Slave};
+    let limit = scenario.grid_event.unwrap().2;
+    let (house, running, _, stop) = pair(scenario, Duration::hours(17), false, true, false).await;
+    let mut peer = tokio_modbus::client::tcp::connect_slave(house.modbus, Slave(5))
+        .await
+        .unwrap();
+    let id = running.household.heat_pump.clone().unwrap();
+    running
+        .overrides
+        .set(
+            id.clone(),
+            UserOverride::Boost,
+            None,
+            OffsetDateTime::now_utc(),
+        )
+        .await;
+    until(
+        StdDuration::from_secs(60),
+        "acknowledged grid limit and measured heat pump reduction",
+        async || {
+            let words = peer.read_holding_registers(1, 2).await.ok()?.ok()?;
+            let commanded = *running.status.lock().await.commanded.get(&id)?;
+            let registry = running.registry.lock().await;
+            let state = registry.state(None, OffsetDateTime::now_utc());
+            (registry.limits().steuve_ceiling == Some(limit)
+                && commanded > Power::ZERO
+                && commanded <= limit
+                && state.assets.get(&id)?.power? == Power::ZERO
+                && words == [0, 1])
+            .then_some(())
+        },
+    )
+    .await;
+    stop.trigger();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_shadow_gateway_reads_the_meter_and_never_writes_a_setpoint() {
     use ems_core::prelude::{Command, Power, Reason, Setpoint, UserOverride};
@@ -76,6 +278,7 @@ async fn a_shadow_gateway_reads_the_meter_and_never_writes_a_setpoint() {
         at: Some(Duration::hours(12)),
         identity: None,
         exposed: false,
+        appliances: Default::default(),
     })
     .await
     .unwrap();
@@ -151,7 +354,8 @@ async fn every_device_is_discovered_read_and_obeyed_over_modbus() {
     let mut scenario = Scenario::summer_surplus(HouseholdConfig::default());
     scenario.cloudiness = 0.0;
     let rating = scenario.config.pv.expect("the reference roof").ac_nominal;
-    let (house, running, _, trigger) = pair(scenario, Duration::hours(12)).await;
+    let (house, running, _, trigger) =
+        pair(scenario, Duration::hours(12), false, false, false).await;
     let pv = running.household.pv.clone().expect("the reference roof");
     let battery = running.household.battery.clone().expect("a battery");
     let meter = running.household.grid_meter.clone();
@@ -244,8 +448,14 @@ async fn the_steuerbox_reduces_the_household_and_its_silence_is_a_failsafe() {
     // Twenty seconds before the winter day's 17:00 reduction.
     let scenario = Scenario::winter_with_grid_event(HouseholdConfig::default());
     let limit = scenario.grid_event.expect("a reduction").2;
-    let (house, running, health, trigger) =
-        pair(scenario, Duration::hours(17) - Duration::seconds(20)).await;
+    let (house, running, health, trigger) = pair(
+        scenario,
+        Duration::hours(17) - Duration::seconds(20),
+        false,
+        false,
+        false,
+    )
+    .await;
 
     // Paired over SHIP, and nothing required yet.
     let mut seen = house.steuerbox.clone();

@@ -284,6 +284,4 @@ Start the gateway with `hemsd run --config PATH`. Open **Setup → Matter applia
 
 On a gateway with `[series]` configured, open **Day → Grid connection**. Choose a Berlin date and quarter to inspect a short-lived spike, a measured zero or an interval with no readings. On the autumn clock change the UTC offset distinguishes the two occurrences of the same local time.
 
-When upgrading an existing Chronix 0.9 gateway, download the history with the old gateway first. Configure a fresh `[series]` directory for the integer-count tier. Keep the old directory for reference and retain the gateway’s redb store.
-
 The mean and range describe the readings received. A single observation can establish a peak but cannot establish how long it lasted. The local JSON download covers 1,095 days of quarter-hour summaries. The latest quarter may still be in progress. `complete` means every requested point was retrieved. A partial file lists the failed points and keeps the successful reads. [History API](@/docs/api.md#local-power-history)

@@ -193,16 +193,20 @@ impl Request {
             }
         }
 
-        let mut out = Vec::with_capacity(7 + pdu.len());
-        out.extend_from_slice(&self.transaction.to_be_bytes());
-        out.extend_from_slice(&0u16.to_be_bytes()); // protocol: Modbus
-        // Length counts the unit identifier and the PDU.
-        let length = u16::try_from(pdu.len() + 1).unwrap_or(u16::MAX);
-        out.extend_from_slice(&length.to_be_bytes());
-        out.push(self.unit);
-        out.extend_from_slice(&pdu);
-        out
+        tcp_adu(self.transaction, self.unit, &pdu)
     }
+}
+
+/// Wrap an application PDU for the transaction-based driver interface.
+pub(super) fn tcp_adu(transaction: u16, unit: u8, pdu: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(7 + pdu.len());
+    out.extend_from_slice(&transaction.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    let length = u16::try_from(pdu.len() + 1).unwrap_or(u16::MAX);
+    out.extend_from_slice(&length.to_be_bytes());
+    out.push(unit);
+    out.extend_from_slice(pdu);
+    out
 }
 
 /// Take one response off the front of `buffer`, if a whole one is there.

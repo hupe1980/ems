@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "DeviationDetected": {
+      "description": "`de.ems.device.deviation.detected`: a device has not done what it was\nasked for ten minutes.",
+      "properties": {
+        "commanded_w": {
+          "description": "Requested power, W, when available.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "measured_w": {
+          "description": "Observed power, W, when available.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.device.deviation.detected.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A device has not done what it was asked for ten minutes",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/DeviationDetected"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.device.deviation.detected.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.device.deviation.detected"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.device.deviation.detected",
+  "type": "object"
+}

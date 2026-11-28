@@ -10,13 +10,24 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::access::LocalAccess;
-use super::installation::{Device, DeviceRole, Installer, Receipt};
+use super::installation::{Device, DeviceRole, Installer, MeterEndpoint, Receipt};
 
 #[derive(Clone)]
 struct Setup {
     installer: Arc<Installer>,
+    ports: ProvisionedPorts,
+    probing: Arc<tokio::sync::Mutex<()>>,
     stop: ems_service::shutdown::ShutdownTrigger,
     store_path: String,
+}
+
+/// Preconfigured ports retained when commissioning writes the first household configuration.
+#[derive(Clone, Serialize)]
+struct ProvisionedPorts {
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    serial_buses: std::collections::BTreeMap<String, crate::config::SerialBus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    heat_meter: Option<crate::config::HeatMeterSettings>,
 }
 
 /// One observed asset, identified by its endpoint and installation sheet.
@@ -40,7 +51,9 @@ pub struct ObservedAsset {
 #[serde(deny_unknown_fields)]
 pub struct FirstMeter {
     /// Literal private IPv4 or IPv6 address and one supported Modbus port.
-    pub address: SocketAddr,
+    pub address: Option<SocketAddr>,
+    /// Name of an installer-provisioned serial bus, for an RTU meter.
+    pub serial_bus: Option<String>,
     /// Modbus unit selected by the installer.
     pub unit: u8,
     /// Household main fuse per phase.
@@ -98,11 +111,38 @@ async fn preview(
             "Check the contract rates and contact details.",
         ));
     }
-    let (devices, labels) = ask.probe_devices().await?;
-    let block = ask.block(
+    let endpoint = match (&ask.serial_bus, ask.address) {
+        (None, Some(address)) => MeterEndpoint::Tcp { address },
+        (Some(name), None) if (1..=247).contains(&ask.unit) => MeterEndpoint::Serial {
+            bus: setup
+                .ports
+                .serial_buses
+                .get(name)
+                .ok_or((StatusCode::BAD_REQUEST, "Choose a configured serial bus."))?
+                .clone(),
+        },
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Choose one endpoint and a valid meter unit.",
+            ));
+        }
+    };
+    let _probe = setup
+        .probing
+        .try_lock()
+        .map_err(|_| (StatusCode::CONFLICT, "Device review already in progress."))?;
+    let (devices, labels) = ask.probe_devices(endpoint).await?;
+    let mut block = ask.block(
         &setup.store_path,
         devices.iter().any(|d| d.role == DeviceRole::Pv),
     );
+    block.push_str(&toml::to_string(&setup.ports).map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Invalid converter configuration.",
+        )
+    })?);
     let candidate: crate::Settings = toml::from_str(&block).map_err(|_| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -133,8 +173,11 @@ async fn preview(
 }
 
 impl FirstMeter {
-    async fn probe_devices(&self) -> Result<(Vec<Device>, Vec<String>), Refusal> {
-        let identity = super::handover::inspect(self.address, self.unit)
+    async fn probe_devices(
+        &self,
+        endpoint: MeterEndpoint,
+    ) -> Result<(Vec<Device>, Vec<String>), Refusal> {
+        let identity = endpoint.inspect(self.unit)
         .await
         .filter(|id| id.connection_meter)
         .ok_or((
@@ -143,7 +186,7 @@ impl FirstMeter {
         ))?;
         let mut devices = vec![Device::from_identity(
             DeviceRole::ConnectionMeter,
-            self.address,
+            endpoint,
             self.unit,
             &identity,
         )];
@@ -151,7 +194,11 @@ impl FirstMeter {
             "{} {} · {}",
             identity.manufacturer, identity.model, identity.serial
         )];
-        let mut endpoints = vec![(self.address, self.unit)];
+        let mut endpoints = self
+            .address
+            .map(|address| (address, self.unit))
+            .into_iter()
+            .collect::<Vec<_>>();
         if self.roof.is_some() || self.storage.is_some() {
             let controller = self
                 .external_limit_controller
@@ -202,7 +249,14 @@ impl FirstMeter {
             } else {
                 role
             };
-            devices.push(Device::from_identity(role, asset.address, asset.unit, &id));
+            devices.push(Device::from_identity(
+                role,
+                MeterEndpoint::Tcp {
+                    address: asset.address,
+                },
+                asset.unit,
+                &id,
+            ));
             labels.push(format!("{} {} · {}", id.manufacturer, id.model, id.serial));
         }
         Ok((devices, labels))
@@ -233,6 +287,16 @@ impl FirstMeter {
             .storage
             .as_ref()
             .map_or((0.0, 0.0), |r| (r.size, r.power_kw));
+        let endpoint = match &self.serial_bus {
+            Some(bus) => format!(
+                "kind = \"serial-sunspec\"\nbus = {}",
+                toml::Value::String(bus.clone())
+            ),
+            None => format!(
+                "kind = \"sunspec\"\naddress = \"{}\"\nlistens_only = true",
+                self.address.expect("TCP endpoint validated")
+            ),
+        };
         write!(
             &mut block,
             r#"
@@ -259,18 +323,11 @@ standing_charge_eur_per_year = {:?}
 modul = "none"
 
 [[drivers]]
-kind = "sunspec"
+{endpoint}
 asset = "netzanschluss-zaehler"
-address = "{}"
 unit = {}
-listens_only = true
 "#,
-            self.fuse_a,
-            self.energy_ct,
-            self.network_ct,
-            self.standing_eur,
-            self.address,
-            self.unit
+            self.fuse_a, self.energy_ct, self.network_ct, self.standing_eur, self.unit
         )
         .expect("writing a String");
         for (role, asset) in [
@@ -301,6 +358,7 @@ pub async fn run(
     settings: &crate::Settings,
     installer: Arc<Installer>,
 ) -> anyhow::Result<()> {
+    settings.validate_serial().map_err(anyhow::Error::msg)?;
     let store_path = path.canonicalize()?.with_added_extension("redb");
     let store = crate::store::Store::open(&store_path)?;
     let (access, issued) = LocalAccess::resolve(&settings.api, "first-run", Some(&store))?;
@@ -310,6 +368,11 @@ pub async fn run(
     let (signal, stop) = ems_service::Shutdown::channel();
     tokio::spawn(ems_service::shutdown::on_signal(stop.clone()));
     let setup = Setup {
+        ports: ProvisionedPorts {
+            serial_buses: settings.serial_buses.clone(),
+            heat_meter: settings.heat_meter.clone(),
+        },
+        probing: Arc::default(),
         installer,
         stop,
         store_path: store_path
@@ -318,6 +381,12 @@ pub async fn run(
             .to_owned(),
     };
     let router = Router::new()
+        .route(
+            "/v1/commissioning/serial-buses",
+            get(|State(setup): State<Setup>| async move {
+                Json(setup.ports.serial_buses.into_keys().collect::<Vec<_>>())
+            }),
+        )
         .route("/v1/commissioning/first-meter", post(preview))
         .route("/v1/commissioning/change", get(outcome).post(apply))
         .with_state(setup)
@@ -391,7 +460,8 @@ mod tests {
     #[test]
     fn meter_bootstrap_validates_without_inheriting_reference_devices_or_declarations() {
         let input = FirstMeter {
-            address: "127.0.0.1:1502".parse().unwrap(),
+            address: Some("127.0.0.1:1502".parse().unwrap()),
+            serial_bus: None,
             unit: 2,
             fuse_a: 35,
             phases: 3,

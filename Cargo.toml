@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/ems-core", "crates/ems-device", "crates/ems-drv", "crates/ems-flex", "crates/ems-grid", "crates/ems-realtime", "crates/ems-tariff", "crates/ems-forecast", "crates/ems-optimizer", "crates/ems-events", "crates/ems-service", "crates/ems-sim", "services/agentd", "services/fleetd", "services/forecastd", "services/hemsd", "services/bemsd", "services/cemsd", "services/histd", "services/obsd", "services/portald", "services/tariffd", "tools/ems-wasm", "xtask"]
 
 [workspace.package]
-version      = "0.9.0"
+version      = "0.10.0"
 authors      = ["hupe1980"]
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
@@ -12,7 +12,9 @@ homepage     = "https://hupe1980.github.io/ems"
 rust-version = "1.99"
 
 [workspace.dependencies]
+opcua-kit = { version = "=0.2.0", default-features = false }
 openadr = { version = "=0.6.0", default-features = false }
+mbus-kit = { version = "0.2.0", default-features = false }
 matter-kit = { version = "0.4", default-features = false }
 ocpp-kit = { version = "0.8", default-features = false, features = ["v1_6"] }
 # ── External ────────────────────────────────────────────────────────────────
@@ -58,18 +60,18 @@ tokio-modbus = { version = "0.17", default-features = false, features = ["tcp-se
 good_lp      = { version = "1.15", default-features = false }
 
 # ── Internal (path + version so the domain crates can be published) ─────────
-ems-core      = { path = "crates/ems-core",      version = "0.9" }
-ems-device    = { path = "crates/ems-device",    version = "0.9" }
-ems-drv       = { path = "crates/ems-drv",       version = "0.9" }
-ems-flex      = { path = "crates/ems-flex",      version = "0.9" }
-ems-grid      = { path = "crates/ems-grid",      version = "0.9" }
-ems-tariff    = { path = "crates/ems-tariff",    version = "0.9" }
-ems-forecast  = { path = "crates/ems-forecast",  version = "0.9" }
-ems-optimizer = { path = "crates/ems-optimizer", version = "0.9" }
-ems-realtime  = { path = "crates/ems-realtime",  version = "0.9" }
-ems-events    = { path = "crates/ems-events",    version = "0.9" }
-ems-service   = { path = "crates/ems-service",   version = "0.9" }
-ems-sim       = { path = "crates/ems-sim",       version = "0.9" }
+ems-core      = { path = "crates/ems-core",      version = "0.10" }
+ems-device    = { path = "crates/ems-device",    version = "0.10" }
+ems-drv       = { path = "crates/ems-drv",       version = "0.10" }
+ems-flex      = { path = "crates/ems-flex",      version = "0.10" }
+ems-grid      = { path = "crates/ems-grid",      version = "0.10" }
+ems-tariff    = { path = "crates/ems-tariff",    version = "0.10" }
+ems-forecast  = { path = "crates/ems-forecast",  version = "0.10" }
+ems-optimizer = { path = "crates/ems-optimizer", version = "0.10" }
+ems-realtime  = { path = "crates/ems-realtime",  version = "0.10" }
+ems-events    = { path = "crates/ems-events",    version = "0.10" }
+ems-service   = { path = "crates/ems-service",   version = "0.10" }
+ems-sim       = { path = "crates/ems-sim",       version = "0.10" }
 
 # Shared runtime dependencies
 
@@ -87,7 +89,7 @@ tokio-util   = { version = "0.7", default-features = false }
 # Household evidence and its outbox entry share one transaction.
 redb         = { version = "4" }
 # Local measurement series and rollups. SQL and analytics are optional upstream features.
-chronix      = { version = "0.10", default-features = false }
+chronix      = { version = "0.11", default-features = false }
 # Match the Arrow major returned by chronix and read timestamps as integers.
 arrow        = { version = "59", default-features = false }
 # Fleet persistence uses PostgreSQL NUMERIC and TIMESTAMPTZ.
@@ -112,7 +114,7 @@ sha2          = { version = "0.11", default-features = false, features = ["alloc
 http         = "1"
 hex           = { version = "0.4", default-features = false, features = ["std"] }
 # Authenticate box-to-fleet messages with Standard Webhooks.
-hmac          = { version = "0.13", default-features = false }
+standardwebhooks = "1.3"
 base64        = { version = "0.23", default-features = false, features = ["std"] }
 # Generate credentials from operating-system entropy.
 getrandom     = { version = "0.4", default-features = false, features = ["std"] }

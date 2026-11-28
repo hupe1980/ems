@@ -36,6 +36,11 @@ use tokio::sync::Mutex;
 use crate::runtime::push::{Event as Detected, Grid, Occurrence, Signals};
 use crate::store::Store;
 
+/// Versioned JSON Schema for the payload inside a published gateway event.
+pub fn payload_schema(kind: &str) -> String {
+    format!("https://hupe1980.github.io/ems/contracts/events/v1/{kind}.json#/properties/data")
+}
+
 /// The most subscriptions a box keeps.
 pub const AT_MOST: u64 = 8;
 
@@ -666,7 +671,8 @@ impl Webhooks {
             uuid::Uuid::new_v4().to_string(),
             now,
             TestPing { test: true },
-        );
+        )
+        .with_dataschema(payload_schema(ems_events::TEST_PING));
         let body = event.to_bytes().unwrap_or_default();
         let started = std::time::Instant::now();
         let (status, error) = attempt(&kept, &event.id, &body, now, self.loopback).await;
@@ -825,7 +831,8 @@ impl Webhooks {
             id.to_string(),
             now,
             data,
-        );
+        )
+        .with_dataschema(payload_schema(r#type));
         if let Some(subject) = &subject {
             event = event.about(subject.clone());
         }
@@ -1023,7 +1030,12 @@ async fn post_checked(
         Ok(target) => target,
         Err(refused) => return (None, Some(refused.to_string())),
     };
-    let signed = ems_events::webhook::sign(&kept.key, id, now, body);
+    let signed = match ems_events::webhook::Webhook::from_bytes(kept.key.clone())
+        .and_then(|key| ems_events::webhook::sign(&key, id, now, body))
+    {
+        Ok(signed) => signed,
+        Err(e) => return (None, Some(e.to_string())),
+    };
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())

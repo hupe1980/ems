@@ -1,41 +1,22 @@
-//! SunSpec over Modbus TCP, without a socket in sight.
+//! SunSpec and vendor register drivers for Modbus TCP and read-only RTU meters.
 //!
-//! The **device** driver: an inverter, a meter or a battery that a
-//! household already owns, read over the one protocol that needs no membership,
-//! no registration and no certificate. Most inverters sold in Germany speak it,
-//! and it is where a box that manages a real house starts.
+//! [`Meter`] commissions a three-phase wye meter using its model chain. [`rtu`]
+//! carries the driver's register reads over a serial line. [`SunSpec`] handles
+//! general device discovery and control. The host supplies the transport and clock.
 //!
-//! # What is ours and what is not
-//!
-//! The register maps are **not** ours. SunSpec is a thousand pages of model
-//! definitions, and the [`sunspec`] crate carries them as generated types with
-//! `Model::parse` — a pure function from a register block to a typed struct.
-//! Retyping them here would be the same mistake as re-implementing the EEBUS
-//! state machine: a second copy that disagrees, and the wrong one is whichever
-//! nobody is testing.
-//!
-//! What is ours is the part a specification cannot give you: the framing
-//! ([`frame`]), the walk that finds the models on a particular device, the
-//! decision about what a register block *means* for a household, and the
-//! honesty about what this protocol cannot say.
-//!
-//! # What SunSpec cannot say, and why that is reported rather than guessed
-//!
-//! A curtailed inverter asked what it is producing answers with what the manager
-//! already commanded. Read that alone and a controller never lifts its own
-//! curtailment: it asks for 5 kW, reads 5 kW, and concludes the roof is doing
-//! its best.
-//!
-//! Models 101–103 report production. Model 701 also reports a throttle
-//! percentage, enabling a labelled headroom estimate during curtailment.
+//! Inverter model 701 supplies throttling observations for a labelled estimate
+//! of available power during curtailment. Models 101–103 report production.
 
 mod decode;
 pub mod frame;
+mod meter;
 pub mod probe;
 pub mod registers;
+pub mod rtu;
 mod scan;
 mod storage;
 
+pub use meter::Meter;
 pub use scan::{Discovery, ModelMap};
 
 use crate::{CommandOutcome, Driver, DriverCapabilities, DriverError, DriverEvent, LinkState};

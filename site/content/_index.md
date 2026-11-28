@@ -7,7 +7,7 @@ description = "Open-source energy management for homes, buildings and industry i
 
 [[extra.faq]]
 q = "Which systems can connect to equipment?"
-a = "hemsd can run a household gateway with SunSpec/Modbus TCP, EEBUS and S2. It is pre-alpha and has no EEBUS certification. The building and industrial screens use synthetic data. cemsd also accepts local meter traces."
+a = "The home gateway connects to SunSpec meters over Modbus TCP or RS-485, wired M-Bus heat meters, EEBUS devices and S2 energy managers. The industrial service reads OPC UA import registers. The building demo uses simulated equipment. EEBUS interoperability is tested with simulated peers, without certification."
 
 [[extra.faq]]
 q = "How does the household gateway use a Steuerbox?"

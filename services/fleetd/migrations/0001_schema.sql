@@ -47,3 +47,23 @@ CREATE TABLE IF NOT EXISTS gateway_checkin (
     report_at BIGINT,
     PRIMARY KEY (site, sent_at)
 );
+
+-- Simulation receipts have no foreign key into the operational release feed.
+CREATE TABLE rehearsal (
+    id TEXT PRIMARY KEY,
+    canary TEXT NOT NULL REFERENCES enrolment(site) ON DELETE CASCADE,
+    cohort TEXT[] NOT NULL,
+    component TEXT NOT NULL,
+    candidate TEXT NOT NULL CHECK (candidate ~ '^[0-9a-f]{64}$'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    initial_boot TEXT,
+    verdict TEXT CHECK (verdict IN ('verified','wrong-target','rejected')),
+    boot TEXT,
+    running TEXT,
+    ready BOOLEAN,
+    rollback BOOLEAN,
+    sent_at BIGINT,
+    observed_at TIMESTAMPTZ,
+    conflict BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX rehearsal_by_site ON rehearsal (canary, created_at DESC);

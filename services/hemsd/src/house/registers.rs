@@ -97,6 +97,16 @@ impl Unit {
         Self::new("virtual meter", &[(203, Model203::LEN)])
     }
 
+    /// Set the common-model identity used to rehearse a meter replacement.
+    pub fn set_serial_number(&mut self, serial: &str) {
+        text(
+            self.body_mut(1),
+            Model1::SN.offset,
+            Model1::SN.length,
+            serial,
+        );
+    }
+
     /// A battery with telemetry and bounded watt-mode control.
     #[must_use]
     pub fn battery(rating: Power) -> Self {
@@ -247,7 +257,8 @@ impl Unit {
     pub fn set_battery(&mut self, soc: f64, draw_w: f64) {
         set(self.body_mut(701), Model701::W.offset, signed(-draw_w));
         let body = self.body_mut(802);
-        set(body, Model802::SOC.offset, signed(soc * 100.0));
+        set(body, Model802::SOC.offset, signed(soc * 10_000.0));
+        set(body, Model802::SOC_SF.offset, signed(-2.0));
     }
 }
 
@@ -270,7 +281,7 @@ fn wide(body: &mut [u16], offset: u16, value: f64) {
 }
 
 /// A signed 16-bit value as the register that carries it.
-fn signed(value: f64) -> u16 {
+pub(super) fn signed(value: f64) -> u16 {
     #[expect(
         clippy::cast_possible_truncation,
         reason = "clamped to an i16 on the same line"
@@ -319,7 +330,8 @@ mod tests {
         let mut battery = Unit::battery(Power::from_kw(3.0));
         battery.set_battery(0.42, 1234.0);
         assert_eq!(Model701::parse(battery.body(701)).unwrap().w, Some(-1234));
-        assert_eq!(Model802::parse(battery.body(802)).expect("802").soc, 42);
+        let pack = Model802::parse(battery.body(802)).expect("802");
+        assert_eq!((pack.soc, pack.soc_sf), (4200, -2));
 
         let common = Model1::parse(meter.body(1)).expect("model 1");
         assert_eq!(common.md, "virtual meter");

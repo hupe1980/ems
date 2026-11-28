@@ -33,7 +33,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ems_core::prelude::{AssetId, Measurement, Power, Site};
+use ems_core::prelude::{AssetId, Energy, Measurement, Power, Site};
 use ems_core::setpoint::Setpoint;
 use ems_drv::{
     CommandOutcome, Driver, DriverError, DriverEvent, LimitDirection, LimitSource, LinkState,
@@ -118,6 +118,8 @@ pub enum RegistryError {
 
 /// A set of drivers, and what they have told us.
 pub struct Registry {
+    /// Wake the planner when a usable charging session appears or ends.
+    pub(crate) vehicle_changed: std::sync::Arc<tokio::sync::Notify>,
     shadow: bool,
     entries: Vec<Entry>,
     /// The limits the grid drivers have reported, as the guard wants them.
@@ -149,6 +151,7 @@ struct Entry {
     link: LinkState,
     /// The last measurement this driver produced, if any.
     latest: Option<Measurement>,
+    last_read_at: Option<OffsetDateTime>,
     /// Events this driver has produced and no caller has taken yet.
     ///
     /// Separate from the fold above, and the separation is the point: what a
@@ -241,6 +244,7 @@ impl std::fmt::Debug for Registry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Registry")
             .field("shadow", &self.shadow)
+            .field("vehicle_changed", &self.vehicle_changed)
             .field("drivers", &self.entries.len())
             .field("limits", &self.limits)
             .field("failsafe", &self.failsafe)
@@ -257,6 +261,35 @@ impl Default for Registry {
 }
 
 impl Registry {
+    pub(crate) fn serial_reading(
+        &self,
+        asset: &AssetId,
+        bus: &str,
+        unit: u8,
+        now: OffsetDateTime,
+    ) -> crate::doctor::SerialReading {
+        let entry = self
+            .entries
+            .iter()
+            .find(|e| &e.asset == asset && e.driver.capabilities().measures);
+        let sample = entry.filter(|e| e.is_heard(now)).and_then(|e| e.latest);
+        crate::doctor::SerialReading {
+            asset: asset.to_string(),
+            bus: bus.into(),
+            unit,
+            fresh: sample.is_some(),
+            last_read_at: entry
+                .and_then(|e| e.last_read_at)
+                .map(OffsetDateTime::unix_timestamp),
+            identity: entry
+                .and_then(|e| e.driver.meter_identity())
+                .map(|id| format!("{} {} · {}", id.manufacturer, id.model, id.serial)),
+            power_w: sample.and_then(|m| m.power).map(Power::get),
+            import_wh: sample.and_then(|m| m.energy_in).map(Energy::get),
+            export_wh: sample.and_then(|m| m.energy_out).map(Energy::get),
+        }
+    }
+
     /// Read the protocol actor on demand, independently of transport traffic.
     pub fn last_lpc_heartbeat(&self, asset: &AssetId) -> Option<OffsetDateTime> {
         self.entries
@@ -270,6 +303,7 @@ impl Registry {
     pub fn new() -> Self {
         Self {
             shadow: false,
+            vehicle_changed: std::sync::Arc::default(),
             entries: Vec::new(),
             limits: GridLimits::default(),
             failsafe: BTreeMap::new(),
@@ -346,6 +380,7 @@ impl Registry {
             asset,
             link: LinkState::Down,
             latest: None,
+            last_read_at: None,
             pending: Vec::new(),
             phases: None,
             vehicle: None,
@@ -626,8 +661,17 @@ impl Registry {
         for entry in &mut self.entries {
             while let Some(event) = entry.driver.poll_event() {
                 match &event {
-                    DriverEvent::Measured(m) => entry.latest = Some(*m),
-                    DriverEvent::Link(l) => entry.link = *l,
+                    DriverEvent::Measured(m) => {
+                        entry.latest = Some(*m);
+                        entry.last_read_at = Some(m.at);
+                    }
+                    DriverEvent::Link(l) => {
+                        entry.link = *l;
+                        if !l.is_usable() {
+                            entry.latest = None;
+                            entry.phases = None;
+                        }
+                    }
                     DriverEvent::GridLimit(limit) => match limit.direction {
                         LimitDirection::Consumption => {
                             self.limits.steuve_ceiling = limit.ceiling;
@@ -649,7 +693,20 @@ impl Registry {
                     // fact about the *session* rather than a measurement: a
                     // socket with nothing in it is working perfectly and has no
                     // state of charge to report.
-                    DriverEvent::Vehicle(presence) => entry.vehicle = Some(*presence),
+                    DriverEvent::Vehicle(presence) => {
+                        let usable = |car: ems_drv::VehiclePresence| {
+                            car.current_soc(presence.at).is_some()
+                                && car.capacity_wh.is_some_and(|wh| wh.is_finite() && wh > 0.0)
+                        };
+                        if entry.vehicle.is_some_and(usable) != usable(*presence)
+                            || entry
+                                .vehicle
+                                .is_some_and(|last| last.connected != presence.connected)
+                        {
+                            self.vehicle_changed.notify_one();
+                        }
+                        entry.vehicle = Some(*presence);
+                    }
                     // What the appliance says it *could* do, which is the one
                     // thing a ceiling can never carry. Kept rather than only
                     // journalled because the two numbers in it — how long the

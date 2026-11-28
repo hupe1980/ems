@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "FeedInLimit": {
+      "description": "The operator's feed-in limit in watts.",
+      "properties": {
+        "limit_w": {
+          "description": "New export ceiling, W.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "limit_w"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpp.limit.received.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Operator feed-in ceiling received",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/FeedInLimit"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.grid.lpp.limit.received.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.grid.lpp.limit.received"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.grid.lpp.limit.received",
+  "type": "object"
+}

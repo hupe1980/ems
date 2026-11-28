@@ -1,0 +1,451 @@
+{
+  "$defs": {
+    "Arbitrage": {
+      "description": "AC-side electricity costs for completed measured charge/discharge blocks.",
+      "properties": {
+        "avoided_ct": {
+          "description": "Cost of the grid import the battery displaced when discharging.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "blocks": {
+          "description": "Count of closed blocks contributing to this margin.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bought_ct": {
+          "description": "Grid charge cost at the actual gross import prices.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "bought_wh": {
+          "description": "Grid electricity that entered the battery, Wh.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "buy_rate_mct_per_kwh": {
+          "description": "Energy-weighted grid charging rate, thousandths of a cent per kWh.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "served_wh": {
+          "description": "Electricity returned to household loads, Wh.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "use_rate_mct_per_kwh": {
+          "description": "Energy-weighted avoided import rate, thousandths of a cent per kWh.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blocks",
+        "bought_wh",
+        "served_wh",
+        "bought_ct",
+        "buy_rate_mct_per_kwh",
+        "use_rate_mct_per_kwh",
+        "avoided_ct"
+      ],
+      "type": "object"
+    },
+    "ClosedDay": {
+      "description": "One closed day, as the box keeps it.",
+      "properties": {
+        "arbitrage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Arbitrage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Grid-charge margin on measured closed battery blocks."
+        },
+        "comparison": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Comparison"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Equal-service comparison where both matched energy traces cover the day."
+        },
+        "comparison_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComparisonGap"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "First interval with a recorded reason for withholding the comparison."
+        },
+        "day": {
+          "description": "The local day, `YYYY-MM-DD`.",
+          "type": "string"
+        },
+        "feed_in_respected": {
+          "description": "Whether the feed-in ceiling was respected.",
+          "type": "boolean"
+        },
+        "forecast": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ForecastCoverage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Measured forecast coverage, where the closed day had enough scored observations."
+        },
+        "imported_wh": {
+          "description": "Bought from the grid, Wh.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "metered_bill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeteredBill"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Charges computed from the connection-meter record."
+        },
+        "money": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Money"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the day cost and saved, where it was priced."
+        },
+        "produced_wh": {
+          "description": "Made by the roof, Wh.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "reduced_minutes": {
+          "description": "Minutes under a § 14a reduction, where the day measured them.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reduction_respected": {
+          "description": "Whether every reduction was respected.",
+          "type": "boolean"
+        },
+        "reductions": {
+          "description": "How many reductions the network operator sent.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "day",
+        "imported_wh",
+        "produced_wh",
+        "reductions",
+        "reduction_respected",
+        "feed_in_respected"
+      ],
+      "type": "object"
+    },
+    "Comparison": {
+      "description": "Day-level grid-energy comparison, including fixed charges in both arms.",
+      "properties": {
+        "error_ct": {
+          "description": "Sum of absolute interval cost errors in the arm the meter observed, rounded up.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "with_plan_ct": {
+          "description": "What the guarded plan cost, or would have cost on a shadow gateway.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "without_plan_ct": {
+          "description": "What the same service cost on autonomous self-consumption.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "with_plan_ct",
+        "without_plan_ct",
+        "error_ct"
+      ],
+      "type": "object"
+    },
+    "ComparisonGap": {
+      "description": "Recorded explanation for an unavailable comparison on a day receipt.",
+      "properties": {
+        "at_unix_s": {
+          "description": "Start of the first affected observation interval in Unix seconds.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/$defs/GapReason",
+          "description": "Evidence that prevented comparison."
+        }
+      },
+      "required": [
+        "at_unix_s",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ForecastCoverage": {
+      "description": "Share of observed quarter hours inside the published forecast band, in percent.",
+      "properties": {
+        "load_pct": {
+          "description": "Household load observations inside the forecast band.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pv_pct": {
+          "description": "Solar production observations inside the forecast band.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pv_pct",
+        "load_pct"
+      ],
+      "type": "object"
+    },
+    "GapReason": {
+      "description": "Evidence missing from the first affected quarter of a closed day.",
+      "oneOf": [
+        {
+          "const": "missing_interval",
+          "description": "The gateway has no register for the quarter.",
+          "type": "string"
+        },
+        {
+          "const": "missing_price",
+          "description": "The interval cannot be priced under both alternatives.",
+          "type": "string"
+        },
+        {
+          "const": "unverified_service",
+          "description": "The available readings do not establish equal service.",
+          "type": "string"
+        },
+        {
+          "const": "control_changed",
+          "description": "Responsibility for control changed during the day.",
+          "type": "string"
+        },
+        {
+          "const": "grid_limits",
+          "description": "The simulation arms operated under different grid control regimes.",
+          "type": "string"
+        },
+        {
+          "const": "thermal_comfort",
+          "description": "Room temperature left the household comfort band.",
+          "type": "string"
+        },
+        {
+          "const": "hot_water",
+          "description": "Hot-water delivery, deadline or terminal tank inventory differed.",
+          "type": "string"
+        },
+        {
+          "const": "vehicle_energy",
+          "description": "Vehicle energy at departure or at day close did not qualify.",
+          "type": "string"
+        },
+        {
+          "const": "battery_inventory",
+          "description": "End-of-day battery inventories differed.",
+          "type": "string"
+        },
+        {
+          "const": "appliance_programme",
+          "description": "A requested appliance programme did not finish.",
+          "type": "string"
+        },
+        {
+          "const": "shared_settlement",
+          "description": "The supply meter alone cannot price the community allocation.",
+          "type": "string"
+        }
+      ]
+    },
+    "MeteredBill": {
+      "description": "Metered charges for one Berlin calendar day.",
+      "properties": {
+        "contracts": {
+          "default": [],
+          "description": "Seller contract references in first-use order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "energy_ct": {
+          "description": "Variable import charges less export revenue, rounded at day close.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expected_intervals": {
+          "description": "Calendar intervals, including the shorter or longer clock-change day.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fixed_ct": {
+          "description": "Daily share of annual fixed charges, when the whole day was priced.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "priced_intervals": {
+          "description": "Intervals with a full grid measurement and a known tariff.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "watched_intervals": {
+          "description": "Recorded intervals for which another controller retained responsibility.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "expected_intervals",
+        "watched_intervals",
+        "priced_intervals"
+      ],
+      "type": "object"
+    },
+    "Money": {
+      "description": "The priced half of a closed day, in whole cents.",
+      "properties": {
+        "bill_ct": {
+          "description": "What the household paid for electricity.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "comfort_ct": {
+          "description": "Comfort given up, priced.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "cost_ct": {
+          "description": "Everything the day cost: bill, wear and comfort among it.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "on_bill_ct": {
+          "description": "The part of the saving that reached the bill.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "saved_ct": {
+          "description": "`without_ct − cost_ct`, exactly.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "wear_ct": {
+          "description": "Battery wear, priced.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "without_ct": {
+          "description": "The same house with the same hardware and no energy manager.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bill_ct",
+        "wear_ct",
+        "comfort_ct",
+        "cost_ct",
+        "without_ct",
+        "saved_ct",
+        "on_bill_ct"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.site.day.closed.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A day closed: the receipt, in whole cents and Wh",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/ClosedDay"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.site.day.closed.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.site.day.closed"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.site.day.closed",
+  "type": "object"
+}

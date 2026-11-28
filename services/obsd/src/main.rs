@@ -1,5 +1,6 @@
 //! `obsd` — collect, aggregate, answer.
 
+use anyhow::Context as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -49,14 +50,12 @@ async fn main() -> anyhow::Result<()> {
     // Flattened to (site, secret) pairs: `verify` reports *which* key signed a
     // report, and the site beside it is how `obsd` learns who sent it rather
     // than believing what the payload claims (D114).
-    let mut secrets: Vec<(String, String)> = Vec::new();
+    let mut secrets: Vec<(String, ems_events::webhook::Webhook)> = Vec::new();
     for (site, keys) in &settings.webhook_secrets {
         for key in keys {
             let key = key.resolve_from_process()?;
-            anyhow::ensure!(
-                !key.trim().is_empty(),
-                "empty webhook signing key for site {site}"
-            );
+            let key = ems_events::webhook::parse_secret(&key)
+                .with_context(|| format!("invalid webhook secret for site {site}"))?;
             secrets.push((site.clone(), key));
         }
     }
@@ -89,7 +88,8 @@ async fn main() -> anyhow::Result<()> {
                 && token.trim() == token
                 && customers.authority_of(&token).is_none()
                 && readers.authority_of(&token).is_none()
-                && !secrets.iter().any(|(_, key)| key == &token),
+                && !ems_events::webhook::parse_secret(&token)
+                    .is_ok_and(|parsed| secrets.iter().any(|(_, key)| key == &parsed)),
             "customer token for {site} must be unique and separate from gateway and operator credentials"
         );
         customers = customers.with_site(site, token);
@@ -148,7 +148,6 @@ async fn main() -> anyhow::Result<()> {
             settings.keep_days,
             silent_after,
             secrets,
-            time::Duration::seconds(settings.webhook_tolerance_s.cast_signed()),
             readers.clone(),
         )
         .with_customers(customers),

@@ -1,0 +1,80 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@import "uplot/dist/uPlot.min.css";
+@source "./history.ts";
+
+body {
+	@apply bg-stone-100 text-emerald-950 antialiased;
+}
+main .desk-banner {
+	@apply grid gap-6 rounded-3xl bg-emerald-950 text-white px-5 py-6 sm:px-9 sm:py-8 mb-5;
+}
+.desk-banner .identity {
+	@apply border-emerald-800 text-emerald-100;
+}
+.desk-banner .identity b {
+	@apply tracking-tight text-lime-200;
+}
+.desk-banner .identity a {
+	@apply text-emerald-100;
+}
+.desk-banner h1 {
+	@apply m-0 font-semibold tracking-tight;
+}
+.desk-banner #refresh {
+	@apply bg-lime-200 text-emerald-950 rounded-full border-0 px-5 font-semibold;
+}
+.desk-banner #summary {
+	@apply m-0 text-base text-emerald-100 tabular-nums;
+}
+#sites {
+	@apply overflow-hidden rounded-2xl;
+}
+#sites article {
+	@apply px-4 py-4 sm:px-6;
+}
+meter-history {
+	@apply block rounded-2xl bg-white border border-solid border-stone-200 px-2 py-4 sm:p-6 mt-4;
+}
+.range-header {
+	@apply flex flex-wrap gap-3 px-2;
+}
+.range-header h3 {
+	@apply m-0 text-2xl font-semibold tracking-tight;
+}
+.coverage {
+	@apply text-sm text-stone-600 my-1;
+}
+.legend {
+	@apply flex gap-4 text-xs font-semibold;
+}
+.legend span:first-child {
+	@apply text-emerald-800;
+}
+.legend span:last-child {
+	@apply text-amber-800;
+}
+.history-hint {
+	@apply px-2 text-xs text-stone-600;
+}
+.history-chart {
+	@apply w-full my-4 min-w-0;
+}
+.history-chart .u-over {
+	touch-action: pan-y;
+}
+.sample {
+	@apply flex flex-wrap justify-between items-center gap-3 bg-emerald-950 text-white rounded-xl px-4 py-3 tabular-nums;
+}
+.sample time {
+	@apply text-sm text-emerald-100;
+}
+.sample div {
+	@apply flex flex-wrap gap-x-4;
+}
+.history-actions {
+	@apply flex flex-wrap gap-2 mt-3;
+}
+.history-actions button {
+	@apply min-h-11 bg-stone-50 border-stone-200 rounded-lg text-sm font-semibold;
+}

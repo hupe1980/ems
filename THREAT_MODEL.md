@@ -4,7 +4,7 @@ This model covers local edge applications, household equipment, fleet services a
 
 A **control** has implementation or test evidence. **Partial** identifies a remaining gap, **open** identifies an unmitigated risk, and **accepted** records a known exposure. Severity describes the risk before controls.
 
-The household gateway can send commands to equipment. The building and industrial demo servers serve synthetic data on loopback. Building community views restrict what each role sees. Industrial reconciliation reads a local JSON trace and reports meter discrepancies. Both demo servers expose read-only routes. The optional CEMS OpenADR command starts its own loopback aggregator and site client for a single simulation using process-local credentials.
+The household gateway can send commands to equipment. The building and industrial demo servers serve synthetic data on loopback. Building community views restrict what each role sees. Industrial reconciliation reads local evidence and independently supplied closes. The optional OPC UA client pins the server leaf, checks the contract’s namespace, type and units, and retains source time and quality. The site operator supplies the approved mapping and controls the capture files. Both demo servers expose read-only routes. The optional CEMS OpenADR command starts its own loopback aggregator and site client for a single simulation using process-local credentials.
 
 The operator desk binds each check-in to its enrolled site and filters reads by operator scope. Server receipt time measures contact. Feeder and closure times are gateway claims. A compromised gateway can misreport its own observations. The desk has no device-control actions.
 
@@ -175,6 +175,10 @@ The household chooses the destination and events. Each delivery carries a signed
 | A slow receiver delays control or grows an unbounded queue | A separate delivery task bounds requests, queues, logs and retention. Pending deliveries expire after 24 hours. | [Delivery, timeout and expiry tests](services/hemsd/tests/events_out.rs) |
 | A revoked subscription reappears or survives resale | A completed attempt updates an existing subscription only. Factory reset clears stored subscriptions and deliveries. | [Revocation and restart tests](services/hemsd/tests/events_out.rs) |
 
+### Port qualification and image publication
+
+The probe uses separate service credentials and a single-use callback address on a private network. It checks refusal of anonymous clients, independently verifies the signed body and revokes its temporary subscription. Release evidence contains port outcomes, architecture and image digests. Tagged publication compares each archived manifest with that evidence before copying it to the registry. [Probe](tools/conformance/probe.py) · [Image verification](tools/conformance/images.py) · [Promotion](.github/workflows/release.yml)
+
 ### Replay integrity
 
 A later reading can make a decision look justified before the operator had evidence. The building demo provisions two station identities with separate ephemeral credentials. The central system binds each connection to its own meter inbox, and the handover checks arrival time on each station event. The protocol listener closes before the read-only handover opens. The industrial replay computes the decision from the observations available by its cursor and reveals the independent meter close only on request. Both HTML and JSON exercise these boundaries. [Building replay checks](xtask/building_replay.py) · [Industrial replay checks](xtask/industrial_replay.mjs)
@@ -278,3 +282,7 @@ A market location may occur at more than one site. Register reads bind the authe
 The building heating-reserve rehearsal reads one commissioned BACnet analog input over loopback. Faulted, invalid, expired and unavailable observations retain the heating reserve. HTTP requests read the recorded decisions and cannot trigger field traffic. [Building rehearsal](services/bemsd/src/comfort.rs)
 
 The EV feeder comparison accepts indicated power on the commissioned KNX source and group. Unmatched, future and expired readings cannot confirm the OCPP station total. The plain-UDP simulator is confined to connected loopback peers. [Feeder observation](services/bemsd/src/feeder.rs)
+
+## Wired heat-meter diagnostics
+
+A wired M-Bus converter supplies unauthenticated local observations. The gateway binds the primary address, manufacturer, printed ID and heat medium before accepting one complete current register. A device on the physical bus can impersonate those fields. This observer has no electrical control or settlement authority. Reads have a fixed frame buffer and a three-second deadline. A failed read or expired sample withholds current heat. Household credentials protect the diagnostic API.

@@ -40,6 +40,8 @@ pub mod eebus_ev;
 
 #[cfg(feature = "eebus")]
 pub mod eebus_heat_pump;
+#[cfg(feature = "mbus")]
+pub mod mbus;
 #[cfg(feature = "modbus")]
 pub mod modbus;
 
@@ -112,6 +114,12 @@ pub enum DriverError {
 /// Nothing here blocks and nothing here allocates a runtime. A driver that
 /// needs to wait says so with [`Driver::poll_deadline`] and is called back.
 pub trait Driver {
+    /// Manufacturer and model reported by a commissioned SunSpec meter.
+    #[cfg(feature = "modbus")]
+    fn meter_identity(&self) -> Option<&modbus::probe::Identity> {
+        None
+    }
+
     /// Confirmed battery control state, where the device implements bounded dispatch.
     fn storage_feedback(&self, _now: OffsetDateTime) -> Option<StorageFeedback> {
         None

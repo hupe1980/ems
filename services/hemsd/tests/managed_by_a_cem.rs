@@ -1252,6 +1252,7 @@ async fn a_manager_reads_the_virtual_house_battery_over_wss() {
         at: Some(time::Duration::hours(17)),
         identity: None,
         exposed: false,
+        appliances: Default::default(),
     })
     .await
     .unwrap();

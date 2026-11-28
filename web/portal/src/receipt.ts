@@ -12,6 +12,12 @@ export interface Receipt {
 	};
 }
 
+export class SessionEnded extends Error {
+	constructor() {
+		super("Your session has ended or access has been withdrawn.");
+	}
+}
+
 export async function readReceipt(
 	signal: AbortSignal,
 ): Promise<Receipt | null> {
@@ -22,7 +28,7 @@ export async function readReceipt(
 	});
 	if (response.status === 204) return null;
 	if (response.status === 401 || response.status === 403)
-		throw new Error("Your session has ended or access has been withdrawn.");
+		throw new SessionEnded();
 	if (!response.ok) throw new Error("Your receipt is unavailable. Try again.");
 	const data = await response.json();
 	const number = (v: unknown) =>

@@ -52,6 +52,10 @@ def check(root, base):
     origin = urlsplit(base)
     pages = {p: Page(p) for p in [*root.rglob("index.html"), root / "404.html"]}
     errors = set()
+    for schema in (Path(__file__).resolve().parents[1] / "schemas/events").glob("*.json"):
+        published = root / "contracts/events/v1" / schema.name
+        if not published.is_file() or published.read_bytes() != schema.read_bytes():
+            errors.add(f"Missing or stale published event schema: {schema.name}")
     indexable = set()
     for path, page in pages.items():
         relative = path.relative_to(root).as_posix().removesuffix("index.html")

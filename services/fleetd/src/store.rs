@@ -112,6 +112,34 @@ pub struct Store {
 }
 
 impl Store {
+    /// Freeze the enrolled population and candidate in one database snapshot.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid digest, unknown site or storage failure.
+    pub async fn freeze_rehearsal(&self, site: &str, digest: &str) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "expected a lowercase SHA-256 digest"
+        );
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce).map_err(|e| anyhow::anyhow!("cannot name rehearsal: {e}"))?;
+        let id = hex::encode(nonce);
+        let client = self.db().get().await?;
+        let count = client
+            .execute(
+                "INSERT INTO rehearsal (id, canary, cohort, component, candidate)
+             SELECT $1, $2, array_agg(site ORDER BY site), 'hemsd', $3
+             FROM enrolment HAVING bool_or(site = $2)",
+                &[&id, &site, &digest],
+            )
+            .await?;
+        anyhow::ensure!(count == 1, "canary site must be enrolled");
+        Ok(id)
+    }
+
     /// A store over an already-open pool.
     #[must_use]
     pub const fn new(db: Db) -> Self {

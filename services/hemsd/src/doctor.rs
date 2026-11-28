@@ -52,6 +52,7 @@ pub fn devices(
         .iter()
         .chain(&commissioning.eebus)
         .map(|(asset, _)| asset)
+        .chain(commissioning.serial.iter().map(|(id, _, _)| id))
         .chain(&commissioning.control_box)
         .collect();
     assets
@@ -103,9 +104,37 @@ impl HistoryState {
     }
 }
 
+/// Installer view of one read-only meter. Values are present only while fresh.
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SerialReading {
+    /// Asset assigned on this installation.
+    pub asset: String,
+    /// Installer-provisioned bus name.
+    pub bus: String,
+    /// Modbus unit address.
+    pub unit: u8,
+    /// Manufacturer, model and serial number reported by the attached meter.
+    pub identity: Option<String>,
+    /// Whether the current session supplied a usable measurement.
+    pub fresh: bool,
+    /// Receipt time of the most recent accepted measurement, in Unix seconds.
+    pub last_read_at: Option<i64>,
+    /// Signed connection power. Import is positive.
+    pub power_w: Option<f64>,
+    /// Cumulative energy imported, in Wh.
+    pub import_wh: Option<f64>,
+    /// Cumulative energy exported, in Wh.
+    pub export_wh: Option<f64>,
+}
+
 /// Authenticated installer diagnostics.
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct Diagnostics {
+    /// Current wired heat-meter status, when configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heat_meter: Option<crate::runtime::heat_meter::Reading>,
+    /// Commissioned serial meters in configuration order.
+    pub serial_meters: Vec<SerialReading>,
     /// Existing identity, heartbeat and device checks.
     #[serde(flatten)]
     pub trust: crate::runtime::handover::TrustCheck,
@@ -115,6 +144,8 @@ pub struct Diagnostics {
 
 #[derive(Deserialize)]
 struct Report {
+    heat_meter: Option<crate::runtime::heat_meter::Reading>,
+    serial_meters: Vec<SerialReading>,
     history: HistoryState,
     heartbeat_age_s: Option<u64>,
     devices: Vec<DeviceCheck>,
@@ -203,8 +234,42 @@ impl Report {
         if let Some(message) = self.history.attention() {
             println!("history  {message}");
         }
+        if let Some(meter) = self.heat_meter {
+            println!(
+                "heat meter  {} {} · address {} · {}",
+                meter.manufacturer,
+                meter.meter_id,
+                meter.address,
+                meter.delivered_heat_wh.map_or_else(
+                    || meter.state.message().to_owned(),
+                    |wh| format!("{wh} Wh delivered")
+                )
+            );
+            if let Some(received) = meter
+                .last_read_at
+                .and_then(|at| time::OffsetDateTime::from_unix_timestamp(at).ok())
+                .and_then(|at| {
+                    at.format(&time::format_description::well_known::Rfc3339)
+                        .ok()
+                })
+            {
+                println!("last heat reading  {received}");
+            }
+            good &= meter.state == crate::runtime::heat_meter::State::Live;
+        }
         for device in self.devices {
-            println!("{}  {}", device.asset, device.state.line());
+            if let Some(meter) = self.serial_meters.iter().find(|m| m.asset == device.asset) {
+                println!(
+                    "{}  {} / unit {}  {}",
+                    device.asset,
+                    meter.bus,
+                    meter.unit,
+                    device.state.line()
+                );
+                good &= meter.fresh;
+            } else {
+                println!("{}  {}", device.asset, device.state.line());
+            }
             good &= device.state == DeviceState::Responding;
         }
         let pairing = match self.control_box.state.as_str() {
@@ -263,7 +328,7 @@ mod tests {
             ("unavailable", false),
         ] {
             let report: Report = serde_json::from_value(serde_json::json!({
-                "history":state, "heartbeat_age_s":null, "devices":[], "identity":"kept",
+                "history":state, "heartbeat_age_s":null, "devices":[], "serial_meters":[], "identity":"kept",
                 "control_box":{"state":"none"}, "tick_at":time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
             })).unwrap();
             assert_eq!(report.check(1).is_ok(), ok, "{state}");

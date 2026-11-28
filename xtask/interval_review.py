@@ -7,6 +7,7 @@
 import json
 import os
 import subprocess
+import sys
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -100,6 +101,41 @@ def review(page, directory, trace, statuses):
         expect(page.locator(f"#q{index}")).to_be_focused()
 
 
+def commission_review(page, directory):
+    meter = ROOT / "services/cemsd/examples/opcua"
+    lines = (meter / "readings.ndjson").read_bytes().splitlines()
+    source = directory / "capture.ndjson"
+    boundary = json.loads(lines[1])
+    boundary["status"] = 0x40900000
+    del boundary["value"]
+    source.write_bytes(b"\n".join([lines[0], json.dumps(boundary).encode(), lines[2]]))
+    outcome = subprocess.run([CLI, "commission-meter", "--contract", meter / "contract.json",
+                              "--readings", source, "--window", meter / "window.json",
+                              "--format", "html"], capture_output=True)
+    assert outcome.returncode == 1 and outcome.stdout
+    path = directory / "review.html"
+    path.write_bytes(outcome.stdout)
+    page.goto(path.as_uri())
+    expect(page.get_by_role("heading", name="Meter commissioning")).to_be_visible()
+    expect(page.get_by_text("Capture line 2 · OPC UA status 0x40900000")).to_be_visible()
+    if len(sys.argv) == 2:
+        page.set_viewport_size({"width": 900, "height": 1350})
+        page.goto(path.as_uri())
+        page.screenshot(path=sys.argv[1])
+        page.set_viewport_size({"width": 320, "height": 720})
+    page.get_by_text("Register identity").focus()
+    page.keyboard.press("Enter")
+    expect(page.locator("dd").last).to_have_text("s=GridImportWh")
+    page.get_by_role("link", name="Go to first exception").focus()
+    page.keyboard.press("Enter")
+    expect(page.locator("#q0")).to_be_focused()
+    for label, target in [("Inspect 00:45 UTC quarter", "#q0"), ("Inspect 01:00 UTC quarter", "#q1")]:
+        page.get_by_role("link", name=label).focus()
+        page.keyboard.press("Enter")
+        expect(page.locator(target)).to_be_focused()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 def main():
     default = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     with TemporaryDirectory(prefix="private-meter-") as temp, sync_playwright() as pw:
@@ -110,6 +146,7 @@ def main():
         page.on("request", lambda req: requests.append(req.url))
         for trace, statuses in cases():
             review(page, directory, trace, statuses)
+        commission_review(page, directory)
         assert set(requests) == {(directory / "review.html").as_uri()}, requests
         source = directory / "invalid.json"
         for content in (b"invalid", b" " * (4 * 1024 * 1024 + 1), json.dumps({

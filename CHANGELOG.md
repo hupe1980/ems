@@ -5,6 +5,33 @@ All notable changes to ems. The format follows
 [Semantic Versioning](https://semver.org/) — before 1.0, a minor version may
 break anything, and says so here.
 
+## [0.10.0] — 2026-11-28
+
+### Breaking changes
+
+- Gateway and collector webhook keys must use `whsec_` followed by standard Base64 encoding 24–64 random bytes. Replace literal keys on both ends and remove `webhook_tolerance_s`. The Standard Webhooks SDK enforces a five-minute window.
+- The fleet update schema requires a fresh development database and site enrolment.
+
+### Added
+
+- Household Setup commissions SunSpec model 203 meters over RS-485 and reads cumulative thermal Wh from a wired M-Bus heat meter. Setup and doctor flag silent, unexpected and unusable replies.
+- Industrial sites can commission a pinned OPC UA import register and compare exact Wh against independent quarter-hour closes in JSON or offline HTML.
+- The operator desk shows up to 90 days of import and export, gateway freshness and staged update results. Households can inspect missing days, peak readings and EV departure receipts.
+- `hemsd winter-day` follows storage, heating and EV charging across a metered winter day. `house --keep-history` retains the gateway ledger and `simulate --site-from` reuses the installed inventory.
+- Releases include gateway and tariff OCI images, architecture-specific conformance receipts, and ten downloadable CloudEvents schemas. `just interfaces` exercises REST, CloudEvents, signed webhooks and MCP.
+
+### Changed
+
+- Local power history uses Chronix 0.11 and reopens 0.10 directories in place. On Chronix 0.9, export historical readings before configuring a fresh series directory. Keep the separate redb ledger.
+- The wired heat-meter driver uses mbus-kit 0.2.0. Gateway events identify their versioned payload schema in `dataschema`.
+
+### Fixed
+
+- Gateway sign-in restores the requested view. Losing access to a departure receipt preserves visible energy history.
+- EV planning accounts for midnight departures and complete charging quarters. The gateway checks write acknowledgements, and the simulated outlet accounts for partial-interval charging.
+- A full heat-pump request permits full output. The tank distinguishes unmet hot-water demand from standing losses.
+- `hemsd simulate --json --store` keeps diagnostics on stderr. Enabling the example levy or Modul 3 tables preserves the feed-in rate and standing charge.
+
 ## [0.9.0] — 2026-11-24
 
 ### Added
@@ -333,6 +360,7 @@ hardware.
 - `rmcp` 3.11 (RUSTSEC-2026-0457, -0461) and `ctutils` 0.4.8 (RUSTSEC-2026-0385).
 - Every override and S2 instruction is logged with the credential that made it.
 
+[0.10.0]: https://github.com/hupe1980/ems/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/hupe1980/ems/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hupe1980/ems/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hupe1980/ems/compare/v0.6.0...v0.7.0

@@ -1,0 +1,141 @@
+{
+  "$defs": {
+    "CarGoal": {
+      "additionalProperties": false,
+      "description": "A car goal as the household set it.",
+      "properties": {
+        "by_minute": {
+          "description": "By when, local wall-clock minutes after midnight (`420` is 07:00).",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "price_cap_ct": {
+          "description": "Highest gross import price allowed, in whole ct/kWh.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "target_soc": {
+          "description": "The state of charge wanted, in `[0, 1]`.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "target_soc",
+        "by_minute"
+      ],
+      "type": "object"
+    },
+    "GoalAtRisk": {
+      "description": "`de.ems.site.goal.at-risk`: a goal turned tight or impossible.",
+      "properties": {
+        "goal": {
+          "$ref": "#/$defs/HouseholdGoal",
+          "description": "Target and local deadline set by the household."
+        },
+        "reachable": {
+          "description": "Reachable state of charge (fraction) or water temperature (°C).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verdict": {
+          "description": "`tight` or `impossible`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "goal"
+      ],
+      "type": "object"
+    },
+    "HouseholdGoal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CarGoal",
+          "description": "Departure charge and time."
+        },
+        {
+          "$ref": "#/$defs/TankGoal",
+          "description": "Water temperature and time."
+        }
+      ],
+      "description": "Household goal in the units of the subject device."
+    },
+    "TankGoal": {
+      "additionalProperties": false,
+      "description": "A hot-water goal as the household set it: *50 °C by 18:00*.",
+      "properties": {
+        "by_minute": {
+          "description": "By when, local wall-clock minutes after midnight (`1080` is 18:00).",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_c": {
+          "description": "The temperature wanted, °C.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "target_c",
+        "by_minute"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.site.goal.at-risk.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A goal turned tight or impossible",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/GoalAtRisk"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.site.goal.at-risk.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.site.goal.at-risk"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.site.goal.at-risk",
+  "type": "object"
+}

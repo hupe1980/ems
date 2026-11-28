@@ -67,25 +67,26 @@
     <div class="systems-grid">
       <section>
         <h3>Home <small>HEMS</small></h3>
-        <p>Schedule EV charging, hot water and battery use around household goals, prices and grid limits. In the virtual house, compare a battery request with what the meter actually saw.</p>
+        <p>Schedule EV charging, hot water and battery use around household goals, prices and grid limits. Inspect the meter at each quarter to see what the plan delivered.</p>
         <a href="{{ get_url(path='@/docs/household.md') }}">Read the household guide</a>
-        <a href="{{ get_url(path='@/docs/simulation.md') }}#exercise-battery-control">Run the battery trial</a>
-        <a href="{{ get_url(path='@/docs/simulation.md') }}#check-an-ev-departure">Rehearse a charger interruption</a>
-        <a href="{{ get_url(path='@/docs/services.md') }}#household-departure-receipt">Explore household history and charging receipts</a>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#read-a-winter-day-with-storage">Read a winter meter day</a>
       </section>
       <section>
         <h3>Building <small>BEMS</small></h3>
         <p>Compare two charging stations with the building’s feeder meter during a zone sensor fault, or explore how shared solar energy is allocated to tenants.</p>
         <a href="{{ get_url(path='@/docs/simulation.md') }}#replay-a-building-handover">Replay a building handover</a>
-        <a href="{{ get_url(path='@/docs/simulation.md') }}#check-the-heating-reserve">Check the heating reserve</a>
         <a href="{{ get_url(path='@/docs/simulation.md') }}#compare-community-allocations">Explore tenant allocation</a>
       </section>
       <section>
         <h3>Industrial <small>CEMS</small></h3>
-        <p>Choose when the battery starts, then reveal how the original quarter hour closed. Compare the measured mean with the modelled alternative.</p>
-        <a href="#peak-challenge">Try the peak challenge</a>
+        <p>Commission an OPC UA import meter, reconcile quarter-hour readings, or compare battery start times against a measured demand peak.</p>
+        <a href="{{ get_url(path='@/docs/devices.md') }}#commission-an-industrial-opc-ua-meter">Commission an OPC UA meter</a>
+        <a href="{{ get_url(path='@/docs/simulation.md') }}#check-a-shift-against-its-meter">Review a shift against its meter</a>
       </section>
     </div>
+    <nav aria-label="Fleet interfaces">
+      <p><a href="{{ get_url(path='@/docs/services.md') }}#fleet-administration-and-monitoring">Operator desk</a> · <a href="{{ get_url(path='@/docs/services.md') }}#investigate-meter-history">Meter history</a> · <a href="{{ get_url(path='@/docs/services.md') }}#household-departure-receipt">Household portal</a></p>
+    </nav>
   </div>
 </section>
 

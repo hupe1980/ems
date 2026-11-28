@@ -220,10 +220,16 @@ impl TankSim {
     pub fn step(&mut self, commanded: Power, draw: Energy, dt: Duration) -> (Power, Energy) {
         let hours = dt.as_seconds_f64() / 3600.0;
         // The draw and the standing loss happen whatever the controller does.
-        let wanted = (draw + Energy::new(self.standing_loss.get() * hours)).max(Energy::ZERO);
-        let taken = wanted.min(self.stored);
-        self.stored -= taken;
-        let short = (wanted - taken).max(Energy::ZERO);
+        let loss = self
+            .standing_loss
+            .over(dt)
+            .max(Energy::ZERO)
+            .min(self.stored);
+        self.stored -= loss;
+        let draw = draw.max(Energy::ZERO);
+        let supplied = draw.min(self.stored);
+        self.stored -= supplied;
+        let short = draw - supplied;
 
         let room = (self.capacity - self.stored).max(Energy::ZERO);
         let by_room = if hours > 0.0 && self.cop > 0.0 {
@@ -529,6 +535,9 @@ impl EvseSim {
     /// not charge. Controllers that forget this spend a whole afternoon
     /// commanding 1 kW into a car that never wakes up.
     pub fn step(&mut self, commanded: Power, dt: Duration) -> Power {
+        if dt <= Duration::ZERO {
+            return Power::ZERO;
+        }
         if self.switch_remaining > Duration::ZERO {
             // The contactor is open and the vehicle is re-negotiating. A step
             // longer than what is left of the dead time spends the rest of it
@@ -559,12 +568,9 @@ impl EvseSim {
         let max_by_room = Power::new(room.get() / hours.max(1e-9) / efficiency);
         let actual = wanted.min(max_by_room);
         vehicle.stored += Energy::new(actual.get() * hours * efficiency);
-        // Below the minimum current the session simply stops.
-        if actual < minimum {
-            Power::ZERO
-        } else {
-            actual
-        }
+        // A car that fills during the interval draws the allowed current for
+        // part of it. The interval mean can be below the pilot minimum.
+        actual
     }
 }
 
@@ -1109,6 +1115,24 @@ mod tests {
         b.step(Power::from_kw(4.0), QUARTER);
         b.step(Power::from_kw(-4.0), QUARTER);
         assert!(b.stored < before, "a lossless battery is not a battery");
+    }
+
+    #[test]
+    fn an_ev_that_fills_mid_interval_accounts_for_its_outlet_energy() {
+        let mut port = EvseSim::new().with_vehicle(VehicleSim {
+            capacity: Energy::from_kwh(60.0),
+            stored: Energy::from_kwh(59.908),
+            max_charge: Power::from_kw(11.0),
+            efficiency: 0.92,
+            efficiency_single_phase: 0.88,
+        });
+        let mean = port.step(Power::from_kw(11.0), QUARTER);
+        assert!((mean.get() - 400.0).abs() < 1e-6);
+        assert_eq!(
+            port.vehicle.as_ref().unwrap().stored,
+            Energy::from_kwh(60.0)
+        );
+        assert_eq!(port.step(Power::from_kw(11.0), QUARTER), Power::ZERO);
     }
 
     #[test]

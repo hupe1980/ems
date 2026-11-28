@@ -104,6 +104,8 @@ pub struct EvseConfig {
 pub struct HeatPumpConfig {
     /// Electrical power at full output.
     pub power: Power,
+    /// Electrical rating of the installed auxiliary heater, included in the heat-pump group under `[A1 2.4.1.b]`.
+    pub heating_rod: Option<Power>,
     /// Whether the unit modulates rather than switching on and off.
     pub modulating: bool,
     /// The bottom of the comfort band, °C.
@@ -355,6 +357,7 @@ impl Default for HouseholdConfig {
             }),
             heat_pump: Some(HeatPumpConfig {
                 power: Power::from_kw(5.0),
+                heating_rod: Some(Power::from_kw(3.0)),
                 modulating: true,
                 comfort_min_c: 20.0,
                 comfort_max_c: 23.0,
@@ -523,12 +526,6 @@ impl Household {
     }
 }
 
-/// The three kilowatts of Zusatzheizung an ordinary German fitting has.
-///
-/// `[A1 2.4.1.b]` folds it into the heat pump's own Fallgruppe, so it is part of
-/// this asset's nameplate rather than a load of its own.
-const HEATING_ROD: Power = Power::new_const(3_000.0);
-
 /// The heat pump the configuration describes, less its identity.
 ///
 /// Split out because it is where the *household's* answers live — the comfort
@@ -547,8 +544,8 @@ fn heat_pump(hp: &HeatPumpConfig, declared: Declared) -> HeatPump {
             declared,
         ),
         electrical_nominal: hp.power,
-        heating_rod: Some(HEATING_ROD),
-        cooling_electrical: None,
+        heating_rod: hp.heating_rod,
+        cooling_electrical: hp.cooling_electrical,
         control: hp.control,
         modulating: hp.modulating,
         comfort_min_c: hp.comfort_min_c,
@@ -674,14 +671,15 @@ fn assets_of(
         }));
     }
     if let Some(hp) = &config.heat_pump {
+        let pump = heat_pump(hp, config.declared_for("waermepumpe"));
         assets.push(Asset::HeatPump(HeatPump {
             meta: meta(
                 "waermepumpe",
-                hp.power.kw() + HEATING_ROD.kw(),
+                pump.group_power().kw(),
                 main,
                 Capabilities::LIMIT_CONSUMPTION,
             )?,
-            ..heat_pump(hp, config.declared_for("waermepumpe"))
+            ..pump
         }));
     }
     if let Some(dhw) = &config.dhw {

@@ -1,4 +1,6 @@
 mod demo;
+#[cfg(feature = "opcua")]
+mod opcua;
 #[cfg(feature = "openadr")]
 mod openadr;
 mod reconcile;
@@ -31,6 +33,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Capture a reviewed industrial register over one encrypted OPC UA session.
+    #[cfg(feature = "opcua")]
+    CaptureMeter(opcua::Capture),
+    /// Compare a retained OPC UA capture with independently supplied interval closes.
+    #[cfg(feature = "opcua")]
+    CommissionMeter(opcua::Review),
     /// Compare one import register with closed RLM quarter hours, offline.
     Reconcile {
         trace: std::path::PathBuf,
@@ -49,6 +57,10 @@ async fn main() -> anyhow::Result<()> {
             cancel_before_dispatch,
             json,
         } => openadr::run(cancel_before_dispatch, json).await,
+        #[cfg(feature = "opcua")]
+        Command::CaptureMeter(args) => args.run().await,
+        #[cfg(feature = "opcua")]
+        Command::CommissionMeter(args) => args.run(),
         Command::Reconcile { trace, format } => reconcile::run(&trace, format),
     }
 }

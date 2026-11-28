@@ -1,3 +1,4 @@
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import { departures } from "./fixtures/departures.ts";
 
@@ -5,6 +6,7 @@ export default defineConfig(({ mode }) =>
 	mode === "fixtures"
 		? {
 				plugins: [
+					tailwindcss(),
 					{
 						name: "local-household",
 						apply: "serve",
@@ -34,5 +36,8 @@ export default defineConfig(({ mode }) =>
 					},
 				],
 			}
-		: { server: { proxy: { "/v1/me": "http://127.0.0.1:7680" } } },
+		: {
+				plugins: [tailwindcss()],
+				server: { proxy: { "/v1/me": "http://127.0.0.1:7680" } },
+			},
 );

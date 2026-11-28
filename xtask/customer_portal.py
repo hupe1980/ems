@@ -3,6 +3,7 @@
 # dependencies = ["playwright==1.65.2"]
 # ///
 """Rehearse a household receipt through both daemons and the OCPP simulator."""
+import base64
 import json
 import os
 import secrets
@@ -52,7 +53,7 @@ def daemon(binary, config):
                 process.wait()
 
 
-def run(hemsd, obsd, portald):
+def run(hemsd, obsd, portald, screenshot=None):
     with ExitStack() as stack:
         directory = Path(stack.enter_context(TemporaryDirectory()))
         password = secrets.token_hex(16)
@@ -71,7 +72,7 @@ def run(hemsd, obsd, portald):
         pg_addr = subprocess.check_output(["docker", "port", pg, "5432/tcp"], text=True).strip()
         collect_addr = f"127.0.0.1:{port()}"
         collect = "http://" + collect_addr
-        keys = {site: secrets.token_hex(20) for site in ["home", "second"]}
+        keys = {site: "whsec_" + base64.b64encode(secrets.token_bytes(32)).decode("ascii") for site in ["home", "second"]}
         tokens = {site: secrets.token_hex(20) for site in keys}
         config = directory / "collector.toml"
         config.write_text(f'''[service]
@@ -132,6 +133,15 @@ second = "{tokens['second']}"
         page.get_by_label("History period").select_option("30")
         expect(page.locator(".energy-total")).to_have_text("11.00 kWh")
         expect(page.get_by_text("Grid import · 3 of 30 days reported.")).to_be_visible()
+        page.get_by_role("button", name="Highest grid import").click()
+        expect(inspect_day).to_have_attribute("aria-valuetext", "14 Jan 2026, Grid import, 8.00 kWh")
+        page.get_by_role("button", name="Latest missing day").press("Enter")
+        expect(inspect_day).to_have_attribute("aria-valuetext", "13 Jan 2026, Grid import, No report")
+        page.route("**/v1/me/departure", lambda route: route.fulfill(status=503))
+        refresh.click()
+        expect(page.get_by_role("status")).to_contain_text("departure receipt is unavailable")
+        expect(page.locator(".energy-total")).to_have_text("11.00 kWh")
+        page.unroute("**/v1/me/departure")
         send("home", 6000, "--missing-close")
         refresh.press("Enter")
         expect(page.get_by_role("heading", name="Departure unverified")).to_be_visible()
@@ -142,12 +152,26 @@ second = "{tokens['second']}"
         refresh.click()
         expect(page.get_by_role("heading", name="1.25 kWh short")).to_be_visible()
         expect(page.get_by_text("4.75 of 6.00 kWh delivered to the outlet.")).to_be_visible()
+        page.get_by_role("link", name="View departure receipt").press("Enter")
+        expect(page.locator("#outcome")).to_be_focused()
+        if screenshot:
+            page.get_by_label("History period").select_option("7")
+            page.get_by_role("button", name="Highest grid import").click()
+            page.set_viewport_size({"width": 1180, "height": 920})
+            page.evaluate("window.scrollTo(0, 0)")
+            page.screenshot(path=screenshot, full_page=True)
+            page.set_viewport_size({"width": 320, "height": 740})
         download = page.get_by_role("button", name="Download receipt JSON")
         with page.expect_download() as saved:
             download.click()
         data = json.loads(saved.value.path().read_text())
         assert (data["site"], data["shortfall_wh"]) == ("home", 1250)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.route("**/v1/me/departure", lambda route: route.fulfill(status=204))
+        download.click()
+        expect(page.get_by_role("status")).to_contain_text("no departure receipt to download")
+        expect(download).to_have_count(0)
+        page.unroute("**/v1/me/departure")
         send("second", 3600)
         page.set_extra_http_headers({"Authorization": "Bearer " + tokens["second"]})
         page.reload()

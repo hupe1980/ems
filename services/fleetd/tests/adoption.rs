@@ -114,6 +114,10 @@ async fn start_on(
             ems_service::Credentials::default()
                 .with_operator(OPERATOR)
                 .with_operator_of(
+                    ems_service::auth::SiteScope::One("sim-1".into()),
+                    "canary-reader",
+                )
+                .with_operator_of(
                     ems_service::auth::SiteScope::One("other".into()),
                     "other-operator",
                 ),
@@ -573,7 +577,7 @@ async fn desk_distinguishes_stalled_meter_and_rejects_foreign_access_and_replays
     client
         .execute(
             "INSERT INTO enrolment (site, token, enrolled_at)
-        SELECT 'sim-' || n, 'test-' || n, now() FROM generate_series(2,100) n",
+        SELECT 'sim-' || n, 'test-' || n, now() FROM generate_series(2,10000) n",
             &[],
         )
         .await
@@ -583,13 +587,159 @@ async fn desk_distinguishes_stalled_meter_and_rejects_foreign_access_and_replays
             .await
             .1,
     );
-    assert_eq!(summary.as_array().unwrap().len(), 100);
+    assert_eq!(summary["total"], 10_000);
+    assert_eq!(summary["rows"].as_array().unwrap().len(), 15);
+    let search = sites(
+        request(
+            address,
+            "GET",
+            "/v1/desk?q=sim-999&filter=attention&page=100",
+            Some(OPERATOR),
+            None,
+        )
+        .await
+        .1,
+    );
+    assert_eq!(search["matched"], 11);
+    assert_eq!(search["page"], 0);
+    let second = sites(
+        request(address, "GET", "/v1/desk?page=1", Some(OPERATOR), None)
+            .await
+            .1,
+    );
+    assert_eq!(second["page"], 1);
+    assert_ne!(second["rows"][0]["site"], summary["rows"][0]["site"]);
+    let scoped = sites(
+        request(
+            address,
+            "GET",
+            "/v1/desk?q=site-1",
+            Some("other-operator"),
+            None,
+        )
+        .await
+        .1,
+    );
+    assert_eq!(scoped["matched"], 0);
     assert!(
-        summary
+        summary["rows"]
             .as_array()
             .unwrap()
             .iter()
             .all(|r| r["history"].as_array().unwrap().is_empty())
     );
     trigger.trigger();
+}
+
+#[tokio::test]
+async fn canary_freezes_membership_and_requires_fresh_scoped_boot_evidence() {
+    let fixture = ems_service::testdb::Postgres::start(fleetd::store::MIGRATIONS).await;
+    let (addr, stop) = start_on(sites(), fixture.db.clone()).await;
+    let store = fleetd::store::Store::new(fixture.db.clone());
+    let db = fixture.db.get().await.unwrap();
+    db.execute(
+        "INSERT INTO enrolment SELECT 'sim-'||n,'token-'||n,now() FROM generate_series(1,100) n",
+        &[],
+    )
+    .await
+    .unwrap();
+    let digest = release().manifest.sha256;
+    let run = store.freeze_rehearsal("sim-1", &digest).await.unwrap();
+    db.execute(
+        "INSERT INTO enrolment VALUES ('late','late-token',now())",
+        &[],
+    )
+    .await
+    .unwrap();
+    let endpoint = format!("/v1/rehearsals/{run}/observations");
+    let read = || request(addr, "GET", "/v1/desk/canary", Some(OPERATOR), None);
+    let verified=serde_json::json!({"run":run,"phase":"verified","candidate":digest,"initial_boot":"old","verdict":"verified"}).to_string();
+    let ready=serde_json::json!({"run":run,"phase":"running","sent_at":time::OffsetDateTime::now_utc().unix_timestamp(),"digest":digest,"boot":"new","ready":true,"rollback":false}).to_string();
+    assert_eq!(
+        request(addr, "GET", "/v1/desk/canary", Some("token-1"), None)
+            .await
+            .0,
+        401
+    );
+    assert_eq!(
+        request(addr, "GET", "/v1/desk/canary", Some("other-operator"), None)
+            .await
+            .1,
+        "null"
+    );
+    assert_eq!(
+        request(addr, "POST", &endpoint, Some("token-2"), Some(&verified))
+            .await
+            .0,
+        404
+    );
+    assert_eq!(
+        request(addr, "POST", &endpoint, Some("token-1"), Some(&ready))
+            .await
+            .0,
+        422
+    );
+    let previous = verified.replace(&run, "older-run");
+    assert_eq!(
+        request(addr, "POST", &endpoint, Some("token-1"), Some(&previous))
+            .await
+            .0,
+        422
+    );
+    let scoped = format!("/v1/desk/canary?run={run}");
+    assert_eq!(
+        request(addr, "GET", &scoped, Some("other-operator"), None)
+            .await
+            .1,
+        "null"
+    );
+    for payload in [&verified, &verified, &ready, &ready] {
+        assert_eq!(
+            request(addr, "POST", &endpoint, Some("token-1"), Some(payload))
+                .await
+                .0,
+            204
+        );
+    }
+    let review: serde_json::Value = serde_json::from_str(&read().await.1).unwrap();
+    assert_eq!(review["cohort"], 100);
+    let scoped_review: serde_json::Value = serde_json::from_str(
+        &request(addr, "GET", &scoped, Some("canary-reader"), None)
+            .await
+            .1,
+    )
+    .unwrap();
+    assert_eq!(scoped_review["cohort"], 1);
+    let cohort_page = format!("/v1/desk?filter=cohort&run={run}");
+    let scoped_page: serde_json::Value = serde_json::from_str(
+        &request(addr, "GET", &cohort_page, Some("canary-reader"), None)
+            .await
+            .1,
+    )
+    .unwrap();
+    assert_eq!(scoped_page["matched"], 1);
+    assert_eq!(scoped_page["rows"][0]["site"], "sim-1");
+    assert_eq!(review["decision"], "Qualified for next simulated site");
+    db.execute(
+        "UPDATE rehearsal SET observed_at=now()-interval '121 seconds' WHERE id=$1",
+        &[&run],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        request(addr, "POST", &endpoint, Some("token-1"), Some(&ready))
+            .await
+            .0,
+        204
+    );
+    assert!(read().await.1.contains("stale readiness"));
+    let conflict = ready.replace("\"ready\":true", "\"ready\":false");
+    assert_eq!(
+        request(addr, "POST", &endpoint, Some("token-1"), Some(&conflict))
+            .await
+            .0,
+        409
+    );
+    assert!(read().await.1.contains("conflicting observations"));
+    stop.trigger();
 }

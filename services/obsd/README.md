@@ -9,7 +9,7 @@ Collects signed household day reports and serves fleet summaries. Grid-limit bre
 | `GET /v1/sites/{site}` | one household's recent days |
 | `/mcp` | the same answers for an agent, authorised as its own caller |
 
-Submissions use Standard Webhooks signatures. Configure site secrets and report retention in [obsd.example.toml](obsd.example.toml). [Fleet services guide](https://hupe1980.github.io/ems/docs/services/)
+Submissions use the Standard Webhooks SDK and its five-minute replay window. Each site needs a distinct `whsec_<standard Base64>` key shared with its gateway. Generate 32 random bytes per key (the accepted range is 24–64 bytes). Add a second key for that site during rotation. Configure site secrets and report retention in [obsd.example.toml](obsd.example.toml). [Fleet services guide](https://hupe1980.github.io/ems/docs/services/)
 
 ## Household departure receipt
 

@@ -117,12 +117,13 @@ pub use ems_service::http::confidential as is_confidential;
 pub async fn deliver(
     client: &reqwest::Client,
     endpoint: &str,
-    secret: &[u8],
+    secret: &ems_events::webhook::Webhook,
     event_id: &str,
     body: &[u8],
     now: time::OffsetDateTime,
 ) -> Result<(), DeliveryError> {
-    let signature = ems_events::webhook::sign(secret, event_id, now, body);
+    let signature = ems_events::webhook::sign(secret, event_id, now, body)
+        .map_err(|e| DeliveryError::Permanent(e.to_string()))?;
     let mut request = client
         .post(endpoint)
         // CloudEvents structured mode: the whole event is the body, so the media

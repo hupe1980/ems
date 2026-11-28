@@ -1,11 +1,11 @@
 //! Gateway evidence received by the fleet.
 use super::Fleet;
-use crate::store::StoreError;
+
 use axum::{
     Json,
     extract::{Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::Html,
+    response::{Html, IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,7 @@ struct Receipt {
     report_at: Option<i64>,
 }
 
-fn unavailable(error: impl std::fmt::Display) -> StatusCode {
+pub(super) fn unavailable(error: impl std::fmt::Display) -> StatusCode {
     tracing::error!(%error, "fleet desk storage unavailable");
     StatusCode::SERVICE_UNAVAILABLE
 }
@@ -111,6 +111,7 @@ pub(super) async fn checkin(
 struct Signal {
     state: &'static str,
     age_s: Option<i64>,
+    stale_after_s: i64,
 }
 
 impl Signal {
@@ -122,7 +123,11 @@ impl Signal {
             Some(age) if age > limit => "stale",
             Some(_) => "current",
         };
-        Self { state, age_s }
+        Self {
+            state,
+            age_s,
+            stale_after_s: limit,
+        }
     }
 }
 
@@ -136,8 +141,8 @@ pub(super) struct DeskRow {
     history: Vec<Receipt>,
 }
 
-// Declaration order is the operator queue's priority.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+// Queue priorities are assigned in desk_page.sql.
+#[derive(Clone, Copy, Serialize)]
 enum Attention {
     #[serde(rename = "Gateway silent")]
     Silent,
@@ -152,72 +157,35 @@ enum Attention {
     Current,
 }
 
-async fn read_sites(
-    fleet: &Fleet,
-    scope: Option<Vec<String>>,
-    site: Option<String>,
-) -> Result<Vec<DeskRow>, StoreError> {
-    let client = fleet.store.db().get().await?;
-    let rows = client
-        .query(
-            "SELECT e.site,c.sent_at,c.received_at,c.feeder_at,c.report_at,
-        floor(extract(epoch from statement_timestamp()))::bigint
-        FROM enrolment e LEFT JOIN LATERAL (SELECT * FROM gateway_checkin
-            WHERE site=e.site ORDER BY sent_at DESC LIMIT (CASE WHEN $2::text IS NULL THEN 1 ELSE 32 END)) c ON TRUE
-        WHERE ($1::text[] IS NULL OR e.site=ANY($1)) AND ($2::text IS NULL OR e.site=$2) ORDER BY e.site,c.sent_at DESC",
-            &[&scope, &site],
-        )
-        .await?;
-    let mut sites: Vec<DeskRow> = Vec::new();
-    for row in rows {
-        let name: String = row.get(0);
-        if sites.last().is_none_or(|s| s.site != name) {
-            let now = row.get(5);
-            let gateway = Signal::at(now, row.get(2), 90);
-            let feeder = Signal::at(now, row.get(3), 120);
-            let report = Signal::at(now, row.get(4), 36 * 3600);
-            let attention = match (gateway.state, feeder.state, report.state) {
-                ("unknown", _, _) => Attention::First,
-                ("clock error", _, _) => Attention::Clock,
-                ("stale", _, _) => Attention::Silent,
-                ("current", "current", "current") => Attention::Current,
-                ("current", "current", _) => Attention::Report,
-                _ => Attention::Feeder,
-            };
-            sites.push(DeskRow {
-                site: name,
-                gateway,
-                feeder,
-                report,
-                attention,
-                history: Vec::new(),
-            });
-        }
-        if site.is_some()
-            && let (Some(sent_at), Some(site)) = (row.get(1), sites.last_mut())
-        {
-            site.history.push(Receipt {
-                sent_at,
-                received_at: row.get(2),
-                feeder_at: row.get(3),
-                report_at: row.get(4),
-            });
-        }
-    }
-    sites.sort_by_key(|row| row.attention);
-    Ok(sites)
+const PAGE_SIZE: i64 = 15;
+const GATEWAY_AGE: i64 = 90;
+const FEEDER_AGE: i64 = 120;
+const REPORT_AGE: i64 = 36 * 3600;
+
+#[derive(Serialize)]
+struct DeskPage {
+    total: i64,
+    attention: i64,
+    matched: i64,
+    page: i64,
+    page_size: i64,
+    rows: Vec<DeskRow>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub(super) struct DeskQuery {
     site: Option<String>,
+    q: String,
+    filter: Option<String>,
+    run: Option<String>,
+    page: u32,
 }
 
-pub(super) async fn queue(
-    Query(query): Query<DeskQuery>,
-    State(fleet): State<Fleet>,
-    headers: HeaderMap,
-) -> Result<impl axum::response::IntoResponse, StatusCode> {
+pub(super) fn read_scope(
+    fleet: &Fleet,
+    headers: &HeaderMap,
+) -> Result<Option<Vec<String>>, StatusCode> {
     let authority = fleet
         .operators
         .authority_in(
@@ -227,23 +195,116 @@ pub(super) async fn queue(
         )
         .filter(ems_service::Authority::may_read_the_fleet)
         .ok_or(StatusCode::UNAUTHORIZED)?;
-    let scope = authority
-        .sites()
-        .named()
-        .map(|s| s.into_iter().map(str::to_owned).collect());
-    let sites = if authority
+    if !authority
         .capabilities()
         .permits(ems_service::auth::RECORD_READ)
     {
-        read_sites(&fleet, scope, query.site)
-            .await
-            .map_err(unavailable)?
-    } else {
-        Vec::new()
+        return Ok(Some(Vec::new()));
+    }
+    Ok(authority
+        .sites()
+        .named()
+        .map(|sites| sites.into_iter().map(str::to_owned).collect()))
+}
+
+pub(super) async fn queue(
+    Query(query): Query<DeskQuery>,
+    State(fleet): State<Fleet>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    let scope = read_scope(&fleet, &headers)?;
+    let filter = query.filter.as_deref().unwrap_or("all");
+    if !matches!(filter, "all" | "attention" | "current" | "cohort")
+        || query.q.len() > 512
+        || (filter == "cohort" && query.run.is_none())
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let client = fleet.store.db().get().await.map_err(unavailable)?;
+    let result = client
+        .query(
+            include_str!("desk_page.sql"),
+            &[
+                &scope,
+                &query.site,
+                &query.q,
+                &filter,
+                &query.run,
+                &i64::from(query.page),
+                &GATEWAY_AGE,
+                &FEEDER_AGE,
+                &REPORT_AGE,
+                &PAGE_SIZE,
+            ],
+        )
+        .await
+        .map_err(unavailable)?;
+    let counts = &result[0];
+    let mut page = DeskPage {
+        total: counts.get("total"),
+        attention: counts.get("attention"),
+        matched: counts.get("matched"),
+        page: counts.get("page"),
+        page_size: PAGE_SIZE,
+        rows: Vec::with_capacity(result.len()),
     };
-    Ok(([(header::CACHE_CONTROL, "no-store")], Json(sites)))
+    for row in &result {
+        let Some(site) = row.get::<_, Option<String>>("site") else {
+            continue;
+        };
+        if page
+            .rows
+            .last()
+            .is_none_or(|previous| previous.site != site)
+        {
+            let now = row.get("now_s");
+            let attention = match row.get::<_, i32>("priority") {
+                0 => Attention::Silent,
+                1 => Attention::Clock,
+                2 => Attention::Feeder,
+                3 => Attention::Report,
+                4 => Attention::First,
+                _ => Attention::Current,
+            };
+            page.rows.push(DeskRow {
+                site,
+                attention,
+                gateway: Signal::at(now, row.get("received_at"), GATEWAY_AGE),
+                feeder: Signal::at(now, row.get("feeder_at"), FEEDER_AGE),
+                report: Signal::at(now, row.get("report_at"), REPORT_AGE),
+                history: Vec::new(),
+            });
+        }
+        if let (Some(sent_at), Some(site)) = (row.get("sent_at"), page.rows.last_mut()) {
+            site.history.push(Receipt {
+                sent_at,
+                received_at: row.get("receipt_at"),
+                feeder_at: row.get("sample_at"),
+                report_at: row.get("closed_at"),
+            });
+        }
+    }
+    let headers = [(header::CACHE_CONTROL, "no-store")];
+    if query.site.is_some() {
+        return Ok((headers, Json(page.rows)).into_response());
+    }
+    Ok((headers, Json(page)).into_response())
 }
 
 pub(super) async fn page() -> Html<&'static str> {
-    Html(include_str!("desk.html"))
+    static PAGE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    Html(
+        PAGE.get_or_init(|| {
+            include_str!("desk.html")
+                .replace(
+                    "/* compiled desk styles */",
+                    include_str!("assets/desk.css"),
+                )
+                .replace(
+                    "/* compiled meter history */",
+                    include_str!("assets/history.js"),
+                )
+        })
+        .as_str(),
+    )
 }

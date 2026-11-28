@@ -72,6 +72,15 @@ staticPasswords:
             Path("deploy/oidc/ems.conf").read_text()
             + """
     server {
+        listen 127.0.0.1:7580;
+        location = /v1/desk/energy {
+            if ($http_authorization != "Bearer trial-operator") { return 401; }
+            if ($http_cookie != "") { return 403; }
+            default_type text/plain;
+            return 200 "Scoped historian read";
+        }
+    }
+    server {
         listen 127.0.0.1:7680;
         location / {
             if ($http_authorization != "Bearer trial-home") { return 401; }
@@ -172,7 +181,19 @@ staticPasswords:
             }
         )
         assert page.goto(public + "/desk").status == 403
+        assert page.goto(public + "/v1/desk/canary").status == 403
+        assert page.goto(public + "/v1/desk/energy?site=haus&day=2026-01-15").status == 403
         page.set_extra_http_headers({})
+        # Grant this signed-in subject access and exercise the production route.
+        (directory / "ems-operator.map").write_text(
+            "~^" + subject + '$ "Bearer trial-operator";\n'
+        )
+        subprocess.run(["docker", "exec", name + "gate", "nginx", "-s", "reload"], check=True)
+        for _ in range(30):
+            if page.goto(public + "/v1/desk/energy?site=haus&day=2026-01-15").status == 200:
+                break
+            time.sleep(0.1)
+        expect(page.locator("body")).to_have_text("Scoped historian read")
         assert page.goto(public + "/v1/enrol").status == 404
         page.goto(public + "/oauth2/sign_out")
         page.goto(public + "/portal")

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "device": "North incomer",
+  "applicationUri": "urn:ems:grid-meter",
+  "principal": "anonymous",
+  "signals": [
+    {
+      "name": "GridImportWh",
+      "node": {
+        "namespace": "urn:ems:plant",
+        "id": "s=GridImportWh"
+      },
+      "dataType": {
+        "namespace": "http://opcfoundation.org/UA/",
+        "id": "i=9"
+      },
+      "valueRank": -1,
+      "engineeringUnits": {
+        "namespaceUri": "http://www.opcfoundation.org/UA/units/un/cefact",
+        "unitId": 5720146
+      }
+    }
+  ]
+}

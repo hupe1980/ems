@@ -13,7 +13,7 @@ A household installation has three identities to check: the gateway serving the 
 
 Use the household credential to sign in to **Setup**. Compare the gateway’s HTTPS certificate fingerprint with the installer’s handover record. For SHIP pairing, compare the waiting control box’s subject key identifier (SKI) with the one provided by the metering operator before approving it. An unknown peer waits for approval before exchanging control data.
 
-The gateway persists its SHIP key and trusted peers across restarts. Protect its storage and backups. Someone who obtains the private key can impersonate the gateway. Keep Modbus equipment on a restricted network because standard Modbus TCP reads and writes carry no caller identity. [Device guide](@/docs/devices.md).
+The gateway persists its SHIP key and trusted peers across restarts. On Unix, the gateway restricts its ledger to the account that runs it. Apply the same protection to backups. Someone who obtains the private key can impersonate the gateway. Keep Modbus equipment on a restricted network because standard Modbus TCP reads and writes carry no caller identity. [Device guide](@/docs/devices.md).
 
 External energy managers receive individually revocable bearer credentials. Their S2 instructions are attributed to the authenticated subject. Household-only actions include approving peers, editing goals and adding webhook subscribers. A signed-in wall display holds a household session, so place it where only authorized people can use it. Treat the printed sign-in code as a credential. [Household access and handover](@/docs/household.md).
 
@@ -38,6 +38,10 @@ Configure deployed credentials through environment or file references. A missing
 [webhook_secrets]
 haus-1 = ["file:/run/secrets/haus-1"]
 ```
+
+Generate one signing key per household. In a trusted shell, `export EMS_OBSD_SECRET="whsec_$(openssl rand -base64 32)"` generates the gateway value. Provision that same value in the corresponding site's secret store on the collector. Both ends require `whsec_` followed by standard Base64 encoding 24–64 random bytes.
+
+For rotation, add the new secret reference to that site's list on the collector, restart the collector, then switch the gateway to the new key. Remove the retiring key once queued deliveries have resumed. The official SDK accepts signing timestamps within five minutes of the collector's clock.
 
 Use platform TLS roots for public data providers. A private fleet can restrict outbound trust to its own CA with a pinned bundle. Pinning replaces the platform root store for that client.
 

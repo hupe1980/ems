@@ -28,7 +28,7 @@ shutdown_grace_s = 20
 [control]
 # Guard and arbiter interval. Longer ticks reduce usable PV feed-in headroom.
 tick_period_s = 1
-# The planner, on a receding horizon.
+# Seconds between planning runs.
 replan_every_s = 300
 # Planning horizon in quarter-hours. 192 covers two days.
 horizon_slots = 192
@@ -85,89 +85,45 @@ longitude = 13.4
 altitude_m = 34.0
 
 heat_pump_kw = 5.0
+heat_pump_rod_kw = 3.0
 heat_pump_modulating = true
-# How the unit takes instructions: "power-ceiling" (EEBUS LPC or a vendor
-# register), "sg-ready" (two relay contacts), "operation-modes", or "compressor"
-# (EEBUS OHPCF). The first three are all bounds — they can only ask the unit to
-# do less, so a plan that wants it to pre-heat into a cheap hour cannot say so.
-# "compressor" is the one that starts a process, and it needs an
-# `eebus-heat-pump` driver below.
+# Set a consumption ceiling, select an SG Ready or vendor operating state,
+# or use "compressor" with an EEBUS OHPCF driver. SG Ready boost raises
+# the thermostat target. The appliance decides when to draw power.
+# heat_pump_cooling_kw = 4.0  # for an installed reversible unit with a direction control
 heat_pump_control = "power-ceiling"
-# How far the house may drift. This is the trade the whole heating plan turns
-# on: widen it and the box can carry the house through an expensive evening on
-# what it banked at noon; narrow it and the heating is its own thermostat's
-# business again. The planner only moves the building at all where a driver
-# reports an indoor temperature — a plan built on a guessed one decides when to
-# heat from a number nobody read.
+# Indoor comfort band used for planning when a driver reports room temperature.
 comfort_min_c = 20.0
 comfort_max_c = 23.0
 
 dhw_litres = 300.0
 dhw_heater_kw = 0.5
-# Thermal kilowatt-hours per electrical one: **1,0 for a plain immersion heater**,
-# around 3,0 for a hot-water heat pump. It is the difference between a tank that
-# costs a kilowatt-hour to fill and one that costs three, so a household fitted
-# with the first and planned as the second has its hot water priced at a third of
-# what it pays.
+# Heat delivered per kWh of electricity. Use 1.0 for an immersion heater.
 dhw_cop = 3.0
-# Standing loss, watts — the reason the tank is cold in the morning.
+# Tank heat loss at rest, in watts.
 dhw_standing_loss_w = 45.0
-# The three temperatures, °C. `t_min` is the lowest acceptable: below it somebody
-# has a cold shower, which the plan *pays for* rather than forbidding, because a
-# hard constraint makes an ordinary morning infeasible whenever the tank started
-# the day cold. `t_max` is the highest **safe** temperature — a scald bound, not a
-# target. The plan uses everything between them as a store.
-#
-# `t_set` is the one that is easy to misread: it is **not** a bound on the plan.
-# It is where this household's own thermostat would sit with no energy manager at
-# all, so it is what the *baseline* is held at — and therefore what the saving on
-# the day report is measured against. Setting it to `t_max` says the household
-# would otherwise keep its water at the scald bound all day, which will make the
-# manager look better than it is.
+# Minimum service temperature, ordinary thermostat setting and safe upper bound, in °C.
+# The unmanaged comparison uses the ordinary thermostat setting.
 dhw_t_min_c = 45.0
 dhw_t_set_c = 55.0
 dhw_t_max_c = 60.0
 
-# The charge point's largest current per conductor. 16 A three-phase is the
-# ordinary "11 kW" wallbox, 32 A the "22 kW" one; zero says the household has
-# no charge point at all.
+# Maximum amperes per phase. Set to zero for a site without a wallbox.
 evse_max_a = 16.0
-# Almost every wallbox sold in Germany since about 2022 can drop to one
-# conductor, and it decides whether 2 kW of surplus charges a car or is
-# exported: three-phase charging cannot start below 4,14 kW.
+# Enable only if the installed wallbox supports phase switching.
 evse_switchable = true
-# Whether the wallbox can discharge the car into the house. A fact about the
-# hardware on the wall: what the wallbox and the car negotiate between them is
-# ISO 15118, which this box never sees. What it changes here is what a Customer
-# Energy Manager is told the wallbox can do — a producer role and a discharge
-# mode — and therefore what the planner may ask for. Still a special order in
-# Germany, so the default is false.
+# Enable if the installation supports vehicle-to-home discharge.
 evse_bidirectional = false
 ev_charge_limit = 0.75
 
-
-# The dishwasher's programme, as the average power in kW of each consecutive
-# quarter hour: heat, wash, wash, wash, dry, finish. Steps rather than a
-# duration and an average, because a planner given the average would schedule
-# 700 W into every sunny slot and no dishwasher will do that. Leave the list
-# empty for a household with nothing waiting.
+# Average kW in each consecutive quarter of one dishwasher cycle. Use [] for no cycle.
 dishwasher_kw_steps = [2.0, 0.2, 0.2, 0.2, 1.8, 0.1]
 
-# ── What limits this roof's feed-in ──────────────────────────────────────────
-#
-# The § 9 EEG facts, in one table because they are one question and the answer
-# is a decision tree over them rather than four independent switches. The
-# commissioning date is the first thing consulted and it lives in
-# [site.declared.pv] below.
+# PV feed-in rules use the commissioning date in [site.declared.pv].
 [site.para9]
-# § 9 Abs. 2 lifts the 60 % cap only after the network operator's **first
-# successful Ansteuerbarkeit test** — a different event on a different clock
-# from the meter being fitted. So this stays false until that test has happened,
-# however long the meter has been in the cupboard.
+# Set true after the network operator’s first successful controllability test (§ 9 Abs. 2 EEG).
 imsys_control_device = false
-# When the intelligent metering system was fitted, which is § 51 EEG's clock:
-# from the end of that calendar year the plant earns nothing in a negative
-# quarter hour. Remove the line for a household that has no such meter.
+# Date the intelligent metering system was installed. Omit if none is installed.
 imsys_since = "2024-06-01"
 # § 9 Abs. 2 S. 4: a Steckersolargerät within **both** size tests — 2 kW DC and
 # 800 W AC — is outside the cap altogether.
@@ -177,33 +133,11 @@ steckersolargeraet = false
 # Rundsteuerempfänger. Leave it false for anything newer.
 legacy_70_percent = false
 
-# ── Which house this is, thermally ───────────────────────────────────────────
-#
-# The **prior**. The box identifies its own building from the household's own
-# thermometer once it has watched a few excited days, and what it has fitted
-# always wins over what is written here — so this is what the box plans against
-# in the weeks before that, and for ever in a household whose heat pump nothing
-# measures.
-#
-# It is not cosmetic. The fabric capacity decides whether pre-heating into a
-# cheap hour pays at all, and it differs by a factor of five between an
-# unretrofitted solid-wall house and a new timber frame; the envelope loss
-# differs by four. A box planning every household against the average one
-# over-heats most of them and pays the comfort slack for the overshoot.
-#
-#   average      1990s masonry or a partial retrofit, ~150 m², 6,8 kW at −20 °C
-#   new-build    GEG-era or a deep retrofit, 4,1 kW — light, so it holds little
-#   solid-wall   unretrofitted pre-1979, 16,5 kW — very heavy, moves over a day
-#   apartment    a flat inside a heated block: little envelope, little mass
+# Initial thermal model until measurements support a fitted one.
+# Classes: average, new-build, solid-wall and apartment.
 [site.building]
 class = "average"
-# Which way the glazing mostly faces, degrees clockwise from north; 180 is a
-# south front. Not a prior but a fact about the plot, and the one field here that
-# nothing learns: it is the plane the solar aperture below is measured against
-# both when the box fits it and when the plan uses it. A vertical south plane at
-# 52° north sees about 1,6 times the horizontal irradiance at a December noon and
-# half of it at a June one, so a wrong façade does not make the model noisier —
-# it makes the aperture a different number in every season.
+# Orientation of the main glazed façade, clockwise from north.
 facade_azimuth_deg = 180.0
 # Any of the six parameters may be given instead, and overrides the class.
 # `r_air_out_k_per_kw` is ΔT / Q at the design pair: a house losing 6,8 kW at
@@ -213,49 +147,12 @@ facade_azimuth_deg = 180.0
 # r_air_out_k_per_kw = 6.0
 # r_air_mass_k_per_kw = 0.4
 #
-# The heat the house gets for nothing. `solar_aperture_m2` is the glazed area
-# times the g value times whatever the frames, the curtains and the tree in front
-# take away — one number, because nobody knows the other three and the fit does
-# not need them separated. `internal_gain_kw` is the people and the appliances,
-# about 3 W per square metre of floor.
-#
-# They are priors like the rest and the box replaces them with a fit, but they
-# are not a refinement: the average archetype loses 2,7 kW at 5 °C outdoors, and
-# a clear March noon through a 4,5 m² south aperture is 2,5 kW of it. On the days
-# a heating plan is most worth making, the free heat exceeds the demand.
+# Effective glazed area (m²) and indoor heat gains (kW).
 # solar_aperture_m2 = 4.5
 # internal_gain_kw = 0.45
 
-# ── What the paperwork says, per device ──────────────────────────────────────
-#
-# The § 14a and § 9 EEG facts. Every one of them is off a contract or a
-# Netzanschlussportal record rather than off a datasheet, which is why the box
-# has to be told and cannot work them out — and both statutes turn on the same
-# date and read silence in **opposite** directions.
-#
-# § 9 EEG ties all three of its feed-in limitations to the commissioning date: a
-# roof commissioned from 25.02.2025 is capped at 60 %, one from the window
-# 01.01.2023–24.02.2025 at nothing at all (§ 100 Abs. 3b), and one from before
-# 2023 at 70 % only if `[site.para9] legacy_70_percent` says that is how it met its
-# obligation. Get it wrong towards the newest and the box curtails a roof the
-# statute never reached, every sunny midday, for the life of the installation.
-#
-# § 14a goes the other way: [A1 3.1.b] binds devices commissioned after
-# 31.12.2023, and [A1 10] leaves an older one either out of scope, on the old
-# reduced network fee until 31.12.2028, or — a Nachtspeicherheizung —
-# indefinitely. Treating such a device as a controllable one hands the operator
-# a share of its power it may not reduce *and* counts its consumption as
-# netzwirksamer Leistungsbezug when it is ordinary load.
-#
-# Silence therefore leaves a device **in** the § 14a group (the safe direction
-# there) and **outside** every § 9 limitation (the safe direction here). What
-# each declaration produced is written to the log once, at start-up, in the
-# words the paperwork uses — because an installer standing in the cellar is the
-# only person who can correct it.
-#
-# Keys are asset identifiers: pv, battery, wallbox, waermepumpe, warmwasser,
-# spuelmaschine. One this household has none of is refused at start-up, the same
-# way a [[drivers]] entry for one is.
+# Use the commissioning records for each installed asset. The gateway uses these
+# declarations to determine § 14a participation and § 9 feed-in limits.
 [site.declared.pv]
 commissioned = "2025-03-01"
 
@@ -286,37 +183,23 @@ commissioned = "2025-03-01"
 [site.declared.spuelmaschine]
 commissioned = "2025-03-01"
 
-# ── What a kilowatt-hour costs and earns ─────────────────────────────────────
-#
-# Everything is **net** ct/kWh, because that is how a German price sheet is
-# written; the levies and the value-added tax are added on top from
-# `ems_tariff::Levies`.
+# Import price components use net ct/kWh. The tariff calculation adds levies and VAT.
 [tariff]
-# § 41a EnWG has obliged every supplier to offer a dynamic tariff since
-# 01.01.2025, and since 01.10.2025 the market time unit has been a quarter hour
-# — which is why this whole workspace plans in quarter hours.
+# Supplier markup on the wholesale import price.
 markup_ct_per_kwh = 3.0
-# What to assume past tomorrow's auction, and after an outage. A *flat* number,
-# which makes the plan indifferent about when to act out there — exactly the
-# state of knowledge.
+# Wholesale price used for intervals without an auction price.
 fallback_ct_per_kwh = 20.0
-# Set `fixed_ct_per_kwh` instead and the box stops asking `tariffd` for
-# anything: a household on a fixed tariff has no day-ahead curve to optimise
-# against, and shifting load for a spread it is not charged is not a saving. It
-# still plans against the roof, the battery and the § 14a ceiling.
+# For a fixed import price, set this field instead of fetching a day-ahead curve.
 # fixed_ct_per_kwh = 28.5
 
 network_ct_per_kwh = 10.0
 # "none", "modul1", "modul2" or "modul3".
 modul = "modul1"
 modul_1_reduction_eur_per_year = 120.0
+feed_in_ct_per_kwh = 7.86
+standing_charge_eur_per_year = 120.0
 
-# Levies and taxes, net ct/kWh. Left out, the box uses what the transmission
-# system operators published for the year each quarter hour falls in (2026:
-# KWKG 0.446, § 19 StromNEV 1.559, Offshore 0.941, Stromsteuer 2.05) and a
-# Konzessionsabgabe of 1.59 — the band of a municipality of 25 001 to 100 000
-# inhabitants. A field set here replaces that figure in every year, so take it
-# from the supplier's price sheet and revisit it each January.
+# Optional overrides for the annual levy defaults. Use the supplier’s price sheet.
 # [tariff.levies]
 # konzessionsabgabe = 1.32          # § 2 KAV: 1.32, 1.59, 1.99 or 2.39
 # kwkg = 0.446
@@ -325,16 +208,7 @@ modul_1_reduction_eur_per_year = 120.0
 # stromsteuer = 2.05
 # vat_rate = 0.19
 
-# ── Modul 3, where the household is on it ────────────────────────────────────
-#
-# Time-variable network charges, and the one flexibility a household knows about
-# a **year in advance**. There is no machine-readable national format — a PDF or
-# an Excel sheet per network operator — so whoever commissions the box
-# transcribes the operator's calendar here, and `hemsd run --check` refuses to
-# start on one that breaks the BDEW Anwendungshilfe.
-#
-# Uncomment together with `modul = "modul3"`. Both halves or neither.
-#
+# For Modul 3, set modul = "modul3" above and enter the operator’s published calendar below.
 # [tariff.modul3]
 # id = "NB-14A-3-2026"
 # year = 2026
@@ -348,118 +222,52 @@ modul_1_reduction_eur_per_year = 120.0
 # ht_ct_per_kwh = 18.0
 # st_ct_per_kwh = 10.0
 # nt_ct_per_kwh = 4.0
-# # Required. When a household queries a bill, the first question is which
-# # document said so.
+# # Source of the network operator’s published prices.
 # source = "https://www.example-netz.de/preisblatt-2026.pdf#modul3"
-
-feed_in_ct_per_kwh = 7.86
-standing_charge_eur_per_year = 120.0
 
 # ── Where the box asks for prices and weather ────────────────────────────────
 #
-# Both optional, and a box with neither still runs: the guard and the arbiter
-# need nothing but measurements. What it loses is the plan — and it says so, on
-# `/v1/status` and on the readiness probe, rather than looking like a box that
-# is planning badly.
+# Optional forecast and tariff services. Check /v1/status for planner availability.
 [fleet]
 tariffd_url = "https://tariffd.internal:7380"
 forecastd_url = "https://forecastd.internal:7280"
-# Which of `forecastd`'s **configured** locations is this household's. A name
-# rather than a latitude: the sun position a production figure is computed from
-# has to be the one the irradiance was fetched at, so a box that could name its
-# own coordinates would be given somebody else's sky.
+# Location identifier configured in forecastd for this site.
 location = "berlin"
 request_timeout_s = 10
 
 # ── Where the box forwards its own record ────────────────────────────────────
 #
-# The box records **first** and forwards second: [A1 7.3] gives a network
-# operator two years to ask about a control event, and the day they ask about is
-# the day the link was down. What has not been acknowledged stays in the store's
-# outbox, and forwarded is never deleted — the two years are the household's.
+# Grid-control evidence is recorded locally before delivery. Pending batches remain in the outbox.
 [histd]
 url = "https://histd.internal:7580"
 site = "reference-household"
-# The *reference*, never the credential: one in a configuration file is one in
-# an image, in a backup and eventually in a repository.
+# Reference a credential provisioned outside this file.
 token = "env:EMS_HISTD_TOKEN"
-# Slow on purpose. What is being forwarded is already safe on the box, so
-# urgency buys nothing but load on a service the household does not own.
+# Seconds between outbox deliveries.
 every_s = 300
-# A box that has been offline for a month has a month of backlog, and sending it
-# in one burst is how a fleet service falls over the morning a region comes back.
+# Maximum records sent per batch after an outage.
 batch = 50
 
-# ── How the day went ─────────────────────────────────────────────────────────
-#
-# One signed CloudEvent per day to `obsd`. It goes through the same store as the
-# evidence and for the same reason: what is written down survives the send
-# failing, and what is only in flight does not. A fleet that is down therefore
-# costs a delay rather than a day, and the drain above carries both.
-#
-# The signature is made at each attempt rather than stored — Standard Webhooks
-# covers the timestamp and `obsd` refuses one older than five minutes, so a box
-# back from an overnight outage would otherwise present a backlog of stale ones.
+# Signed household reports. The outbox retains pending deliveries and signs each retry.
 [obsd]
 url = "https://obsd.internal:7780"
-# A **signature** secret, not a bearer token. What `obsd` holds is the list of
-# households that did not respect a network operator's reduction, so an
-# unauthenticated write can put a compliant site on it. A token says who is
-# asking; a signature says what was said.
+# Webhook signing secret shared with obsd.
+# Same whsec_<standard Base64> value configured for this site on the collector.
 secret = "env:EMS_OBSD_SECRET"
 
-# ── How the box presents itself on the EEBUS network ─────────────────────────
-#
-# Its SKI is printed by `hemsd run --check` and served on /v1/status. That is
-# the number the metering point operator needs before a Steuerbox will trust
-# this box, and it follows the key — which lives in `store_path` above, so it is
-# the same number after a reboot and the pairing is done once.
-#
-# The Energy Guard is the network operator's box and it is the side that dials,
-# so the household **listens**. Without `listen` the § 14a driver runs its clock
-# and hears nothing, which `hemsd run` reports as an error rather than leaving
-# a household to believe it is participating.
+# The gateway listens for the Steuerbox. Give the metering operator the gateway SKI
+# from /v1/status and retain store_path to preserve that identity.
 [ship]
 listen = "0.0.0.0:4712"
-# The certificate's common name — `<IANA PEN>_<vendor product id>` where there is
-# one. It is not the identity: that is the **SKI**, which follows the key, is
-# kept in the box's own store so it survives a reboot, and is printed at start-up
-# because it is what the metering point operator has to be given. Field reports
-# make that exchange the most common § 14a commissioning failure there is.
+# SHIP identifier advertised by the gateway.
 ship_id = "hems_hems-1"
-# The Steuerbox's own SKI, as printed on it. A peer that is not here may still
-# complete TLS — it has to, so its SKI can be shown to a user — and is held short
-# of the data phase. Merged with whatever the store already trusts, so a pairing
-# done through a screen is not undone by a deployment that did not know about it.
+# Trusted peer SKIs, in addition to pairings saved in the gateway store.
 trust = []
-# Announce this box on the local network as `_ship._tcp` (SHIP § 6), so an Energy
-# Guard can find it rather than being given an address by hand. The record
-# carries the SHIP ID, the WebSocket path and the SKI, which is also what a
-# certification lab asks to see. The announcement is withdrawn for the length of
-# a session, because a Controllable System has exactly one Energy Guard and a
-# second one that found this box would be refused. Turn it off on a segmented
-# network, or where something else announces on this box's behalf.
+# Advertise the gateway on the local network with _ship._tcp.
 announce = true
 
-# ── Who may ask this box anything ────────────────────────────────────────────
-#
-# `/v1/*` and `/s2/*` need a bearer token; `/livez`, `/readyz` and `/metrics` do
-# not, because they carry no household data and an orchestrator should not hold a
-# household's credential to restart a crashed box.
-#
-# **Leave this out and the box issues its own**, keeps it in its store beside the
-# EEBUS key, and prints it at start-up next to the SKI — the two credentials a
-# commissioning visit carries away. Set it only where something else already
-# provisions credentials; `env:` and `file:` work, and a token written literally
-# into this file is a token in a backup.
-#
-# An **energy manager** gets a credential of its own, connected by name while the
-# box runs rather than configured here:
-#
-#   curl -sX PUT -H "Authorization: Bearer $TOKEN" \
-#       http://localhost:8080/v1/managers/aggregator-nord
-#
-# `GET /v1/managers` lists them, `DELETE` withdraws one. The token is shown once.
+# Omit token to use the access code issued by the gateway. For a provisioned
+# credential, use an env: or file: reference. Issue manager credentials via /v1/managers.
 [api]
 # token = "env:HEMS_API_TOKEN"
 
@@ -470,16 +278,9 @@ announce = true
 # and the guard still apply. [A1 4.6 S. 3]
 [s2]
 enabled = false
-# How long an instruction is believed. One market interval: a manager that has
-# gone quiet — a crashed process, a cut cable, a certificate that lapsed — must
-# not hold this household at whatever it last said for as long as the box runs,
-# and on expiry the asset goes back to the box's own plan with nothing having to
-# be cancelled.
+# Seconds until a stale manager instruction expires and local planning resumes.
 instruction_for_secs = 900
-# How often the household's own measurements go back to a connected manager. S2
-# owes a manager a status while the connection is up, and a manager planning
-# against a fill level it last saw a minute ago is planning against a different
-# house.
+# Seconds between measurement reports to the connected manager.
 report_every_secs = 5
 
 # ── What speaks to the hardware ──────────────────────────────────────────────
@@ -504,11 +305,7 @@ listens_only = false
 # rating, so a curtailment cannot be expressed at all without one.
 rating_kw = 8.0
 
-# The meter at the connection point. Read and never written — and the one
-# measurement every § 14a decision starts from: `[A1 2.3]` measures the
-# netzwirksamer Leistungsbezug *there*, and without it the guard has to close
-# its balance from the sub-meters alone, which understates the rest of the house
-# by exactly the loads nobody instrumented.
+# Read-only meter at the grid connection, including uninstrumented household loads.
 [[drivers]]
 kind = "sunspec"
 asset = "netzanschluss-zaehler"
@@ -516,36 +313,26 @@ address = "192.0.2.11:502"
 unit = 1
 listens_only = true
 
-# The network operator's Steuerbox, over EEBUS. The session it arrives on is
-# `[ship]` above.
-# The hot-water tank, over EEBUS MDT — the other direction entirely. § 14a is a
-# network operator dialling *this* box; a hot-water circuit is a device on the
-# household's own network that this box dials. Uncomment it where the tank has
-# one: it carries the single number the planner needs to schedule the store —
-# how warm the water is now. Without it the tank is left out of the plan
-# entirely rather than guessed at, because a store whose state of charge is
-# assumed is one the plan will decide not to heat on exactly the mornings it
-# matters.
+# For a SunSpec model 203 meter on RS-485, replace the grid meter above with:
+# [serial_buses.cabinet]
+# path = "/dev/serial/by-id/usb-grid-meter-adapter"
+# baud = 19200
+# parity = "even"
+# stop_bits = 1
 #
-# `ski` is required and is the whole of the trust decision: TLS proves a peer's
-# SKI, and a box that dialled whatever answered would take a tank temperature
-# from anything on the network that offered one.
-#
-# The car, over EEBUS EVCC and EVSOC — whether one is plugged in and how full it
-# is. Without it the arbiter still commands amperes, but no `EvSession` reaches
-# the planner, so a charge is spread over the hours the car happens to be there
-# rather than the cheap ones before it leaves.
-#
-# `departure` and `target_soc` are the household's, not the car's: no EEBUS use
-# case carries either, and a car that published a departure time would be
-# publishing a guess about its driver. `target_soc` is below 1,0 on purpose —
-# the last fifteen per cent of a charge is the slowest and least useful part of
-# a session, and asking for a full battery every night is paid for on every one.
-#
-# It reads and never commands. The charge point is already commanded, over
-# Modbus or through the § 14a envelope, and two drivers commanding one wallbox
-# is one wallbox nobody can predict.
-#
+# [[drivers]]
+# kind = "serial-sunspec"
+# asset = "netzanschluss-zaehler"
+# bus = "cabinet"
+# unit = 7
+
+# Optional household goal for a wallbox with vehicle telemetry.
+# [charging]
+# departure = "07:00"
+# target_soc = 0.80
+
+# Read vehicle presence and charge over EEBUS EVCC and EVSOC. Pin the peer SKI.
+# Set the departure time and target charge for the household.
 # [[drivers]]
 # kind = "eebus-ev"
 # asset = "wallbox"
@@ -554,12 +341,7 @@ listens_only = true
 # departure = "07:00"
 # target_soc = 0.8
 
-# The hot-water circuit, over EEBUS. It reads the tank's temperature (MDT) and
-# asks for a one-time loading (CDSF) — the button in the bathroom, pressed over
-# the wire, which is the shortest path there is from "the roof is exporting" to
-# "the tank is absorbing it". One driver, because SHIP grants one session per
-# peer pair.
-#
+# Read tank temperature (MDT) and request a one-time load (CDSF) over the same SHIP session.
 # [[drivers]]
 # kind = "eebus-dhw"
 # asset = "warmwasser"
@@ -602,24 +384,16 @@ listens_only = true
 # address = "192.168.1.60:4712"
 # ski = "0000000000000000000000000000000000000000"
 
+# The Steuerbox connects to the listener configured in [ship].
 [[drivers]]
 kind = "eebus-lpc"
 asset = "netzanschluss"
-# Omit `failsafe_kw` and the box computes `[A1 4.5.2]`'s own minimum from the
-# site, which grows with the number of controllable devices. A vendor's flat
-# 4,2 kW on a household owed 10,5 kW gives away six kilowatts nobody asked for.
+# Omit failsafe_kw to derive the site minimum from its controllable devices [A1 4.5.2].
 failsafe_hours = 2
 spine_vendor = "n:hems"
 spine_unique = "hems-1"
 
-# ── Outbound TLS ─────────────────────────────────────────────────────────────
-#
-# `platform` (the default) is the operating system's trust store, and the image
-# has to carry one. `pinned` is a PEM bundle and nothing else — it *replaces*
-# the platform roots, which is what makes pinning a control rather than a
-# decoration. Right when this daemon talks only to its own fleet. A bundle that
-# is missing or empty stops the daemon.
-#
+# Outbound TLS uses platform roots by default. A pinned bundle replaces them.
 # [service.http]
 # timeout_s = 30
 #
@@ -635,3 +409,12 @@ spine_unique = "hems-1"
 # node = "a"
 # endpoint = 2
 # port = 5580
+
+# Optional dedicated wired heat-meter converter (8E1).
+# [heat_meter]
+# path = "/dev/serial/by-id/usb-mbus-converter"
+# address = 17
+# manufacturer = "KAM"
+# meter_id = "06855817"
+# baud = 2400
+# poll_s = 60

@@ -1,5 +1,6 @@
 //! What a box asks the fleet.
 
+mod canary;
 mod desk;
 
 use std::collections::BTreeMap;
@@ -53,6 +54,8 @@ impl Fleet {
 /// The routes.
 pub fn router(fleet: Fleet) -> Router {
     Router::new()
+        .route("/v1/desk/canary", get(canary::latest))
+        .route("/v1/rehearsals/{run}/observations", post(canary::observe))
         .route("/desk", get(desk::page))
         .route("/v1/desk", get(desk::queue))
         .route("/v1/checkins", post(desk::checkin))

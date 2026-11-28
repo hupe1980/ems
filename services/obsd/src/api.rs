@@ -28,8 +28,7 @@ pub struct Observed {
     keep_days: usize,
     silent_after: time::Duration,
     /// Which household each accepted signing key belongs to.
-    secrets: Arc<Vec<(String, String)>>,
-    tolerance: time::Duration,
+    secrets: Arc<Vec<(String, webhook::Webhook)>>,
     readers: Arc<Credentials>,
     customers: Arc<Credentials>,
 }
@@ -50,8 +49,7 @@ impl Observed {
         store: Store,
         keep_days: usize,
         silent_after: time::Duration,
-        secrets: Vec<(String, String)>,
-        tolerance: time::Duration,
+        secrets: Vec<(String, webhook::Webhook)>,
         readers: Credentials,
     ) -> Self {
         Self {
@@ -59,7 +57,6 @@ impl Observed {
             keep_days: keep_days.max(1),
             silent_after,
             secrets: Arc::new(secrets),
-            tolerance,
             readers: Arc::new(readers),
             customers: Arc::default(),
         }
@@ -234,22 +231,8 @@ fn verify<'s>(
     body: &[u8],
     now: time::OffsetDateTime,
 ) -> Result<&'s str, WebhookError> {
-    let header = |name: &'static str| {
-        headers
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .ok_or(WebhookError::MissingHeader(name))
-    };
-    let keys: Vec<&str> = state.secrets.iter().map(|(_, key)| key.as_str()).collect();
-    let which = webhook::verify(
-        &keys,
-        header(webhook::ID_HEADER)?,
-        header(webhook::TIMESTAMP_HEADER)?,
-        header(webhook::SIGNATURE_HEADER)?,
-        body,
-        now,
-        state.tolerance,
-    )?;
+    let keys = state.secrets.iter().map(|(_, key)| key);
+    let which = webhook::verify(keys, headers, body, now)?;
     Ok(&state.secrets[which].0)
 }
 

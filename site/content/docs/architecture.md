@@ -7,7 +7,7 @@ weight = 4
 group = "Control and metering"
 +++
 
-The project has three edge applications. `hemsd` operates a household gateway. `bemsd` replays a building operator’s handover and community allocations. `cemsd` replays industrial peak decisions and reconciles a local meter trace with closed intervals. The building and industrial demos use synthetic measurements. [Run the demos](@/docs/getting-started.md).
+The project has three edge applications. `hemsd` operates a household gateway. `bemsd` replays a building operator’s handover and community allocations. `cemsd` captures a commissioned OPC UA import register, reconciles it with independent closes and replays industrial peak decisions. The building and industrial demos use synthetic measurements. [Run the demos](@/docs/getting-started.md).
 
 ## Three planes
 

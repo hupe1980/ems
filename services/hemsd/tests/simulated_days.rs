@@ -2468,3 +2468,39 @@ fn the_unmanaged_household_runs_the_battery_it_owns() {
         );
     }
 }
+
+#[test]
+fn saving_a_reference_ledger_keeps_stdout_machine_readable() {
+    let directory = tempfile::tempdir().unwrap();
+    let ledger = directory.path().join("winter.redb");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hemsd"))
+        .env_remove("EMS_OBSD_URL")
+        .args([
+            "simulate",
+            "--day",
+            "winter",
+            "--json",
+            "--sharing",
+            "--store",
+        ])
+        .arg(&ledger)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let day: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(day["quarter_hours"].as_array().unwrap().len(), 96);
+    assert!((0.0..=1.0).contains(&day["battery_soc_end"].as_f64().unwrap()));
+    assert!(day["tank_closing_kwh"].as_f64().unwrap() >= 0.0);
+    assert_eq!(
+        hemsd::store::Store::open(&ledger)
+            .unwrap()
+            .quarter_hours()
+            .unwrap()
+            .len(),
+        96
+    );
+}

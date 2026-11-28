@@ -144,7 +144,6 @@ impl Settings {}
 /// ```text
 /// webhook_secrets = ["env:EMS_OBSD_WEBHOOK_SECRET"]   # from the environment
 /// webhook_secrets = ["file:/run/secrets/webhook"]      # from a mounted file
-/// webhook_secrets = ["whsec_literal"]                  # the secret itself
 /// ```
 ///
 /// A reference that cannot be resolved is an **error**, never a fallback to the

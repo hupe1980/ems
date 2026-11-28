@@ -10,7 +10,7 @@ Publish `/portal` and `/desk` behind one HTTPS origin. OAuth2 Proxy handles sign
    ~^home-42$ "Bearer REPLACE_WITH_SITE_SCOPED_SECRET";
    ```
 
-   The secret must match that household’s `obsd.customer_tokens` entry. The operator map uses a credential from `fleetd.operators` scoped to the operator’s tenant. An empty file grants nobody that role. Mount both files as secrets and reload NGINX after grant changes. Removing a grant takes effect on the next request after reload.
+   The secret must match that household’s `obsd.customer_tokens` entry. The operator map uses a tenant-scoped credential. Configure the same credential and site membership in `fleetd.operators` and `histd.operators`. Apply revocations to both services. The exact `/v1/desk/energy` location reads from the private historian on port 7580. An empty file grants nobody that role. Mount both files as secrets and reload NGINX after grant changes. Removing a grant takes effect on the next request after reload.
 4. Keep NGINX’s upstream listener reachable only by OAuth2 Proxy. Keep the daemon listeners private. The subject header is trustworthy only on that hop. The example assumes these processes share a trusted loopback network. The public listener must never route around OAuth2 Proxy.
 
 Visit `/portal` as a household member or `/desk` as an operator. A valid identity with no matching grant receives 403. Sign out ends the EMS session. The identity provider controls its own SSO session.

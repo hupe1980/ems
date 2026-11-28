@@ -199,7 +199,7 @@ impl Inverter {
 }
 
 /// Run the driver against the device until it stops asking, or `limit` rounds.
-fn exchange(driver: &mut SunSpec, device: &mut Inverter, now: OffsetDateTime, limit: usize) {
+fn exchange(driver: &mut impl Driver, device: &mut Inverter, now: OffsetDateTime, limit: usize) {
     for _ in 0..limit {
         let Some(out) = driver.poll_transmit() else {
             return;
@@ -786,4 +786,90 @@ fn each_integer_meter_model_reports_both_energy_registers() {
         assert_eq!(m.energy_in.unwrap().get(), 2137.0);
         assert_eq!(m.energy_out.unwrap().get(), 134.0);
     }
+}
+
+#[test]
+fn commissioned_meter_reports_identity_and_rechecks_the_profile_after_reconnect() {
+    use ems_drv::modbus::Meter;
+    use sunspec::Group as _;
+    use sunspec::models::model203::Model203;
+
+    let mut peer = Inverter::new();
+    peer.map.insert(40_004, u16::from_be_bytes(*b"XY"));
+    peer.map.insert(40_070, 203);
+    peer.map.insert(40_071, Model203::LEN);
+    let body = 40_072;
+    for offset in 0..Model203::LEN {
+        peer.map.insert(body + offset, 0);
+    }
+    peer.map
+        .insert(body + Model203::W.offset, (-30_i16).cast_unsigned());
+    peer.map.insert(body + Model203::TOT_WH_IMP.offset + 1, 521);
+    peer.map.insert(body + Model203::TOT_WH_EXP.offset + 1, 281);
+    peer.map.insert(body + Model203::LEN, 0xffff);
+    peer.map.insert(body + Model203::LEN + 1, 0);
+
+    let mut meter = Meter::new(AssetId::new("grid-meter").unwrap(), 3, Cadence::default());
+    meter.on_link(LinkState::Connecting, T0);
+    exchange(&mut meter, &mut peer, T0, 20);
+    let identity = meter.meter_identity().unwrap();
+    assert_eq!(identity.manufacturer, "XY");
+    assert!(identity.connection_meter);
+    let mut events = std::iter::from_fn(|| meter.poll_event());
+    assert!(matches!(
+        events.next(),
+        Some(DriverEvent::Link(LinkState::Connecting))
+    ));
+    assert!(matches!(
+        events.next(),
+        Some(DriverEvent::Link(LinkState::Up))
+    ));
+    let Some(DriverEvent::Measured(reading)) = events.next() else {
+        panic!("meter sample")
+    };
+    assert_eq!(reading.power.unwrap().get(), -30.);
+    assert_eq!(reading.energy_in.unwrap().get(), 521.);
+    assert_eq!(reading.energy_out.unwrap().get(), 281.);
+    assert!(events.next().is_none());
+
+    let mut tcp_meter = driver().listening_only();
+    tcp_meter.on_link(LinkState::Up, T0);
+    exchange(&mut tcp_meter, &mut peer, T0, 20);
+    let tcp_reading = std::iter::from_fn(|| tcp_meter.poll_event())
+        .find_map(|event| {
+            if let DriverEvent::Measured(m) = event {
+                Some(m)
+            } else {
+                None
+            }
+        })
+        .expect("TCP meter sample from the same registers");
+    assert_eq!(reading, tcp_reading);
+    assert!(
+        meter
+            .command(&Command::ProductionCeiling(Power::from_kw(1.)), T0)
+            .is_err()
+    );
+
+    let end = T0 + Duration::seconds(1);
+    meter.on_timeout(end);
+    peer.map.insert(body + Model203::W_SF.offset, 0x8000);
+    let request = meter.poll_transmit().unwrap();
+    assert!(meter.on_bytes(&peer.answer(&request), end).is_err());
+    assert!(matches!(
+        meter.poll_event(),
+        Some(DriverEvent::Link(LinkState::Stale))
+    ));
+    assert!(meter.poll_event().is_none());
+    assert!(meter.meter_identity().is_none());
+
+    meter.on_timeout(end + Duration::seconds(1));
+    let mut other = Inverter::new();
+    exchange(&mut meter, &mut other, end + Duration::seconds(1), 20);
+    assert!(meter.meter_identity().is_none());
+    assert!(
+        meter.poll_event().is_none(),
+        "a replacement inverter cannot qualify as a grid meter"
+    );
+    assert!(meter.poll_transmit().is_none());
 }

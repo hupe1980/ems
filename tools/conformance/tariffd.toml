@@ -1,0 +1,6 @@
+[service]
+listen = "0.0.0.0:8081"
+
+[mcp]
+enabled = true
+token = "env:MCP_TOKEN"

@@ -1,23 +1,25 @@
-//! A household on the wire, for a real `hemsd run` to manage.
+//! Loopback household equipment for exercising the gateway through its ordinary drivers.
 //!
-//! `hemsd demo` replays decisions; nothing in it crosses a socket. This is the
-//! other half: one process that *is* a house — an inverter, a meter and a
-//! battery answering SunSpec over Modbus TCP from `ems-sim`'s physics under a
-//! reference day's weather, and a Steuerbox that dials the box over SHIP and
-//! writes that day's § 14a reduction. The box reaches it through its ordinary
-//! drivers and cannot tell.
-//!
-//! Real time only: the box reads the system clock, so the house does too, and
-//! [`Options::at`] chooses where in the reference day it starts.
+//! The continuous house follows wall time from the selected reference-day offset.
+//! SunSpec devices serve Modbus TCP, and the Steuerbox sends limits over SHIP.
+//! Optional room, tank and wallbox peers share the connection meter. The separate
+//! accelerated trials advance the plant clock to compare closed intervals.
 
+mod appliance_map;
 pub mod departure;
+mod ev;
 pub mod fleet;
+mod grid;
 mod modbus;
 #[cfg(test)]
 mod reference_trials;
 pub mod registers;
+mod room;
 pub mod steuerbox;
 mod storage;
+mod tank;
+pub mod thermal;
+pub mod winter;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -34,6 +36,55 @@ use crate::forecasting::Weather;
 use crate::scenario::Scenario;
 use registers::Unit;
 
+fn allowed_power(
+    home: &crate::site::Household,
+    asset: &ems_core::prelude::AssetId,
+    now: OffsetDateTime,
+    requested: Power,
+    grid: ems_core::prelude::Measurement,
+) -> anyhow::Result<Power> {
+    use anyhow::Context as _;
+    use ems_core::prelude::{AssetTarget, Horizon, Measurement, Plan, Power, Slot, SlotPlan};
+    use ems_realtime::{
+        Arbiter, ArbiterConfig, Tick,
+        guard::{GridLimits, SiteState},
+    };
+    use std::collections::BTreeMap;
+    let state = SiteState {
+        grid: Some(grid),
+        assets: BTreeMap::from([(asset.clone(), Measurement::power(now, Power::ZERO))]),
+        ..SiteState::default()
+    };
+    let mut plan = Plan::empty(Horizon::new(now, 1), now);
+    plan.slots.push(SlotPlan {
+        slot: Slot::containing(now),
+        targets: vec![AssetTarget::fixed(asset.clone(), requested)],
+        marginal_eur_per_kwh: None,
+        flexibility_eur_per_kwh: None,
+    });
+    let decision = crate::runtime::control::decide(
+        &Arbiter::new(ArbiterConfig::default()),
+        Tick {
+            now,
+            site: &home.site,
+            state: &state,
+            limits: &GridLimits::default(),
+            plan: Some(&plan),
+            cem: &BTreeMap::new(),
+            overrides: &BTreeMap::new(),
+            previous: &BTreeMap::new(),
+            delivered: &BTreeMap::new(),
+            phases: &BTreeMap::new(),
+        },
+        None,
+    );
+    decision
+        .commanded
+        .get(asset)
+        .copied()
+        .context("gateway did not authorize an asset target")
+}
+
 /// The asset the § 14a limit applies to, as the reference household names it.
 const CONNECTION_POINT: &str = "netzanschluss";
 
@@ -43,6 +94,9 @@ pub const UNIT_INVERTER: u8 = 1;
 pub const UNIT_METER: u8 = 2;
 /// The Modbus unit of the battery.
 pub const UNIT_BATTERY: u8 = 3;
+const UNIT_TANK: u8 = 4;
+const UNIT_ROOM: u8 = 5;
+const UNIT_EV: u8 = 6;
 
 /// How to start a house.
 #[derive(Debug, Clone)]
@@ -61,6 +115,52 @@ pub struct Options {
     pub identity: Option<PathBuf>,
     /// Allow a listen address that is not loopback.
     pub exposed: bool,
+    /// Optional appliances connected to this household meter.
+    pub appliances: Appliances,
+}
+
+/// Installed virtual appliances in addition to the electrical plant.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Appliances {
+    /// Relay-driven hot water on unit 4.
+    pub tank: bool,
+    /// Heating-only room on unit 5.
+    pub room: bool,
+    /// Fixed three-phase wallbox on unit 6.
+    pub ev: bool,
+}
+
+impl Appliances {
+    fn site(self, scenario: &Scenario) -> crate::HouseholdConfig {
+        crate::HouseholdConfig {
+            evse: scenario
+                .config
+                .evse
+                .filter(|_| self.ev)
+                .map(|ev| crate::site::EvseConfig {
+                    switchable: false,
+                    bidirectional: false,
+                    charge_limit: scenario.ev.map(|session| {
+                        ems_core::prelude::Soc::clamped(
+                            session.energy_target.get() / crate::scenario::VEHICLE_CAPACITY.get(),
+                        )
+                    }),
+                    ..ev
+                }),
+            heat_pump: scenario.config.heat_pump.filter(|_| self.room).map(|hp| {
+                crate::site::HeatPumpConfig {
+                    control: ems_core::asset::HeatPumpControl::SgReady,
+                    modulating: true,
+                    cooling_electrical: None,
+                    heating_rod: None,
+                    ..hp
+                }
+            }),
+            dhw: scenario.config.dhw.filter(|_| self.tank),
+            dishwasher: None,
+            ..scenario.config.clone()
+        }
+    }
 }
 
 /// The house's clock: the wall clock, moved onto the reference day.
@@ -130,6 +230,9 @@ pub struct Physics {
     battery: Unit,
     pv: PvSim,
     pack: Option<BatterySim>,
+    tank: Option<tank::Tank>,
+    room: Option<room::Room>,
+    ev: Option<ev::Wallbox>,
     array: ArrayModel,
     rating: Power,
     location: GeoPoint,
@@ -160,6 +263,9 @@ impl Physics {
             battery: Unit::battery(config.battery.map_or(Power::ZERO, |b| b.power)),
             pv: PvSim::default(),
             pack,
+            tank: None,
+            room: None,
+            ev: None,
             array: ArrayModel::new(pv.kwp, pv.ac_nominal, pv.tilt_deg, pv.azimuth_deg),
             rating: pv.ac_nominal,
             location: config.location,
@@ -171,22 +277,48 @@ impl Physics {
         })
     }
 
+    fn install(
+        &mut self,
+        scenario: &Scenario,
+        appliances: Appliances,
+        loopback: bool,
+    ) -> anyhow::Result<()> {
+        if appliances.ev {
+            anyhow::ensure!(loopback, "the wallbox fixture requires loopback");
+            self.ev = Some(ev::Wallbox::new(scenario)?);
+        }
+        if appliances.room {
+            anyhow::ensure!(loopback, "the space-heating fixture requires loopback");
+            self.room = Some(room::Room::new(
+                scenario
+                    .config
+                    .heat_pump
+                    .ok_or_else(|| anyhow::anyhow!("missing heat pump"))?,
+            )?);
+        }
+        if appliances.tank {
+            anyhow::ensure!(loopback, "the relay-driven tank requires loopback");
+            self.tank = Some(tank::Tank::new(&scenario.config)?);
+        }
+        Ok(())
+    }
+
     /// Move every device on by `dt` at instant `at` of the reference day, and
     /// refresh the registers.
     ///
     /// The pack covers local demand until a model 704 command takes effect.
     /// Split a long step at reversion so the meter includes both regimes.
     pub fn step(&mut self, at: OffsetDateTime, dt: Duration) {
-        self.step_with_ev(at, dt, Power::ZERO);
+        self.step_with_load(at, dt, Power::ZERO);
     }
 
-    fn step_with_ev(&mut self, at: OffsetDateTime, dt: Duration, ev: Power) {
+    fn step_with_load(&mut self, at: OffsetDateTime, dt: Duration, appliance: Power) {
         let target = self.battery.battery_target();
         if let Some((_, remaining)) = target
             && dt > remaining
         {
-            self.step_with_ev(at, remaining, ev);
-            self.step_with_ev(at + remaining, dt - remaining, ev);
+            self.step_with_load(at, remaining, appliance);
+            self.step_with_load(at + remaining, dt - remaining, appliance);
             return;
         }
         let hours = dt.as_seconds_f64() / 3600.0;
@@ -197,7 +329,27 @@ impl Physics {
             .map_or(self.rating, |fraction| self.rating * fraction);
         let (pv, curtailed) = self.pv.step(available, ceiling, dt);
         let produced = pv.outflow();
-        let load = ev
+        let hot_water = self.tank.as_mut().map_or(Power::ZERO, |tank| {
+            let slot = Slot::containing(at);
+            let draw = self
+                .weather
+                .draw_in(slot, ems_forecast::hotwater::draw(slot))
+                * (dt / ems_core::prelude::SLOT);
+            tank.step(dt, draw)
+        });
+        let heating = self.room.as_mut().map_or(Power::ZERO, |room| {
+            room.step(
+                dt,
+                self.weather.outdoor_at(at),
+                self.weather
+                    .window_at(self.location, at, crate::scenario::FACADE_AZIMUTH_DEG),
+            )
+        });
+        let charging = self.ev.as_mut().map_or(Power::ZERO, |ev| ev.step(at, dt));
+        let load = charging
+            + heating
+            + hot_water
+            + appliance
             + self
                 .weather
                 .load_at(at, crate::scenario::household_load(Slot::containing(at)));
@@ -246,6 +398,7 @@ pub struct House {
     pub steuerbox: watch::Receiver<steuerbox::Seen>,
     /// The house's clock.
     pub clock: Clock,
+    appliances: Appliances,
     physics: Arc<Mutex<Physics>>,
     silenced: Arc<AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -318,6 +471,11 @@ pub async fn start(options: Options) -> anyhow::Result<House> {
     let now = OffsetDateTime::now_utc();
     let clock = Clock::new(&options.scenario, options.at, now);
     let mut physics = Physics::new(&options.scenario)?;
+    physics.install(
+        &options.scenario,
+        options.appliances,
+        options.listen.ip().is_loopback(),
+    )?;
     physics.step(clock.now(), Duration::ZERO);
     let physics = Arc::new(Mutex::new(physics));
 
@@ -372,6 +530,7 @@ pub async fn start(options: Options) -> anyhow::Result<House> {
         steuerbox,
         clock,
         physics,
+        appliances: options.appliances,
         silenced,
         tasks,
     })
@@ -432,9 +591,15 @@ fn wire_site(
             "reserve_soc",
             physical.battery.map_or(0.0, |b| b.reserve_soc.fraction()),
         ),
-        ("evse_max_a", 0.0),
-        ("heat_pump_kw", 0.0),
-        ("dhw_litres", 0.0),
+        (
+            "evse_max_a",
+            physical.evse.map_or(0.0, |ev| ev.max_current.get()),
+        ),
+        (
+            "heat_pump_kw",
+            physical.heat_pump.map_or(0.0, |hp| hp.power.kw()),
+        ),
+        ("dhw_litres", physical.dhw.map_or(0.0, |t| t.litres)),
         ("battery_kwh", battery_kwh),
         ("battery_kw", battery_kw),
         (
@@ -443,6 +608,31 @@ fn wire_site(
         ),
     ] {
         site.insert(name.to_owned(), value.into());
+    }
+    site.insert("evse_switchable".into(), false.into());
+    site.insert("evse_bidirectional".into(), false.into());
+    if let Some(limit) = physical.evse.and_then(|ev| ev.charge_limit) {
+        site.insert("ev_charge_limit".into(), limit.fraction().into());
+    }
+    if let Some(hp) = physical.heat_pump {
+        site.insert("heat_pump_rod_kw".into(), 0.0.into());
+        site.insert("heat_pump_control".into(), "sg-ready".into());
+        site.insert("heat_pump_modulating".into(), true.into());
+        site.insert("heat_pump_cooling_kw".into(), 0.0.into());
+        site.insert("comfort_min_c".into(), hp.comfort_min_c.into());
+        site.insert("comfort_max_c".into(), hp.comfort_max_c.into());
+    }
+    if let Some(tank) = physical.dhw {
+        for (name, value) in [
+            ("dhw_heater_kw", tank.heater.kw()),
+            ("dhw_cop", tank.cop),
+            ("dhw_standing_loss_w", tank.standing_loss.get()),
+            ("dhw_t_min_c", tank.t_min_c),
+            ("dhw_t_set_c", tank.t_set_c),
+            ("dhw_t_max_c", tank.t_max_c),
+        ] {
+            site.insert(name.into(), value.into());
+        }
     }
     site.insert("dishwasher_kw_steps".into(), toml::Value::Array(Vec::new()));
     Ok(site)
@@ -476,7 +666,23 @@ pub fn configuration(
         scenario,
         house.modbus,
         manage_storage,
+        house.appliances,
     )?);
+    if house.appliances.ev {
+        let session = scenario
+            .ev
+            .ok_or_else(|| anyhow::anyhow!("missing EV session"))?;
+        let deadline = ems_core::calendar::to_berlin(
+            house.clock.wall_start + session.departure - house.clock.offset,
+        );
+        writeln!(
+            out,
+            "\n[charging]\ndeparture = \"{:02}:{:02}\"\ntarget_soc = {}",
+            deadline.hour(),
+            deadline.minute(),
+            session.energy_target.get() / crate::scenario::VEHICLE_CAPACITY.get()
+        )?;
+    }
     if let (Some(ship), Some(ski)) = (ship, &house.steuerbox_ski) {
         write!(
             out,
@@ -496,15 +702,10 @@ fn device_configuration(
     scenario: &Scenario,
     modbus: SocketAddr,
     manage_storage: bool,
+    appliances: Appliances,
 ) -> anyhow::Result<String> {
     use std::fmt::Write as _;
-    let physical = crate::HouseholdConfig {
-        evse: None,
-        heat_pump: None,
-        dhw: None,
-        dishwasher: None,
-        ..scenario.config.clone()
-    };
+    let physical = appliances.site(scenario);
     let household = crate::Household::build(&physical).map_err(|e| anyhow::anyhow!("{e}"))?;
     let rating_kw = scenario.config.pv.map_or(0.0, |pv| pv.ac_nominal.kw());
     let mut out = String::new();
@@ -544,6 +745,37 @@ fn device_configuration(
             },
         )?;
     }
+    if let Some(ev) = &household.evse {
+        ev::write_map(&mut out, ev, modbus)?;
+    }
+    for (asset, unit, command) in [
+        (
+            &household.dhw,
+            UNIT_TANK,
+            r#"command = "on_off", on = 1, off = 0"#,
+        ),
+        (
+            &household.heat_pump,
+            UNIT_ROOM,
+            r#"command = "operation_mode", modes = [1, 2, 3]"#,
+        ),
+    ] {
+        let Some(asset) = asset else { continue };
+        writeln!(
+            out,
+            r#"
+[[drivers]]
+kind = "registers"
+asset = "{asset}"
+address = "{modbus}"
+unit = {unit}
+points = [
+  {{ field = "temperature_c", register = 0, word = "s16", scale = 0.1 }},
+  {{ field = "power", register = 1, word = "s16" }}
+]
+writes = [{{ register = 2, {command} }}]"#
+        )?;
+    }
     Ok(out)
 }
 
@@ -560,6 +792,7 @@ mod tests {
             at: Some(Duration::hours(12)),
             identity: None,
             exposed: false,
+            appliances: Appliances::default(),
         }
     }
 
@@ -627,6 +860,36 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("loopback SHIP")
+        );
+        let mut exposed = options("0.0.0.0:0");
+        exposed.appliances.tank = true;
+        exposed.exposed = true;
+        assert!(
+            start(exposed)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("tank requires loopback")
+        );
+        let mut exposed_ev = options("0.0.0.0:0");
+        exposed_ev.appliances.ev = true;
+        exposed_ev.exposed = true;
+        assert!(
+            start(exposed_ev)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("wallbox fixture requires loopback")
+        );
+        let mut exposed_room = options("0.0.0.0:0");
+        exposed_room.appliances.room = true;
+        exposed_room.exposed = true;
+        assert!(
+            start(exposed_room)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("space-heating fixture requires loopback")
         );
         let house = start(options("127.0.0.1:0")).await.expect("loopback");
         assert!(

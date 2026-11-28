@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "DeviceLost": {
+      "description": "The last observation made by this device. None when it never reported.",
+      "properties": {
+        "last_seen": {
+          "description": "Time of the last sample, if the device has reported.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.device.lost.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A configured asset stopped reporting",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/DeviceLost"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "dataschema": {
+      "const": "https://hupe1980.github.io/ems/contracts/events/v1/de.ems.device.lost.json#/properties/data"
+    },
+    "id": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "const": "de.ems.device.lost"
+    }
+  },
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "dataschema",
+    "data"
+  ],
+  "title": "de.ems.device.lost",
+  "type": "object"
+}
